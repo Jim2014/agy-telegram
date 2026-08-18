@@ -1139,6 +1139,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
         msg_id = init_msg.get("message_id") if init_msg else None
 
         # Prepare bridge parameters
+        active_proj = session.active_project or "default"
         effective_model = session.model or self.config.default_model or None
         effective_effort = session.effort or self.config.default_effort or None
         effective_dir = session.active_path() or self.config.agy_working_dir or None
@@ -1359,6 +1360,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
                     total_tokens=tokens_val,
                     thinking_tokens=thinking_val,
                     conversation_id=conv_id,
+                    project_name=active_proj,
                 )
 
                 notices: List[str] = []
@@ -1398,6 +1400,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
                     total_tokens=tokens_val,
                     thinking_tokens=thinking_val,
                     conversation_id=conv_id,
+                    project_name=active_proj,
                 )
                 notice = "\n\n📄 <b>Full HTML report automatically generated and attached below ⬇️</b>"
                 res = await self._safe_edit_message_text(
@@ -1422,6 +1425,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
                         "time": f"{duration:.1f}s" if duration else None,
                         "tokens": f"{tokens_val/1000:.1f}k" if tokens_val and tokens_val >= 1000 else tokens_val,
                         "model": effective_model,
+                        "project": active_proj,
                         "conversation_id": conv_id,
                         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                     },
@@ -1445,6 +1449,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
                     total_tokens=tokens_val,
                     thinking_tokens=thinking_val,
                     conversation_id=conv_id,
+                    project_name=active_proj,
                 )
 
                 chunks = split_text_chunks(formatted_final)

@@ -231,7 +231,7 @@ async def test_bot_prompt_streaming(mock_bot, monkeypatch):
     assert mock_bot.client.edit_message_text.called
     final_call_args = mock_bot.client.edit_message_text.call_args[1]
     assert "Answer is 42" in final_call_args["text"]
-    assert "conv-str..." in final_call_args["text"]
+    assert "default" in final_call_args["text"]
 
     # Verify conversation ID persisted in active project
     session = mock_bot.session_manager.get_session(100)

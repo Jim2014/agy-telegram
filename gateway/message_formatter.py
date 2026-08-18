@@ -277,6 +277,7 @@ def format_final_result(
     total_tokens: Optional[int] = None,
     thinking_tokens: Optional[int] = None,
     conversation_id: Optional[str] = None,
+    project_name: Optional[str] = None,
 ) -> str:
     """Format final response by converting Markdown to Telegram HTML and appending metadata footer."""
     formatted_body = markdown_to_telegram_html(response_text) if response_text else "<i>(No response text)</i>"
@@ -289,7 +290,9 @@ def format_final_result(
         if thinking_tokens:
             tok_str += f" (thinking: {thinking_tokens})"
         footer_parts.append(f"🪙 {tok_str} tokens")
-    if conversation_id:
+    if project_name:
+        footer_parts.append(f"📁 <code>{escape_html(project_name)}</code>")
+    elif conversation_id:
         short_id = conversation_id[:8] + "..."
         footer_parts.append(f"🆔 <code>{short_id}</code>")
 

@@ -107,17 +107,28 @@ def test_format_streaming_message_truncation():
 
 
 def test_format_final_result():
-    res = format_final_result(
+    # With project_name
+    res_proj = format_final_result(
         response_text="All done with **success**!",
         duration_seconds=3.456,
         total_tokens=15000,
         thinking_tokens=300,
         conversation_id="conv-1234-5678-90ab",
+        project_name="myapp",
     )
-    assert "<b>success</b>" in res
-    assert "3.5s" in res
-    assert "15.0k (thinking: 300) tokens" in res
-    assert "conv-123..." in res
+    assert "<b>success</b>" in res_proj
+    assert "3.5s" in res_proj
+    assert "15.0k (thinking: 300) tokens" in res_proj
+    assert "myapp" in res_proj
+
+    # Fallback to conversation_id when project_name is None
+    res_conv = format_final_result(
+        response_text="All done",
+        duration_seconds=2.0,
+        total_tokens=500,
+        conversation_id="conv-1234-5678-90ab",
+    )
+    assert "conv-123..." in res_conv
 
 
 def test_split_text_chunks():
