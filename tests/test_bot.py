@@ -23,6 +23,8 @@ def mock_bot(tmp_path):
     bot.client.edit_message_text = AsyncMock(return_value={"message_id": 999})
     bot.client.send_document = AsyncMock(return_value={"message_id": 1000})
     bot.client.send_chat_action = AsyncMock(return_value=True)
+    bot.client.answer_callback_query = AsyncMock(return_value=True)
+    bot.client.edit_message_reply_markup = AsyncMock(return_value=True)
     return bot
 
 
@@ -593,6 +595,96 @@ async def test_bot_setup_bot_commands(mock_bot):
     assert success is True
     mock_bot.client.set_my_commands.assert_called_once()
     mock_bot.client.set_chat_menu_button.assert_called_once_with(menu_button={"type": "commands"})
+
+
+@pytest.mark.asyncio
+async def test_bot_projects_inline_keyboard(mock_bot, tmp_path):
+    p1 = str(tmp_path / "proj1")
+    p2 = str(tmp_path / "proj2")
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": f"/new proj1 {p1}", "message_id": 10}})
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": f"/new proj2 {p2}", "message_id": 11}})
+
+    # Call /projects
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/projects", "message_id": 12}})
+
+    call_kwargs = mock_bot.client.send_message.call_args[1]
+    assert "reply_markup" in call_kwargs
+    inline_kb = call_kwargs["reply_markup"]["inline_keyboard"]
+    # Verify buttons exist for both projects
+    flattened_btns = [btn for row in inline_kb for btn in row]
+    callback_datas = [b["callback_data"] for b in flattened_btns]
+    assert "open:proj1" in callback_datas
+    assert "open:proj2" in callback_datas
+    assert "projects:refresh" in callback_datas
+
+
+@pytest.mark.asyncio
+async def test_bot_callback_query_open_project(mock_bot, tmp_path):
+    p1 = str(tmp_path / "proj_alpha")
+    p2 = str(tmp_path / "proj_beta")
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": f"/new proj_alpha {p1}", "message_id": 20}})
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": f"/new proj_beta {p2}", "message_id": 21}})
+
+    # Currently active is proj_beta. Now click inline button for proj_alpha
+    cb_update = {
+        "callback_query": {
+            "id": "cb_query_999",
+            "from": {"id": 100},
+            "message": {"chat": {"id": 100}, "message_id": 555},
+            "data": "open:proj_alpha",
+        }
+    }
+    await mock_bot.process_update(cb_update)
+
+    # Check that answer_callback_query was called
+    mock_bot.client.answer_callback_query.assert_called_with(
+        callback_query_id="cb_query_999",
+        text="Opened project: proj_alpha",
+        show_alert=False,
+    )
+    # Check that session active project switched to proj_alpha
+    assert mock_bot.session_manager.get_session(100).active_project == "proj_alpha"
+    # Check that message was edited in place
+    assert mock_bot.client.edit_message_text.called
+
+
+@pytest.mark.asyncio
+async def test_bot_callback_query_effort_and_model(mock_bot):
+    # Effort callback
+    cb_effort = {
+        "callback_query": {
+            "id": "cb_effort_1",
+            "from": {"id": 100},
+            "message": {"chat": {"id": 100}, "message_id": 601},
+            "data": "effort:high",
+        }
+    }
+    await mock_bot.process_update(cb_effort)
+    assert mock_bot.session_manager.get_session(100).effort == "high"
+    mock_bot.client.answer_callback_query.assert_called_with(
+        callback_query_id="cb_effort_1",
+        text="Reasoning effort set to high",
+        show_alert=False,
+    )
+
+    # Model callback
+    cb_model = {
+        "callback_query": {
+            "id": "cb_model_1",
+            "from": {"id": 100},
+            "message": {"chat": {"id": 100}, "message_id": 602},
+            "data": "model:gemini-2.5-pro",
+        }
+    }
+    await mock_bot.process_update(cb_model)
+    assert mock_bot.session_manager.get_session(100).model == "gemini-2.5-pro"
+    mock_bot.client.answer_callback_query.assert_called_with(
+        callback_query_id="cb_model_1",
+        text="Model set to gemini-2.5-pro",
+        show_alert=False,
+    )
+
 
 
 

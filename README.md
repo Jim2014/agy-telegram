@@ -201,6 +201,13 @@ tail -f -n 50 runtime/watchdog.log
 - **聊天框左下角「Menu / 菜单」按钮**：点击即可呼出所有支持的斜杠命令与说明弹窗。
 - **输入框 `/` 快捷联想**：在输入框键入 `/` 即可实时查看命令列表与自动补全。
 
+### 🔘 交互式选项菜单 (Inline Keyboard Buttons)
+
+为了提高移动端操作效率，网关全面支持交互式按钮点击：
+- **/projects 项目菜单**：直接附带每个项目的点击按钮（如 `[ 🌟 myapp ]`、`[ 📂 backend ]`）及 `[ 🔄 Refresh ]`，点击即可一键切换当前工作区，无需手动复制或输入命令。
+- **/effort 推理强度**：附带 `[ 🟢 Low ]`、`[ 🟡 Medium ]`、`[ 🔴 High ]` 快速选择按钮，点击即时生效。
+- **/model 模型切换**：附带 `[ ⚡ Gemini 2.5 Flash ]`、`[ 🧠 Gemini 2.5 Pro ]`、`[ 🔄 Reset to Default ]` 按钮快速切换。
+
 ### 支持的命令列表
 
 在 Telegram 中与你的 Bot 对话：

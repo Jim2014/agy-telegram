@@ -90,7 +90,7 @@ class TelegramClient:
         payload: Dict[str, Any] = {
             "timeout": timeout,
             "limit": limit,
-            "allowed_updates": ["message", "edited_message"],
+            "allowed_updates": ["message", "edited_message", "callback_query"],
         }
         if offset is not None:
             payload["offset"] = offset
@@ -112,6 +112,7 @@ class TelegramClient:
         text: str,
         parse_mode: Optional[str] = "HTML",
         reply_to_message_id: Optional[int] = None,
+        reply_markup: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Send message with automatic fallback to plain text if formatting fails."""
         payload: Dict[str, Any] = {
@@ -122,6 +123,8 @@ class TelegramClient:
             payload["parse_mode"] = parse_mode
         if reply_to_message_id:
             payload["reply_to_message_id"] = reply_to_message_id
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
 
         try:
             return await self._post("sendMessage", payload)
@@ -139,6 +142,7 @@ class TelegramClient:
         message_id: int,
         text: str,
         parse_mode: Optional[str] = "HTML",
+        reply_markup: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Edit message text with no-op handling for unchanged content and plain-text fallback."""
         payload: Dict[str, Any] = {
@@ -148,6 +152,8 @@ class TelegramClient:
         }
         if parse_mode:
             payload["parse_mode"] = parse_mode
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
 
         try:
             return await self._post("editMessageText", payload)
@@ -166,6 +172,46 @@ class TelegramClient:
                         return None
                     raise e2
             raise
+
+    async def edit_message_reply_markup(
+        self,
+        chat_id: int,
+        message_id: int,
+        reply_markup: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Edit only the reply markup of a message."""
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        try:
+            return await self._post("editMessageReplyMarkup", payload)
+        except TelegramAPIError as e:
+            if "message is not modified" in e.description.lower():
+                return None
+            raise
+
+    async def answer_callback_query(
+        self,
+        callback_query_id: str,
+        text: Optional[str] = None,
+        show_alert: bool = False,
+    ) -> bool:
+        """Acknowledge a callback query from an inline button press."""
+        payload: Dict[str, Any] = {
+            "callback_query_id": callback_query_id,
+            "show_alert": show_alert,
+        }
+        if text:
+            payload["text"] = text
+        try:
+            res = await self._post("answerCallbackQuery", payload)
+            return bool(res)
+        except Exception as e:
+            logger.warning("Failed to answer callback query %s: %s", callback_query_id, e)
+            return False
 
     async def send_document(
         self,

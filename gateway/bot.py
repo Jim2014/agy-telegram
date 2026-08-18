@@ -152,6 +152,25 @@ class AgyTelegramBot:
             logger.warning("Telegram send_chat_action failed for chat %s: %s", chat_id, e)
             return False
 
+    async def _safe_answer_callback_query(
+        self,
+        callback_query_id: str,
+        text: Optional[str] = None,
+        show_alert: bool = False,
+    ) -> bool:
+        """Answer callback query safely, catching all Telegram / network errors."""
+        try:
+            return await self.client.answer_callback_query(
+                callback_query_id=callback_query_id,
+                text=text,
+                show_alert=show_alert,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("Telegram answer_callback_query failed for query %s: %s", callback_query_id, e)
+            return False
+
     async def _notify_restart(self) -> None:
         """Send a short 'gateway (re)started' notice to every known chat with a session."""
         started_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.started_at))
@@ -244,6 +263,12 @@ class AgyTelegramBot:
     async def process_update(self, update: Dict[str, Any]) -> None:
         """Process a single Telegram update safely."""
         try:
+            # Handle inline keyboard callback queries
+            callback_query = update.get("callback_query")
+            if callback_query:
+                await self.handle_callback_query(callback_query)
+                return
+
             message = update.get("message")
             if not message:
                 return
@@ -458,19 +483,88 @@ class AgyTelegramBot:
             ),
         )
 
-    async def handle_cmd_projects(self, chat_id: int) -> None:
-        """List all projects in current session."""
+    async def handle_callback_query(self, callback_query: Dict[str, Any]) -> None:
+        """Handle Telegram inline keyboard button presses."""
+        cq_id = callback_query.get("id")
+        if not cq_id:
+            return
+
+        message = callback_query.get("message", {})
+        from_user = callback_query.get("from", {})
+        chat_id = message.get("chat", {}).get("id") or from_user.get("id")
+        message_id = message.get("message_id")
+        data = callback_query.get("data", "")
+
+        if not chat_id:
+            await self._safe_answer_callback_query(cq_id)
+            return
+
+        # Check authorization whitelist
+        if not self.config.is_chat_allowed(chat_id):
+            logger.warning("Unauthorized callback query from chat_id %d", chat_id)
+            await self._safe_answer_callback_query(cq_id, text="⛔ Access Denied", show_alert=True)
+            return
+
+        session = self.session_manager.get_session(chat_id)
+
+        if data.startswith("open:"):
+            proj_name = data[5:].strip()
+            if self.session_manager.is_busy(chat_id):
+                await self._safe_answer_callback_query(
+                    cq_id,
+                    text="⚠️ A task is currently running. Please /stop it first before switching projects.",
+                    show_alert=True,
+                )
+                return
+
+            if proj_name in session.projects:
+                self.session_manager.open_project(chat_id, proj_name)
+                await self._safe_answer_callback_query(cq_id, text=f"Opened project: {proj_name}")
+                await self.handle_cmd_projects(chat_id, edit_message_id=message_id)
+            else:
+                await self._safe_answer_callback_query(cq_id, text=f"Project '{proj_name}' not found", show_alert=True)
+
+        elif data == "projects:refresh":
+            await self._safe_answer_callback_query(cq_id, text="Projects refreshed")
+            await self.handle_cmd_projects(chat_id, edit_message_id=message_id)
+
+        elif data.startswith("effort:"):
+            effort_val = data[7:].strip()
+            await self.handle_cmd_effort(chat_id, arg=effort_val, edit_message_id=message_id)
+            await self._safe_answer_callback_query(cq_id, text=f"Reasoning effort set to {effort_val}")
+
+        elif data.startswith("model:"):
+            model_val = data[6:].strip()
+            await self.handle_cmd_model(chat_id, arg=model_val, edit_message_id=message_id)
+            await self._safe_answer_callback_query(cq_id, text=f"Model set to {model_val}")
+
+        elif data == "status":
+            await self._safe_answer_callback_query(cq_id)
+            await self.handle_cmd_status(chat_id)
+
+        else:
+            await self._safe_answer_callback_query(cq_id)
+
+    async def handle_cmd_projects(self, chat_id: int, edit_message_id: Optional[int] = None) -> None:
+        """List all projects in current session with interactive inline option buttons."""
         session = self.session_manager.get_session(chat_id)
         projects = session.projects
 
         if not projects:
-            await self._safe_send_message(
-                chat_id=chat_id,
-                text="📂 No projects configured yet.\nUse <code>/new &lt;name&gt; &lt;path&gt;</code> to create your first project!",
+            text = (
+                "📂 <b>No projects configured yet.</b>\n\n"
+                "Use <code>/new &lt;name&gt; &lt;path&gt;</code> to create your first project workspace!"
             )
+            if edit_message_id:
+                await self._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text)
+            else:
+                await self._safe_send_message(chat_id=chat_id, text=text)
             return
 
         lines = ["📁 <b>Available Projects:</b>\n"]
+        keyboard: List[List[Dict[str, str]]] = []
+        row: List[Dict[str, str]] = []
+
         for name, proj in projects.items():
             is_active = (name == session.active_project)
             active_marker = "🌟 <b>[ACTIVE]</b> " if is_active else "• "
@@ -484,8 +578,37 @@ class AgyTelegramBot:
                 f"   Session: {conv_str}\n"
             )
 
-        lines.append("💡 Tap <code>/open &lt;name&gt;</code> above to quickly copy or switch projects.")
-        await self._safe_send_message(chat_id=chat_id, text="\n".join(lines))
+            btn_text = f"🌟 {name}" if is_active else f"📂 {name}"
+            row.append({"text": btn_text, "callback_data": f"open:{name}"})
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+
+        if row:
+            keyboard.append(row)
+
+        keyboard.append([
+            {"text": "🔄 Refresh", "callback_data": "projects:refresh"},
+            {"text": "📊 Status", "callback_data": "status"},
+        ])
+
+        lines.append("💡 <i>Tap any project button below to switch directly, or use /open &lt;name&gt;.</i>")
+        reply_markup = {"inline_keyboard": keyboard}
+        full_text = "\n".join(lines)
+
+        if edit_message_id:
+            await self._safe_edit_message_text(
+                chat_id=chat_id,
+                message_id=edit_message_id,
+                text=full_text,
+                reply_markup=reply_markup,
+            )
+        else:
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=full_text,
+                reply_markup=reply_markup,
+            )
 
     async def handle_cmd_delete(self, chat_id: int, arg: str) -> None:
         """Delete a project workspace (/delete <name>)."""
@@ -574,40 +697,70 @@ class AgyTelegramBot:
         )
         await self._safe_send_message(chat_id=chat_id, text=status_text)
 
-    async def handle_cmd_model(self, chat_id: int, arg: str) -> None:
-        """Change or view model."""
+    async def handle_cmd_model(self, chat_id: int, arg: str = "", edit_message_id: Optional[int] = None) -> None:
+        """Change or view model with interactive option buttons."""
         session = self.session_manager.get_session(chat_id)
+        buttons = [
+            [
+                {"text": "⚡ Gemini 2.5 Flash", "callback_data": "model:gemini-2.5-flash"},
+                {"text": "🧠 Gemini 2.5 Pro", "callback_data": "model:gemini-2.5-pro"},
+            ],
+            [
+                {"text": "🔄 Reset to Default", "callback_data": "model:reset"},
+            ],
+        ]
+        reply_markup = {"inline_keyboard": buttons}
+
         if not arg:
-            cur = session.model or self.config.default_model or "default"
-            await self._safe_send_message(
-                chat_id=chat_id,
-                text=f"🤖 Current model: <code>{escape_html(cur)}</code>\nUse <code>/model &lt;name&gt;</code> to change or <code>/model reset</code> to reset.",
+            cur = session.model or self.config.default_model or "CLI default"
+            text = (
+                f"🤖 <b>Model Configuration:</b>\n\n"
+                f"• Current model: <code>{escape_html(cur)}</code>\n\n"
+                f"Tap a button below to switch model, or use <code>/model &lt;name&gt;</code>:"
             )
+            if edit_message_id:
+                await self._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
+            else:
+                await self._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
             return
 
         val = arg.strip()
         if val.lower() in ("reset", "default"):
             self.session_manager.set_model(chat_id, None)
-            await self._safe_send_message(
-                chat_id=chat_id,
-                text="🤖 Model reset to default.",
-            )
+            text = "🤖 <b>Model reset to default.</b>"
         else:
             self.session_manager.set_model(chat_id, val)
-            await self._safe_send_message(
-                chat_id=chat_id,
-                text=f"🤖 Model updated to <code>{escape_html(val)}</code>.",
-            )
+            text = f"🤖 <b>Model updated to:</b> <code>{escape_html(val)}</code>"
 
-    async def handle_cmd_effort(self, chat_id: int, arg: str) -> None:
-        """Change reasoning effort."""
+        if edit_message_id:
+            await self._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
+        else:
+            await self._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+
+    async def handle_cmd_effort(self, chat_id: int, arg: str = "", edit_message_id: Optional[int] = None) -> None:
+        """Change reasoning effort with interactive option buttons."""
         session = self.session_manager.get_session(chat_id)
+        cur = session.effort or self.config.default_effort or "medium"
+
+        def _make_effort_buttons(active_val: str) -> Dict[str, Any]:
+            btns = [
+                {"text": f"{'✓ ' if active_val == 'low' else ''}🟢 Low", "callback_data": "effort:low"},
+                {"text": f"{'✓ ' if active_val == 'medium' else ''}🟡 Medium", "callback_data": "effort:medium"},
+                {"text": f"{'✓ ' if active_val == 'high' else ''}🔴 High", "callback_data": "effort:high"},
+            ]
+            return {"inline_keyboard": [btns]}
+
         if not arg:
-            cur = session.effort or self.config.default_effort or "medium"
-            await self._safe_send_message(
-                chat_id=chat_id,
-                text=f"⚙️ Current reasoning effort: <code>{escape_html(cur)}</code>\nOptions: <code>low</code>, <code>medium</code>, <code>high</code>.",
+            text = (
+                f"⚙️ <b>Reasoning Effort Setting:</b>\n\n"
+                f"• Current level: <code>{escape_html(cur)}</code>\n\n"
+                f"Tap an option below to set reasoning effort:"
             )
+            reply_markup = _make_effort_buttons(cur)
+            if edit_message_id:
+                await self._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
+            else:
+                await self._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
             return
 
         val = arg.strip().lower()
@@ -619,10 +772,12 @@ class AgyTelegramBot:
             return
 
         self.session_manager.set_effort(chat_id, val)
-        await self._safe_send_message(
-            chat_id=chat_id,
-            text=f"⚙️ Reasoning effort set to <code>{escape_html(val)}</code>.",
-        )
+        text = f"⚙️ <b>Reasoning effort set to:</b> <code>{escape_html(val)}</code>"
+        reply_markup = _make_effort_buttons(val)
+        if edit_message_id:
+            await self._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
+        else:
+            await self._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
 
     async def handle_cmd_dir(self, chat_id: int, arg: str) -> None:
         """Change directory for active project."""

@@ -144,5 +144,18 @@ async def test_telegram_client_set_my_commands(monkeypatch):
     menu_res = await client.set_chat_menu_button()
     assert menu_res is True
 
+    # Test answer_callback_query
+    captured_payload.clear()
+    cb_res = await client.answer_callback_query("query_123", text="Action completed")
+    assert cb_res is True
+    assert captured_payload["callback_query_id"] == "query_123"
+    assert captured_payload["text"] == "Action completed"
+
+    # Test edit_message_reply_markup
+    captured_payload.clear()
+    markup_res = await client.edit_message_reply_markup(100, 42, reply_markup={"inline_keyboard": []})
+    assert markup_res is True
+
     await client.close()
+
 
