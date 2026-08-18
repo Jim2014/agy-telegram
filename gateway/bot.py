@@ -143,6 +143,8 @@ class AgyTelegramBot:
                 await self.handle_cmd_effort(chat_id, arg)
             elif cmd == "/dir":
                 await self.handle_cmd_dir(chat_id, arg)
+            elif cmd == "/steer":
+                await self.handle_cmd_steer(chat_id, arg, message_id)
             elif cmd == "/stop":
                 await self.handle_cmd_stop(chat_id)
             else:
@@ -151,6 +153,18 @@ class AgyTelegramBot:
                     text=f"❓ Unknown command <code>{escape_html(cmd)}</code>. Use /help for instructions.",
                 )
             return
+
+        # If a prompt is running and user sends a new message -> steer into active session!
+        session = self.session_manager.get_session(chat_id)
+        if session.is_busy and chat_id in self.active_bridges:
+            steered = await self.active_bridges[chat_id].steer(text)
+            if steered:
+                await self.client.send_message(
+                    chat_id=chat_id,
+                    text=f"🎯 <b>Steered into active session:</b>\n<i>{escape_html(text)}</i>",
+                    reply_to_message_id=message_id,
+                )
+                return
 
         # Regular prompt -> agy bridge execution
         await self.handle_prompt(chat_id, text, message_id)
@@ -163,7 +177,7 @@ class AgyTelegramBot:
         conv_text = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(New session)</i>"
         help_text = (
             "🤖 <b>agy-telegram Gateway</b>\n\n"
-            "Direct Telegram interface to <b>agy</b> (Antigravity CLI) with project-based session management and intermediate streaming output.\n\n"
+            "Direct Telegram interface to <b>agy</b> (Antigravity CLI) with project-based session management, real-time intermediate streaming, and mid-flight steering.\n\n"
             "<b>Project Management:</b>\n"
             "• <code>/new &lt;name&gt; &lt;path&gt;</code> — Create a new project workspace\n"
             "• <code>/open &lt;name&gt;</code> — Open and switch to an existing project\n"
@@ -175,10 +189,11 @@ class AgyTelegramBot:
             "• <code>/status</code> — Show active project, conversation, model, & effort\n"
             "• <code>/model &lt;name&gt;</code> — Set model (e.g. <code>/model gemini-2.5-pro</code>) or <code>/model reset</code>\n"
             "• <code>/effort &lt;low|medium|high&gt;</code> — Set reasoning effort\n"
+            "• <code>/steer &lt;instruction&gt;</code> — Steer/guide currently running agy prompt\n"
             "• <code>/stop</code> — Interrupt currently executing agy prompt\n"
             "• <code>/help</code> — Show this manual\n\n"
-            f"<b>Active Project:</b> <code>{escape_html(active_proj)}</code> ({conv_text})\n"
-            "<i>Simply type any message to talk to agy!</i>"
+            f"<b>Active Project:</b> <code>{escape_html(active_proj)}</code> ({conv_text})\n\n"
+            "💡 <i>Tip: While agy is running, you can send any message or use /steer to seamlessly guide the session!</i>"
         )
         await self.client.send_message(chat_id=chat_id, text=help_text)
 
@@ -465,8 +480,42 @@ class AgyTelegramBot:
             text=f"✅ Workspace directory for <b>{escape_html(session.active_project)}</b> set to:\n<code>{escape_html(str(target_dir))}</code>",
         )
 
+    async def handle_cmd_steer(self, chat_id: int, arg: str, reply_to_id: Optional[int] = None) -> None:
+        """Explicitly steer instructions into the currently running session."""
+        if not arg:
+            await self.client.send_message(
+                chat_id=chat_id,
+                text="⚠️ Usage: <code>/steer &lt;instruction&gt;</code>\nProvide mid-flight guidance to the running agent.",
+                reply_to_message_id=reply_to_id,
+            )
+            return
+
+        session = self.session_manager.get_session(chat_id)
+        bridge = self.active_bridges.get(chat_id)
+
+        if session.is_busy and bridge:
+            steered = await bridge.steer(arg)
+            if steered:
+                await self.client.send_message(
+                    chat_id=chat_id,
+                    text=f"🎯 <b>Steering instruction sent:</b>\n<i>{escape_html(arg)}</i>\n\nThe agent will incorporate this guidance into the ongoing turn.",
+                    reply_to_message_id=reply_to_id,
+                )
+            else:
+                await self.client.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Could not steer: the current task is already concluding.",
+                    reply_to_message_id=reply_to_id,
+                )
+        else:
+            await self.client.send_message(
+                chat_id=chat_id,
+                text="ℹ️ No task is currently running to steer. Send a regular prompt to start.",
+                reply_to_message_id=reply_to_id,
+            )
+
     async def handle_cmd_stop(self, chat_id: int) -> None:
-        """Interrupt active agy prompt execution."""
+        """Interrupt active agy prompt execution immediately."""
         bridge = self.active_bridges.get(chat_id)
         if bridge:
             await bridge.stop()
@@ -481,9 +530,21 @@ class AgyTelegramBot:
         session = self.session_manager.get_session(chat_id)
 
         if session.is_busy:
+            # Attempt to steer into existing session
+            bridge = self.active_bridges.get(chat_id)
+            if bridge:
+                steered = await bridge.steer(prompt)
+                if steered:
+                    await self.client.send_message(
+                        chat_id=chat_id,
+                        text=f"🎯 <b>Steered into active session:</b>\n<i>{escape_html(prompt)}</i>",
+                        reply_to_message_id=reply_to_id,
+                    )
+                    return
+
             await self.client.send_message(
                 chat_id=chat_id,
-                text="⏳ A prompt is already being processed. Use /stop to cancel it first.",
+                text="⏳ A prompt is currently processing. Use /steer to guide it or /stop to cancel.",
                 reply_to_message_id=reply_to_id,
             )
             return
@@ -534,6 +595,9 @@ class AgyTelegramBot:
         last_edited_content = ""
         final_event: Optional[AgyEvent] = None
         conv_id = session.conversation_id
+        total_tokens = 0
+        thinking_tokens = 0
+        total_duration = 0.0
 
         try:
             async for event in bridge.run_streaming(
@@ -565,8 +629,22 @@ class AgyTelegramBot:
                 elif event.type == "text_delta":
                     accumulated_text += event.text_delta
 
+                elif event.type == "turn_complete":
+                    # Intermediate turn finished as part of multi-turn steer exchange
+                    if event.usage:
+                        total_tokens += event.usage.get("total_tokens", 0)
+                        thinking_tokens += event.usage.get("thinking_tokens", 0)
+                    if event.duration_seconds:
+                        total_duration += event.duration_seconds
+                    accumulated_text += "\n\n🎯 <i>[Steered turn in progress...]</i>\n"
+
                 elif event.type in ("result", "error"):
                     final_event = event
+                    if event.usage:
+                        total_tokens += event.usage.get("total_tokens", 0)
+                        thinking_tokens += event.usage.get("thinking_tokens", 0)
+                    if event.duration_seconds:
+                        total_duration += event.duration_seconds
 
                 # Throttled live update
                 if (now - last_edit_time) >= self.config.stream_throttle_seconds:
@@ -607,15 +685,15 @@ class AgyTelegramBot:
             else:
                 final_text = "(Done, no textual response)"
 
-            duration = final_event.duration_seconds if final_event else None
-            tokens = final_event.usage.get("total_tokens") if final_event else None
-            thinking = final_event.usage.get("thinking_tokens") if final_event else None
+            duration = total_duration or (final_event.duration_seconds if final_event else None)
+            tokens_val = total_tokens or (final_event.usage.get("total_tokens") if final_event else None)
+            thinking_val = thinking_tokens or (final_event.usage.get("thinking_tokens") if final_event else None)
 
             formatted_final = format_final_result(
                 response_text=final_text,
                 duration_seconds=duration,
-                total_tokens=tokens,
-                thinking_tokens=thinking,
+                total_tokens=tokens_val,
+                thinking_tokens=thinking_val,
                 conversation_id=conv_id,
             )
 
@@ -662,4 +740,4 @@ class AgyTelegramBot:
 if __name__ == "__main__":
     cfg = Config.load()
     bot = AgyTelegramBot(cfg)
-    print("AgyTelegramBot class initialized successfully!")
+    print("AgyTelegramBot class initialized successfully with steering support!")

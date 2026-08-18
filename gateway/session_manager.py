@@ -238,23 +238,31 @@ class SessionManager:
         return False
 
     def load(self) -> None:
-        """Load sessions from persistence file if exists."""
-        if not self.persistence_file or not self.persistence_file.is_file():
+        """Load sessions from persistence file (or legacy fallback) if exists."""
+        target_file = self.persistence_file
+        if target_file and not target_file.is_file():
+            # Check legacy root sessions.json fallback
+            legacy_file = Path("sessions.json")
+            if legacy_file.is_file():
+                target_file = legacy_file
+
+        if not target_file or not target_file.is_file():
             return
         try:
-            with open(self.persistence_file, "r", encoding="utf-8") as f:
+            with open(target_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             for k, v in data.items():
                 self._sessions[int(k)] = ChatSession.from_dict(v)
-            logger.info("Loaded %d sessions from %s", len(self._sessions), self.persistence_file)
+            logger.info("Loaded %d sessions from %s", len(self._sessions), target_file)
         except Exception as e:
-            logger.warning("Failed to load sessions from %s: %s", self.persistence_file, e)
+            logger.warning("Failed to load sessions from %s: %s", target_file, e)
 
     def save(self) -> None:
         """Save sessions to persistence file."""
         if not self.persistence_file:
             return
         try:
+            self.persistence_file.parent.mkdir(parents=True, exist_ok=True)
             data = {str(k): v.to_dict() for k, v in self._sessions.items()}
             temp_path = self.persistence_file.with_suffix(".tmp")
             with open(temp_path, "w", encoding="utf-8") as f:
@@ -265,7 +273,7 @@ class SessionManager:
 
 
 if __name__ == "__main__":
-    test_file = Path("test_sessions_tmp.json")
+    test_file = Path("runtime/test_sessions_tmp.json")
     if test_file.exists():
         test_file.unlink()
 

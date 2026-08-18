@@ -1,4 +1,4 @@
-"""Subprocess bridge for running agy CLI and parsing its streaming output."""
+"""Subprocess bridge for running agy CLI, streaming JSON events, and steering running sessions."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class AgyEvent:
     """An event emitted by the agy stream-json protocol."""
 
-    type: str  # "init", "tool", "text_delta", "checkpoint", "result", "error", "raw"
+    type: str  # "init", "tool", "text_delta", "checkpoint", "result", "turn_complete", "steer", "error", "raw"
     conversation_id: Optional[str] = None
     step_index: Optional[int] = None
     tool_name: Optional[str] = None
@@ -35,7 +35,7 @@ class AgyEvent:
 
 
 class AgyBridge:
-    """Manages executing the agy CLI and streaming its JSON events."""
+    """Manages executing the agy CLI, streaming its JSON events, and steering mid-flight sessions."""
 
     def __init__(
         self,
@@ -48,18 +48,23 @@ class AgyBridge:
         self.timeout_seconds = timeout_seconds
         self._current_process: Optional[asyncio.subprocess.Process] = None
         self._is_stopped = False
+        self._pending_turns = 0
+        self._lock = asyncio.Lock()
+        self._steer_history: List[str] = []
 
     def build_command(
         self,
-        prompt: str,
+        prompt: Optional[str] = None,
         conversation_id: Optional[str] = None,
         model: Optional[str] = None,
         effort: Optional[str] = None,
         working_dir: Optional[str] = None,
     ) -> List[str]:
-        """Construct command line arguments for running agy."""
+        """Construct command line arguments for running agy in stream-json mode."""
         cmd = [
             self.agy_bin,
+            "--input-format",
+            "stream-json",
             "--output-format",
             "stream-json",
             "--dangerously-skip-permissions",
@@ -80,8 +85,36 @@ class AgyBridge:
         if effort:
             cmd.extend(["--effort", effort])
 
-        cmd.extend(["--print", prompt])
         return cmd
+
+    async def steer(self, message: str) -> bool:
+        """Inject a steering message into the active agy session over stdin."""
+        msg_str = message.strip()
+        if not msg_str:
+            return False
+
+        async with self._lock:
+            proc = self._current_process
+            if not proc or proc.returncode is not None or not proc.stdin or proc.stdin.is_closing():
+                logger.warning("Cannot steer: agy process is not active or stdin is closed.")
+                return False
+
+            try:
+                payload = json.dumps({"type": "user", "message": {"content": msg_str}}) + "\n"
+                proc.stdin.write(payload.encode("utf-8"))
+                await proc.stdin.drain()
+                self._pending_turns += 1
+                self._steer_history.append(msg_str)
+                logger.info(
+                    "Steering message injected to agy process (PID %s, pending turns: %d): %s",
+                    proc.pid,
+                    self._pending_turns,
+                    msg_str[:80],
+                )
+                return True
+            except Exception as e:
+                logger.error("Failed to write steering message to agy stdin: %s", e)
+                return False
 
     async def run_streaming(
         self,
@@ -91,8 +124,9 @@ class AgyBridge:
         effort: Optional[str] = None,
         working_dir: Optional[str] = None,
     ) -> AsyncIterator[AgyEvent]:
-        """Run agy CLI and yield streaming AgyEvent instances."""
+        """Run agy CLI with stream-json input/output and yield streaming AgyEvent instances."""
         self._is_stopped = False
+        self._steer_history.clear()
         cmd = self.build_command(
             prompt=prompt,
             conversation_id=conversation_id,
@@ -107,6 +141,7 @@ class AgyBridge:
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=effective_dir,
@@ -125,6 +160,14 @@ class AgyBridge:
 
         assert process.stdout is not None
         assert process.stderr is not None
+        assert process.stdin is not None
+
+        # Send initial user prompt turn
+        async with self._lock:
+            self._pending_turns = 1
+            init_payload = json.dumps({"type": "user", "message": {"content": prompt}}) + "\n"
+            process.stdin.write(init_payload.encode("utf-8"))
+            await process.stdin.drain()
 
         try:
             # Stream lines from stdout
@@ -141,7 +184,36 @@ class AgyBridge:
                     continue
 
                 event = self._parse_line(line_str)
-                if event:
+                if not event:
+                    continue
+
+                if event.type == "result":
+                    async with self._lock:
+                        self._pending_turns -= 1
+                        has_more_turns = (self._pending_turns > 0)
+                        if not has_more_turns and not process.stdin.is_closing():
+                            try:
+                                process.stdin.close()
+                            except Exception:
+                                pass
+
+                    if has_more_turns:
+                        # Turn complete, but more steered turns are queued
+                        yield AgyEvent(
+                            type="turn_complete",
+                            conversation_id=event.conversation_id,
+                            status=event.status,
+                            response=event.response,
+                            duration_seconds=event.duration_seconds,
+                            usage=event.usage,
+                            payload=event.payload,
+                        )
+                        continue
+                    else:
+                        # Final result for the entire multi-turn exchange
+                        yield event
+                        break
+                else:
                     yield event
 
             await process.wait()
@@ -261,6 +333,11 @@ class AgyBridge:
         if proc and proc.returncode is None:
             logger.info("Stopping running agy subprocess (PID: %s)...", proc.pid)
             try:
+                if proc.stdin and not proc.stdin.is_closing():
+                    try:
+                        proc.stdin.close()
+                    except Exception:
+                        pass
                 proc.terminate()
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=2.0)
@@ -285,6 +362,8 @@ if __name__ == "__main__":
                 print(f"[TOOL] {event.tool_name} ({event.tool_state}): {event.tool_info}")
             elif event.type == "text_delta":
                 print(f"[TEXT] {event.text_delta}", end="", flush=True)
+            elif event.type == "turn_complete":
+                print(f"\n[TURN COMPLETE] Response: {event.response}")
             elif event.type == "result":
                 print(f"\n[RESULT] Status: {event.status}, Tokens: {event.usage.get('total_tokens')}, Time: {event.duration_seconds}s")
             elif event.type == "error":

@@ -13,14 +13,14 @@ def test_build_command():
     cmd1 = bridge.build_command(prompt="hello")
     assert cmd1 == [
         "/usr/bin/agy",
+        "--input-format",
+        "stream-json",
         "--output-format",
         "stream-json",
         "--dangerously-skip-permissions",
         "--new-project",
         "--add-dir",
         "/workspace",
-        "--print",
-        "hello",
     ]
 
     # Resume session with options
@@ -116,6 +116,23 @@ async def test_mocked_streaming(monkeypatch):
         b'{"event":"result","result":{"conversation_id":"mock-conv-1","status":"SUCCESS","response":"Hello World","duration_seconds":0.5,"usage":{"total_tokens":100}}}\n',
     ]
 
+    class MockStdin:
+        def __init__(self):
+            self.written = []
+            self.closed = False
+
+        def write(self, data):
+            self.written.append(data)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+        def is_closing(self):
+            return self.closed
+
     class MockStream:
         def __init__(self, lines):
             self.lines = list(lines)
@@ -130,19 +147,21 @@ async def test_mocked_streaming(monkeypatch):
 
     class MockProcess:
         def __init__(self):
+            self.stdin = MockStdin()
             self.stdout = MockStream(mock_lines)
             self.stderr = MockStream([])
-            self.returncode = 0
+            self.returncode = None
             self.pid = 12345
 
         async def wait(self):
+            self.returncode = 0
             return 0
 
         def terminate(self):
-            pass
+            self.returncode = 0
 
         def kill(self):
-            pass
+            self.returncode = 0
 
     async def mock_subprocess_exec(*args, **kwargs):
         return MockProcess()
@@ -163,3 +182,45 @@ async def test_mocked_streaming(monkeypatch):
     assert events[3].text_delta == " World"
     assert events[4].type == "result"
     assert events[4].response == "Hello World"
+
+
+@pytest.mark.asyncio
+async def test_steer_method(monkeypatch):
+    """Test steer method writes properly formatted JSON to subprocess stdin."""
+    bridge = AgyBridge()
+
+    # When no process is active
+    assert await bridge.steer("test steering") is False
+
+    class MockStdin:
+        def __init__(self):
+            self.written = []
+            self.closed = False
+
+        def write(self, data):
+            self.written.append(data)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+        def is_closing(self):
+            return self.closed
+
+    class MockProcess:
+        def __init__(self):
+            self.stdin = MockStdin()
+            self.returncode = None
+            self.pid = 9999
+
+    proc = MockProcess()
+    bridge._current_process = proc
+
+    res = await bridge.steer("Please focus on Python")
+    assert res is True
+    assert bridge._pending_turns == 1
+    assert len(proc.stdin.written) == 1
+    payload = json.loads(proc.stdin.written[0].decode())
+    assert payload == {"type": "user", "message": {"content": "Please focus on Python"}}

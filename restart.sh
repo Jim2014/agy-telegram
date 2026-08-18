@@ -7,12 +7,25 @@
 #   ./restart.sh --check  config validation only
 set -u
 cd "$(dirname "$0")" || exit 1
-PIDFILE="gateway.pid"
+mkdir -p runtime
+PIDFILE="runtime/gateway.pid"
+LEGACY_PIDFILE="gateway.pid"
+
+# Determine python command (venv, conda, or system python)
+if [ -x "./venv/bin/python" ]; then
+    PY_BIN="./venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PY_BIN="python3"
+else
+    PY_BIN="python"
+fi
 
 ensure_stopped() {
     local pid=""
     if [ -f "$PIDFILE" ]; then
         pid=$(cat "$PIDFILE" 2>/dev/null || true)
+    elif [ -f "$LEGACY_PIDFILE" ]; then
+        pid=$(cat "$LEGACY_PIDFILE" 2>/dev/null || true)
     fi
 
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
@@ -23,16 +36,16 @@ ensure_stopped() {
             kill -9 "$pid" 2>/dev/null
         fi
     else
-        # No pidfile (or stale): fall back to pattern match scoped to this project's venv.
-        pkill -f "venv/bin/python main.py" 2>/dev/null || true
+        # No pidfile (or stale): fall back to pattern match scoped to this project.
+        pkill -f "python.*main.py" 2>/dev/null || true
         sleep 1
     fi
-    rm -f "$PIDFILE"
+    rm -f "$PIDFILE" "$LEGACY_PIDFILE"
 }
 
 case "${1:-}" in
     --check)
-        ./venv/bin/python main.py --check-config
+        $PY_BIN main.py --check-config
         exit $?
         ;;
     stop)
@@ -41,12 +54,18 @@ case "${1:-}" in
         exit 0
         ;;
     status)
+        active_pid=""
         if [ -f "$PIDFILE" ]; then
-            pid=$(cat "$PIDFILE" 2>/dev/null || true)
-            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-                echo "✅ Running (PID $pid)"
+            active_pid=$(cat "$PIDFILE" 2>/dev/null || true)
+        elif [ -f "$LEGACY_PIDFILE" ]; then
+            active_pid=$(cat "$LEGACY_PIDFILE" 2>/dev/null || true)
+        fi
+
+        if [ -n "$active_pid" ]; then
+            if kill -0 "$active_pid" 2>/dev/null; then
+                echo "✅ Running (PID $active_pid)"
             else
-                echo "⚠️  Stale pidfile (PID $pid not running)"
+                echo "⚠️  Stale pidfile (PID $active_pid not running)"
             fi
         else
             echo "❌ Not running (no $PIDFILE)"
@@ -58,14 +77,14 @@ esac
 ensure_stopped
 
 echo "🚀 Starting gateway..."
-nohup ./venv/bin/python main.py >/dev/null 2>&1 &
+nohup $PY_BIN main.py >/dev/null 2>&1 &
 echo $! > "$PIDFILE"
 sleep 2
 
-if kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     echo "✅ Gateway restarted (PID $(cat "$PIDFILE"))"
-    echo "   Log: $(pwd)/gateway.log   (tail -f -n 50 gateway.log)"
+    echo "   Log: $(pwd)/runtime/gateway.log   (tail -f -n 50 runtime/gateway.log)"
 else
-    echo "❌ Gateway failed to start — check $(pwd)/gateway.log"
+    echo "❌ Gateway failed to start — check $(pwd)/runtime/gateway.log"
     exit 1
 fi

@@ -11,7 +11,8 @@ def test_default_config():
     assert cfg.default_effort == "medium"
     assert cfg.stream_throttle_seconds == 1.0
     assert cfg.agy_timeout_seconds == 300
-    assert cfg.log_file == "gateway.log"
+    assert cfg.log_file == "runtime/gateway.log"
+    assert cfg.sessions_file == "runtime/sessions.json"
     assert cfg.is_chat_allowed(123456) is True
 
 

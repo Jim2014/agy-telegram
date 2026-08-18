@@ -27,8 +27,8 @@ class Config:
     stream_throttle_seconds: float = 1.0
     agy_timeout_seconds: int = 300
     log_level: str = "INFO"
-    log_file: str = "gateway.log"
-    sessions_file: str = "sessions.json"
+    log_file: str = "runtime/gateway.log"
+    sessions_file: str = "runtime/sessions.json"
 
     @classmethod
     def load(cls, env_path: str | Path | None = None) -> Config:
@@ -36,9 +36,9 @@ class Config:
         if env_path is None:
             default_env = BASE_DIR / ".env"
             if default_env.is_file():
-                load_dotenv(dotenv_path=default_env)
+                load_dotenv(dotenv_path=default_env, override=True)
         else:
-            load_dotenv(dotenv_path=env_path)
+            load_dotenv(dotenv_path=env_path, override=True)
 
         bot_token = os.getenv("BOT_TOKEN", "").strip()
 
@@ -85,8 +85,8 @@ class Config:
             agy_timeout = 300
 
         log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
-        log_file = os.getenv("LOG_FILE", "gateway.log").strip()
-        sessions_file = os.getenv("SESSIONS_FILE", "sessions.json").strip()
+        log_file = os.getenv("LOG_FILE", "runtime/gateway.log").strip()
+        sessions_file = os.getenv("SESSIONS_FILE", "runtime/sessions.json").strip()
 
         return cls(
             bot_token=bot_token,

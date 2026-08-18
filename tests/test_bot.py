@@ -1,10 +1,10 @@
-"""Unit tests for gateway.bot command routing and streaming orchestration."""
+"""Unit tests for gateway.bot command routing, steering, and streaming orchestration."""
 
 import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 import pytest
-from gateway.agy_bridge import AgyEvent
+from gateway.agy_bridge import AgyBridge, AgyEvent
 from gateway.bot import AgyTelegramBot
 from gateway.config import Config
 
@@ -33,6 +33,7 @@ async def test_bot_help_and_status(mock_bot):
     assert "/new" in mock_bot.client.send_message.call_args[1]["text"]
     assert "/open" in mock_bot.client.send_message.call_args[1]["text"]
     assert "/projects" in mock_bot.client.send_message.call_args[1]["text"]
+    assert "/steer" in mock_bot.client.send_message.call_args[1]["text"]
 
     # /status
     mock_bot.client.send_message.reset_mock()
@@ -196,7 +197,6 @@ async def test_bot_prompt_streaming(mock_bot, monkeypatch):
             conversation_id="conv-streaming-123",
         )
 
-    from gateway.agy_bridge import AgyBridge
     monkeypatch.setattr(AgyBridge, "run_streaming", mock_run_streaming)
 
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "What is 6x7?", "message_id": 10}})
@@ -216,6 +216,35 @@ async def test_bot_prompt_streaming(mock_bot, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bot_steer_command_and_midflight_steering(mock_bot):
+    mock_bot.session_manager.create_project(100, "test_proj", "/tmp")
+
+    # 1. /steer when idle
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/steer add comments", "message_id": 50}})
+    assert "No task is currently running" in mock_bot.client.send_message.call_args[1]["text"]
+
+    # 2. Simulate running bridge
+    mock_bridge = AsyncMock()
+    mock_bridge.steer = AsyncMock(return_value=True)
+    mock_bot.active_bridges[100] = mock_bridge
+    mock_bot.session_manager.set_busy(100, True)
+
+    # /steer with instruction
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/steer use async", "message_id": 51}})
+    mock_bridge.steer.assert_called_with("use async")
+    assert "Steering instruction sent" in mock_bot.client.send_message.call_args[1]["text"]
+
+    # 3. Regular text sent while busy automatically steers!
+    mock_bridge.steer.reset_mock()
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "make it faster", "message_id": 52}})
+    mock_bridge.steer.assert_called_with("make it faster")
+    assert "Steered into active session" in mock_bot.client.send_message.call_args[1]["text"]
+
+
+@pytest.mark.asyncio
 async def test_bot_stop_command(mock_bot):
     # When no task is running
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/stop", "message_id": 20}})
@@ -223,3 +252,15 @@ async def test_bot_stop_command(mock_bot):
         chat_id=100,
         text="ℹ️ No active task is currently running.",
     )
+
+    # When a task is running
+    mock_bridge = AsyncMock()
+    mock_bridge.stop = AsyncMock()
+    mock_bot.active_bridges[100] = mock_bridge
+    mock_bot.session_manager.set_busy(100, True)
+
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/stop", "message_id": 21}})
+    mock_bridge.stop.assert_called_once()
+    assert mock_bot.session_manager.is_busy(100) is False
+    assert "interrupted" in mock_bot.client.send_message.call_args[1]["text"]

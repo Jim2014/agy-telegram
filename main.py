@@ -29,10 +29,12 @@ def setup_logging(config: Config) -> None:
     root_logger.handlers.clear()
 
     # File handler
-    file_handler = logging.FileHandler(config.log_file, encoding="utf-8")
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(formatter)
-    root_logger.addHandler(file_handler)
+    if config.log_file:
+        Path(config.log_file).parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(config.log_file, encoding="utf-8")
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)

@@ -1,11 +1,32 @@
+# Virtual environments & Conda
 venv/
+.venv/
+condaenv.*
+
+# Secrets & Environment variables
 .env
-__pycache__/
-*.pyc
-.DS_Store
+.env.local
+.env.*.local
+
+# Runtime generated files and directory
+runtime/
+*.log
 gateway.log
+*.pid
+gateway.pid
 sessions.json
+*.tmp
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+
+# Testing & Coverage
 .pytest_cache/
 .coverage
+htmlcov/
+
+# Local task tracking
 tasks/
-gateway.pid
