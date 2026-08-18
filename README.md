@@ -222,13 +222,23 @@ tail -f -n 50 runtime/watchdog.log
 | `/new <name> <path>` | 创建新项目并设为当前活跃工作区（已存在则切换） | `/new myapp /Users/jim/myapp` |
 | `/model <name>` | 切换当前对话使用的模型（如 `/model gemini-3.7-flash` 或 `/model gemini-3.1-pro`） | `/model gemini-3.7-flash` |
 | `/effort <level>` | 调整推理强度：`low`、`medium`、`high` | `/effort high` |
-| `/dir` 或 `/ls [path]` | 扫描工作区目录并生成交互式折叠 HTML 文件树，支持一键点击复制 `/file` 下载指令 | `/dir` 或 `/ls tests` |
-| `/file <path>` | 发送当前项目工作区中的指定文件至 Telegram 客户端 | `/file README.md` |
+| `/dir` 或 `/ls [path]` | 扫描工作区目录并生成交互式折叠 HTML 文件树，支持一键点击复制 `/file` 与 `/file -h` 指令 | `/dir` 或 `/ls tests` |
+| `/file [-h] <path>` | 发送工作区文件；使用 `-h` 参数动态转换为对应格式的独立 HTML 文件（如 `bot.py.html`、`README.md.html`） | `/file -h bot.py` |
 | `/export` | 将当前会话状态或最新输出导出为独立排版的 HTML 文件并发送 | `/export` |
 | `/steer <instruction>` | 显式向正在执行的任务注入引导指令（无需打断当前进程） | `/steer 请使用异步写法` |
 | `/stop` | 强制中断并杀死当前正在执行的 agy 进程 | `/stop` |
 | `/reset` | 清空当前活跃项目的 `conversation_id`（重置会话） | `/reset` |
 | `/delete <name>` | 删除指定项目（如为活跃项目则重置活跃状态） | `/delete myapp` |
+
+### 📄 文件多模板 HTML 动态渲染 (`/file -h`)
+
+使用 `/file -h <path>` 时，网关会根据文件后缀名自动匹配专有渲染模板并输出 `<filename>.html`：
+- **代码文件** (`.py`, `.js`, `.ts`, `.html`, `.css`, `.json`, `.yaml`, `.sql`, `.sh`, `.rs`, `.go` 等)：生成带行号、语法着色高亮、一键代码复制和移动端自适应排版的 HTML 视图。
+- **Markdown 文件** (`.md`, `.markdown`)：解析并渲染为排版优美的排版文章视图（标题、列表、富文本、表格、代码块）。
+- **Diff / Patch 文件** (`.diff`, `.patch`)：统一补丁视图，绿底新增行、红底删除行、行号与变更块高亮。
+- **表格数据文件** (`.csv`, `.tsv`)：解析并渲染为响应式数据表格，支持表头固定与行计数。
+- **纯文本 / 日志 / 配置** (`.txt`, `.log`, `.env*`, `.gitignore`)：等宽控制台文本视图与行号。
+- **二进制 / 不支持的文件** (如图片、音视频、压缩包等)：自动优雅回退并发送原始原文件，不进行无效转换。
 
 ### 中途引导 (Steering) 与系统提示词注入机制
 

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from gateway.agy_bridge import AgyBridge, AgyEvent
 from gateway.config import Config
 from gateway.dir_tree import generate_dir_tree_html, scan_directory_tree
+from gateway.file_renderers import render_file_to_html
 from gateway.message_formatter import (
     AgyFileBlock,
     escape_html,
@@ -41,7 +42,7 @@ DEFAULT_BOT_COMMANDS: List[Dict[str, str]] = [
     {"command": "model", "description": "🧠 Set or reset model (/model <name>|reset)"},
     {"command": "effort", "description": "⚡ Set reasoning effort (low|medium|high)"},
     {"command": "export", "description": "📄 Export conversation as HTML report"},
-    {"command": "file", "description": "📎 Send workspace file (/file <path>)"},
+    {"command": "file", "description": "📎 Send file or render HTML (/file [-h] <path>)"},
     {"command": "dir", "description": "📁 Browse workspace files & interactive tree"},
     {"command": "steer", "description": "🎯 Steer active task (/steer <text>)"},
     {"command": "stop", "description": "🛑 Interrupt running agy prompt"},
@@ -889,18 +890,29 @@ class AgyTelegramBot:
             )
 
     async def handle_cmd_file(self, chat_id: int, arg: str, reply_to_id: Optional[int]) -> None:
-        """Send a project workspace file as document (/file <relative_or_abs_path>)."""
-        if not arg:
+        """Send a project workspace file as document (/file [-h] <relative_or_abs_path>)."""
+        parts = arg.strip().split() if arg else []
+        as_html = False
+        path_parts: List[str] = []
+        for p in parts:
+            if p in ("-h", "--html", "-H"):
+                as_html = True
+            else:
+                path_parts.append(p)
+
+        file_arg = " ".join(path_parts).strip()
+        if not file_arg:
             await self._safe_send_message(
                 chat_id=chat_id,
-                text="⚠️ Usage: <code>/file &lt;relative_or_abs_path&gt;</code>\nSend a workspace file directly to Telegram.",
+                text="⚠️ Usage: <code>/file [-h] &lt;relative_or_abs_path&gt;</code>\nSend a workspace file directly to Telegram (use <code>-h</code> to render as HTML).",
                 reply_to_message_id=reply_to_id,
             )
             return
 
         session = self.session_manager.get_session(chat_id)
+        active_proj = session.active_project or "default"
         base_dir = Path(session.active_path() or self.config.agy_working_dir or os.getcwd())
-        raw_path = Path(arg.strip()).expanduser()
+        raw_path = Path(file_arg).expanduser()
 
         target_file = (base_dir / raw_path).resolve() if not raw_path.is_absolute() else raw_path.resolve()
 
@@ -916,13 +928,48 @@ class AgyTelegramBot:
         size_str = f"{size_kb:.1f} KB" if size_kb >= 1 else f"{target_file.stat().st_size} bytes"
 
         await self._safe_send_chat_action(chat_id, "upload_document")
-        res = await self._safe_send_document(
-            chat_id=chat_id,
-            document_content=target_file,
-            filename=target_file.name,
-            caption=f"📄 <b>{escape_html(target_file.name)}</b> ({size_str})",
-            reply_to_message_id=reply_to_id,
-        )
+
+        if as_html:
+            try:
+                rel_path = str(target_file.relative_to(base_dir))
+            except ValueError:
+                rel_path = target_file.name
+
+            is_converted, html_doc, out_filename = render_file_to_html(
+                target_file=target_file,
+                project_name=active_proj,
+                rel_path=rel_path,
+            )
+
+            if is_converted:
+                caption = f"🌐 <b>{escape_html(out_filename)}</b>\nHTML view of <code>{escape_html(target_file.name)}</code> ({size_str})"
+                res = await self._safe_send_document(
+                    chat_id=chat_id,
+                    document_content=html_doc,
+                    filename=out_filename,
+                    caption=caption,
+                    reply_to_message_id=reply_to_id,
+                )
+            else:
+                # Binary or unsupported -> return original file directly
+                caption = f"📄 <b>{escape_html(target_file.name)}</b> ({size_str})\n<i>(HTML conversion not supported for binary file, sent original)</i>"
+                res = await self._safe_send_document(
+                    chat_id=chat_id,
+                    document_content=target_file,
+                    filename=target_file.name,
+                    caption=caption,
+                    reply_to_message_id=reply_to_id,
+                )
+        else:
+            # Raw file
+            res = await self._safe_send_document(
+                chat_id=chat_id,
+                document_content=target_file,
+                filename=target_file.name,
+                caption=f"📄 <b>{escape_html(target_file.name)}</b> ({size_str})",
+                reply_to_message_id=reply_to_id,
+            )
+
         if not res:
             logger.error("Failed to send file %s to chat %d", target_file, chat_id)
             await self._safe_send_message(

@@ -175,7 +175,7 @@ async def test_bot_file_and_export_commands(mock_bot, tmp_path):
 
     mock_bot.session_manager.create_project(100, "my_project", str(proj_dir))
 
-    # Test /file sample.txt
+    # Test /file sample.txt (raw)
     mock_bot.client.send_document.reset_mock()
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/file sample.txt", "message_id": 60}})
     mock_bot.client.send_document.assert_called_once()
@@ -183,9 +183,17 @@ async def test_bot_file_and_export_commands(mock_bot, tmp_path):
     assert call_args["filename"] == "sample.txt"
     assert call_args["chat_id"] == 100
 
+    # Test /file -h sample.txt (HTML mode)
+    mock_bot.client.send_document.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/file -h sample.txt", "message_id": 61}})
+    mock_bot.client.send_document.assert_called_once()
+    call_args_h = mock_bot.client.send_document.call_args[1]
+    assert call_args_h["filename"] == "sample.txt.html"
+    assert "HTML view" in call_args_h["caption"]
+
     # Test /export
     mock_bot.client.send_document.reset_mock()
-    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/export", "message_id": 61}})
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/export", "message_id": 62}})
     mock_bot.client.send_document.assert_called_once()
     export_args = mock_bot.client.send_document.call_args[1]
     assert "session_report" in export_args["filename"]

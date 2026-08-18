@@ -216,6 +216,7 @@ def _render_tree_nodes_html(nodes: List[Dict[str, Any]], depth: int = 0) -> str:
             icon = node.get("icon", "📄")
             rel_path = node["rel_path"]
             cmd_copy = html.escape(f"/file {rel_path}")
+            cmd_copy_html = html.escape(f"/file -h {rel_path}")
             html_parts.append(
                 f'<li class="tree-node is-file" data-path="{rel_esc}">'
                 f'<div class="node-row file-row" data-cmd="{cmd_copy}" onclick="copyFileFromRow(this)">'
@@ -223,9 +224,14 @@ def _render_tree_nodes_html(nodes: List[Dict[str, Any]], depth: int = 0) -> str:
                 f'<span class="icon">{icon}</span>'
                 f'<span class="node-name">{name_esc}</span>'
                 f'<span class="file-size">{size_str}</span>'
-                f'<button class="copy-btn" title="Click to copy /file command" onclick="event.stopPropagation(); copyFileFromBtn(this)">'
-                f'📋 Copy /file'
+                f'<div class="btn-group" onclick="event.stopPropagation()">'
+                f'<button class="copy-btn" title="Copy raw /file command" data-cmd="{cmd_copy}" onclick="copyFileCmd(\'{cmd_copy}\', this)">'
+                f'📋 /file'
                 f'</button>'
+                f'<button class="copy-btn html-btn" title="Copy HTML /file -h command" data-cmd="{cmd_copy_html}" onclick="copyFileCmd(\'{cmd_copy_html}\', this)">'
+                f'🌐 /file -h'
+                f'</button>'
+                f'</div>'
                 f'</div>'
                 f'</li>'
             )
@@ -541,6 +547,17 @@ def generate_dir_tree_html(
       border-color: var(--accent);
     }}
 
+    .copy-btn.html-btn {{
+      color: #a855f7;
+      border-color: rgba(168, 85, 247, 0.3);
+      background: rgba(168, 85, 247, 0.08);
+    }}
+
+    .copy-btn.html-btn:hover {{
+      background: rgba(168, 85, 247, 0.2);
+      border-color: #a855f7;
+    }}
+
     .copy-btn.copied {{
       background: var(--success-bg);
       color: var(--success);
@@ -607,7 +624,7 @@ def generate_dir_tree_html(
 
     <div class="tip-banner">
       <span>💡</span>
-      <span>Tap any file or click <b>Copy /file</b> to copy command, then paste in Telegram chat to receive the file.</span>
+      <span>Tap any file or click <b>📋 /file</b> for raw file, or click <b>🌐 /file -h</b> to copy the HTML rendering command!</span>
     </div>
 
     <div class="tree-container" id="treeContainer">
