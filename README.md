@@ -205,8 +205,8 @@ tail -f -n 50 runtime/watchdog.log
 
 为了提高移动端操作效率，网关全面支持交互式按钮点击：
 - **/projects 项目菜单**：直接附带每个项目的点击按钮（如 `[ 🌟 myapp ]`、`[ 📂 backend ]`）及 `[ 🔄 Refresh ]`，点击即可一键切换当前工作区，无需手动复制或输入命令。
-- **/effort 推理强度**：附带 `[ 🟢 Low ]`、`[ 🟡 Medium ]`、`[ 🔴 High ]` 快速选择按钮，点击即时生效。
-- **/model 模型切换**：附带 `[ ⚡ Gemini 2.5 Flash ]`、`[ 🧠 Gemini 2.5 Pro ]`、`[ 🔄 Reset to Default ]` 按钮快速切换。
+- **/effort 推理强度**：展示当前激活状态并附带 `[ 🟢 Low ]`、`[ 🟡 Medium ]`、`[ 🔴 High ]` 快速选择按钮，点击即时生效。
+- **/model 模型切换**：展示当前激活模型与所有模型选项，附带 `[ ⚡ Gemini 3.7 Flash ]`、`[ 🧠 Gemini 3.1 Pro ]` 按钮快速切换。
 
 ### 支持的命令列表
 
@@ -220,7 +220,7 @@ tail -f -n 50 runtime/watchdog.log
 | `/projects` | 列出所有项目、活跃标记、工作区路径与最后活跃时间 | `/projects` |
 | `/open <name>` | 打开并切换到已有项目，恢复其历史会话 | `/open myapp` |
 | `/new <name> <path>` | 创建新项目并设为当前活跃工作区（已存在则切换） | `/new myapp /Users/jim/myapp` |
-| `/model <name>` | 切换当前对话使用的模型（或 `/model reset` 恢复默认） | `/model gemini-2.5-pro` |
+| `/model <name>` | 切换当前对话使用的模型（如 `/model gemini-3.7-flash` 或 `/model gemini-3.1-pro`） | `/model gemini-3.7-flash` |
 | `/effort <level>` | 调整推理强度：`low`、`medium`、`high` | `/effort high` |
 | `/dir <path>` | 修改当前活跃项目的工作目录路径 | `/dir /Users/jim/my-project` |
 | `/file <path>` | 发送当前项目工作区中的指定文件至 Telegram 客户端 | `/file README.md` |

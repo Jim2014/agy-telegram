@@ -51,9 +51,9 @@ async def test_bot_help_and_status(mock_bot):
 async def test_bot_model_and_effort(mock_bot):
     # /model
     mock_bot.client.send_message.reset_mock()
-    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/model gemini-2.5-flash", "message_id": 3}})
-    assert "gemini-2.5-flash" in mock_bot.client.send_message.call_args[1]["text"]
-    assert mock_bot.session_manager.get_session(100).model == "gemini-2.5-flash"
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/model gemini-3.7-flash", "message_id": 3}})
+    assert "gemini-3.7-flash" in mock_bot.client.send_message.call_args[1]["text"]
+    assert mock_bot.session_manager.get_session(100).model == "gemini-3.7-flash"
 
     # /effort
     mock_bot.client.send_message.reset_mock()
@@ -674,14 +674,14 @@ async def test_bot_callback_query_effort_and_model(mock_bot):
             "id": "cb_model_1",
             "from": {"id": 100},
             "message": {"chat": {"id": 100}, "message_id": 602},
-            "data": "model:gemini-2.5-pro",
+            "data": "model:gemini-3.1-pro",
         }
     }
     await mock_bot.process_update(cb_model)
-    assert mock_bot.session_manager.get_session(100).model == "gemini-2.5-pro"
+    assert mock_bot.session_manager.get_session(100).model == "gemini-3.1-pro"
     mock_bot.client.answer_callback_query.assert_called_with(
         callback_query_id="cb_model_1",
-        text="Model set to gemini-2.5-pro",
+        text="Model set to gemini-3.1-pro",
         show_alert=False,
     )
 

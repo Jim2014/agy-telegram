@@ -59,8 +59,8 @@ class Config:
     allowed_chat_ids: Set[int] = field(default_factory=set)
     agy_bin_path: str = "/Users/jim/.local/bin/agy"
     agy_working_dir: str = ""
-    default_model: str = ""
-    default_effort: str = "medium"
+    default_model: str = "gemini-3.7-flash"
+    default_effort: str = "high"
     stream_throttle_seconds: float = 1.0
     agy_timeout_seconds: int = 300
     log_level: str = "INFO"
@@ -107,8 +107,8 @@ class Config:
             working_dir = str(BASE_DIR)
 
         # Other options
-        default_model = os.getenv("DEFAULT_MODEL", "").strip()
-        default_effort = os.getenv("DEFAULT_EFFORT", "medium").strip().lower()
+        default_model = os.getenv("DEFAULT_MODEL", "gemini-3.7-flash").strip()
+        default_effort = os.getenv("DEFAULT_EFFORT", "high").strip().lower()
         if default_effort not in ("low", "medium", "high"):
             default_effort = "medium"
 

@@ -528,10 +528,18 @@ class AgyTelegramBot:
             await self._safe_answer_callback_query(cq_id, text="Projects refreshed")
             await self.handle_cmd_projects(chat_id, edit_message_id=message_id)
 
+        elif data == "effort:show":
+            await self._safe_answer_callback_query(cq_id)
+            await self.handle_cmd_effort(chat_id, edit_message_id=message_id)
+
         elif data.startswith("effort:"):
             effort_val = data[7:].strip()
             await self.handle_cmd_effort(chat_id, arg=effort_val, edit_message_id=message_id)
             await self._safe_answer_callback_query(cq_id, text=f"Reasoning effort set to {effort_val}")
+
+        elif data == "model:show":
+            await self._safe_answer_callback_query(cq_id)
+            await self.handle_cmd_model(chat_id, edit_message_id=message_id)
 
         elif data.startswith("model:"):
             model_val = data[6:].strip()
@@ -670,8 +678,8 @@ class AgyTelegramBot:
 
         active_proj = session.active_project or "<i>(default / none)</i>"
         active_path = session.active_path() or self.config.agy_working_dir or os.getcwd()
-        model_str = session.model or self.config.default_model or "<i>(CLI default)</i>"
-        effort_str = session.effort or self.config.default_effort or "medium"
+        model_str = session.model or self.config.default_model or "gemini-3.7-flash"
+        effort_str = session.effort or self.config.default_effort or "high"
         busy_status = "🔴 Busy (Running prompt)" if session.is_busy else "🟢 Idle"
 
         # Startup time + uptime so the user can tell this is a fresh process
@@ -691,46 +699,63 @@ class AgyTelegramBot:
             f"• <b>Active Project:</b> <code>{escape_html(active_proj)}</code>\n"
             f"• <b>Working Directory:</b> <code>{escape_html(active_path)}</code>\n"
             f"• <b>Conversation ID:</b> {conv_id}\n"
-            f"• <b>Model:</b> {model_str}\n"
+            f"• <b>Model:</b> <code>{escape_html(model_str)}</code>\n"
             f"• <b>Effort:</b> <code>{escape_html(effort_str)}</code>\n"
             f"• <b>Configured Projects:</b> {len(session.projects)}\n"
         )
         await self._safe_send_message(chat_id=chat_id, text=status_text)
 
     async def handle_cmd_model(self, chat_id: int, arg: str = "", edit_message_id: Optional[int] = None) -> None:
-        """Change or view model with interactive option buttons."""
+        """Change or view model with interactive option buttons showing active status."""
         session = self.session_manager.get_session(chat_id)
-        buttons = [
-            [
-                {"text": "⚡ Gemini 2.5 Flash", "callback_data": "model:gemini-2.5-flash"},
-                {"text": "🧠 Gemini 2.5 Pro", "callback_data": "model:gemini-2.5-pro"},
-            ],
-            [
-                {"text": "🔄 Reset to Default", "callback_data": "model:reset"},
-            ],
-        ]
-        reply_markup = {"inline_keyboard": buttons}
-
-        if not arg:
-            cur = session.model or self.config.default_model or "CLI default"
-            text = (
-                f"🤖 <b>Model Configuration:</b>\n\n"
-                f"• Current model: <code>{escape_html(cur)}</code>\n\n"
-                f"Tap a button below to switch model, or use <code>/model &lt;name&gt;</code>:"
-            )
-            if edit_message_id:
-                await self._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
+        if arg and arg.lower() != "show":
+            val = arg.strip()
+            if val.lower() in ("reset", "default"):
+                self.session_manager.set_model(chat_id, None)
             else:
-                await self._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
-            return
+                self.session_manager.set_model(chat_id, val)
 
-        val = arg.strip()
-        if val.lower() in ("reset", "default"):
-            self.session_manager.set_model(chat_id, None)
-            text = "🤖 <b>Model reset to default.</b>"
-        else:
-            self.session_manager.set_model(chat_id, val)
-            text = f"🤖 <b>Model updated to:</b> <code>{escape_html(val)}</code>"
+        cur_model = session.model or self.config.default_model or "gemini-3.7-flash"
+        cur_effort = session.effort or self.config.default_effort or "high"
+
+        models = [
+            {
+                "id": "gemini-3.7-flash",
+                "name": "Gemini 3.7 Flash",
+                "icon": "⚡",
+                "desc": "Fast multimodal model with dynamic reasoning",
+            },
+            {
+                "id": "gemini-3.1-pro",
+                "name": "Gemini 3.1 Pro",
+                "icon": "🧠",
+                "desc": "State-of-the-art coding and deep reasoning",
+            },
+        ]
+
+        lines = [
+            "🤖 <b>Model & Reasoning Configuration:</b>\n",
+            f"• <b>Active Model:</b> <code>{escape_html(cur_model)}</code>",
+            f"• <b>Active Effort:</b> <code>{escape_html(cur_effort)}</code>\n",
+            "<b>Available Models:</b>",
+        ]
+
+        buttons: List[List[Dict[str, str]]] = []
+        for m in models:
+            is_active = (cur_model == m["id"])
+            marker = "🌟 <b>[ACTIVE]</b> " if is_active else "• "
+            lines.append(f"{marker}{m['icon']} <b>{m['name']}</b> (<code>{m['id']}</code>)\n   <i>{m['desc']}</i>")
+            btn_label = f"✓ {m['name']}" if is_active else f"{m['icon']} {m['name']}"
+            buttons.append([{"text": btn_label, "callback_data": f"model:{m['id']}"}])
+
+        buttons.append([
+            {"text": "⚡ Adjust Effort", "callback_data": "effort:show"},
+            {"text": "📊 Status", "callback_data": "status"},
+        ])
+
+        lines.append("\n💡 <i>Tap a button below to switch model instantly.</i>")
+        reply_markup = {"inline_keyboard": buttons}
+        text = "\n".join(lines)
 
         if edit_message_id:
             await self._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
@@ -738,42 +763,54 @@ class AgyTelegramBot:
             await self._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
 
     async def handle_cmd_effort(self, chat_id: int, arg: str = "", edit_message_id: Optional[int] = None) -> None:
-        """Change reasoning effort with interactive option buttons."""
+        """Change reasoning effort with interactive option buttons showing active status."""
         session = self.session_manager.get_session(chat_id)
-        cur = session.effort or self.config.default_effort or "medium"
+        if arg and arg.lower() != "show":
+            val = arg.strip().lower()
+            if val not in ("low", "medium", "high"):
+                await self._safe_send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Invalid effort value. Allowed: <code>low</code>, <code>medium</code>, <code>high</code>.",
+                )
+                return
+            self.session_manager.set_effort(chat_id, val)
 
-        def _make_effort_buttons(active_val: str) -> Dict[str, Any]:
-            btns = [
-                {"text": f"{'✓ ' if active_val == 'low' else ''}🟢 Low", "callback_data": "effort:low"},
-                {"text": f"{'✓ ' if active_val == 'medium' else ''}🟡 Medium", "callback_data": "effort:medium"},
-                {"text": f"{'✓ ' if active_val == 'high' else ''}🔴 High", "callback_data": "effort:high"},
-            ]
-            return {"inline_keyboard": [btns]}
+        cur_model = session.model or self.config.default_model or "gemini-3.7-flash"
+        cur_effort = session.effort or self.config.default_effort or "high"
 
-        if not arg:
-            text = (
-                f"⚙️ <b>Reasoning Effort Setting:</b>\n\n"
-                f"• Current level: <code>{escape_html(cur)}</code>\n\n"
-                f"Tap an option below to set reasoning effort:"
-            )
-            reply_markup = _make_effort_buttons(cur)
-            if edit_message_id:
-                await self._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
-            else:
-                await self._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
-            return
+        efforts = [
+            {"id": "high", "name": "High", "icon": "🔴", "desc": "Maximum reasoning budget & deep multi-step planning (Recommended)"},
+            {"id": "medium", "name": "Medium", "icon": "🟡", "desc": "Balanced reasoning depth and generation speed"},
+            {"id": "low", "name": "Low", "icon": "🟢", "desc": "Minimal reasoning latency for quick routine tasks"},
+        ]
 
-        val = arg.strip().lower()
-        if val not in ("low", "medium", "high"):
-            await self._safe_send_message(
-                chat_id=chat_id,
-                text="⚠️ Invalid effort value. Allowed: <code>low</code>, <code>medium</code>, <code>high</code>.",
-            )
-            return
+        lines = [
+            "⚙️ <b>Reasoning Effort Setting:</b>\n",
+            f"• <b>Active Model:</b> <code>{escape_html(cur_model)}</code>",
+            f"• <b>Active Effort:</b> <code>{escape_html(cur_effort)}</code>\n",
+            "<b>Available Effort Levels:</b>",
+        ]
 
-        self.session_manager.set_effort(chat_id, val)
-        text = f"⚙️ <b>Reasoning effort set to:</b> <code>{escape_html(val)}</code>"
-        reply_markup = _make_effort_buttons(val)
+        effort_buttons: List[Dict[str, str]] = []
+        for eff in efforts:
+            is_active = (cur_effort == eff["id"])
+            marker = "🌟 <b>[ACTIVE]</b> " if is_active else "• "
+            lines.append(f"{marker}{eff['icon']} <b>{eff['name']}</b> (<code>{eff['id']}</code>)\n   <i>{eff['desc']}</i>")
+            btn_label = f"✓ {eff['icon']} {eff['name']}" if is_active else f"{eff['icon']} {eff['name']}"
+            effort_buttons.append({"text": btn_label, "callback_data": f"effort:{eff['id']}"})
+
+        keyboard = [
+            effort_buttons,
+            [
+                {"text": "🤖 Switch Model", "callback_data": "model:show"},
+                {"text": "📊 Status", "callback_data": "status"},
+            ],
+        ]
+
+        lines.append("\n💡 <i>Tap an option below to adjust reasoning effort instantly.</i>")
+        reply_markup = {"inline_keyboard": keyboard}
+        text = "\n".join(lines)
+
         if edit_message_id:
             await self._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
         else:
