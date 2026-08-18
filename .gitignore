@@ -8,3 +8,4 @@ sessions.json
 .pytest_cache/
 .coverage
 tasks/
+gateway.pid
