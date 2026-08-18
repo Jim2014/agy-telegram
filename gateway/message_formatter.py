@@ -1,4 +1,4 @@
-"""Message formatting and chunking utilities for Telegram display."""
+"""Message formatting, Markdown-to-Telegram-HTML conversion, and chunking utilities."""
 
 from __future__ import annotations
 
@@ -16,11 +16,182 @@ def escape_html(text: str) -> str:
     return html.escape(text, quote=False)
 
 
+def balance_telegram_html(text: str) -> str:
+    """Ensure all opened Telegram HTML tags are properly balanced and closed."""
+    tags = ["b", "i", "s", "u", "code", "pre", "blockquote", "a"]
+    opened: List[str] = []
+
+    for match in re.finditer(r"<\s*(/)?\s*([a-zA-Z0-9]+)(?:\s+[^>]*)?>", text):
+        is_closing = bool(match.group(1))
+        tag_name = match.group(2).lower()
+        if tag_name in tags:
+            if not is_closing:
+                opened.append(tag_name)
+            else:
+                if tag_name in opened:
+                    # Remove the most recent matching occurrence
+                    for idx in range(len(opened) - 1, -1, -1):
+                        if opened[idx] == tag_name:
+                            opened.pop(idx)
+                            break
+
+    # Close any remaining unclosed tags in reverse order
+    for tag_name in reversed(opened):
+        text += f"</{tag_name}>"
+    return text
+
+
+def format_markdown_tables(text: str) -> str:
+    """Convert Markdown tables into cleanly aligned monospaced code blocks."""
+    table_pattern = re.compile(r"((?:^\|[^\n]+\|\r?\n){2,})", re.MULTILINE)
+
+    def repl_table(match: re.Match) -> str:
+        block = match.group(1).strip()
+        lines = [l.strip() for l in block.split("\n") if l.strip()]
+        if len(lines) < 2:
+            return match.group(0)
+
+        # Verify separator row
+        if not re.match(r"^\|[\s\-:|]+\|$", lines[1]):
+            return match.group(0)
+
+        rows: List[List[str]] = []
+        for l in [lines[0]] + lines[2:]:
+            cols = [c.strip() for c in l.strip("|").split("|")]
+            rows.append(cols)
+
+        if not rows:
+            return match.group(0)
+
+        max_cols = max(len(r) for r in rows)
+        widths = [0] * max_cols
+        for r in rows:
+            for i, c in enumerate(r):
+                widths[i] = max(widths[i], len(c))
+
+        formatted_lines = []
+        # Header
+        h_cols = [r.ljust(widths[i]) if i < len(r) else "".ljust(widths[i]) for i, r in enumerate(rows[0])]
+        formatted_lines.append(" | ".join(h_cols))
+        formatted_lines.append("-+-".join("-" * w for w in widths))
+        # Data rows
+        for row in rows[1:]:
+            r_cols = [row[i].ljust(widths[i]) if i < len(row) else "".ljust(widths[i]) for i in range(max_cols)]
+            formatted_lines.append(" | ".join(r_cols))
+
+        return "\n```\n" + "\n".join(formatted_lines) + "\n```\n"
+
+    return table_pattern.sub(repl_table, text)
+
+
+def markdown_to_telegram_html(text: str) -> str:
+    """
+    Convert GitHub-flavored Markdown text to valid, rich Telegram-supported HTML.
+    Handles:
+    - Fenced code blocks with language highlighting: ```lang ... ```
+    - Inline code: `...`
+    - Tables: formatted into monospaced text blocks
+    - Bold: **bold** or __bold__
+    - Italic: *italic* or _italic_
+    - Strikethrough: ~~strikethrough~~
+    - Blockquotes: > quote
+    - Headings: # H1, ## H2, ### H3 -> <b>...</b>
+    - Links: [label](url) -> <a href="url">label</a>
+    - Bullet lists: - item, * item -> • item
+    - Horizontal rules: ---, *** -> ———
+    - Tag balancing and safe HTML entity escaping
+    """
+    if not text:
+        return ""
+
+    src = format_markdown_tables(text)
+
+    # If unclosed triple backtick at the end (e.g. while streaming), close it temporarily
+    if src.count("```") % 2 != 0:
+        src += "\n```"
+
+    # 1. Extract and protect code blocks
+    code_blocks: List[str] = []
+
+    def save_code_block(match: re.Match) -> str:
+        lang = match.group(1) or ""
+        code = match.group(2)
+        idx = len(code_blocks)
+        escaped_code = html.escape(code.rstrip("\r\n"), quote=False)
+        lang_str = lang.strip().lower()
+        if lang_str:
+            tag = f'<pre><code class="language-{html.escape(lang_str)}">{escaped_code}</code></pre>'
+        else:
+            tag = f"<pre><code>{escaped_code}</code></pre>"
+        code_blocks.append(tag)
+        return f"\x00CB{idx}\x00"
+
+    src = re.sub(r"```([a-zA-Z0-9_+-]*)\n?(.*?)```", save_code_block, src, flags=re.DOTALL)
+
+    # 2. Extract and protect inline code
+    inline_codes: List[str] = []
+
+    def save_inline_code(match: re.Match) -> str:
+        code = match.group(1)
+        idx = len(inline_codes)
+        tag = f"<code>{html.escape(code, quote=False)}</code>"
+        inline_codes.append(tag)
+        return f"\x00IC{idx}\x00"
+
+    src = re.sub(r"`([^`\n]+)`", save_inline_code, src)
+
+    # 3. Escape HTML special characters in the remaining non-code text
+    src = html.escape(src, quote=False)
+
+    # 4. Links: [text](https://...) -> <a href="https://...">text</a>
+    def replace_link(match: re.Match) -> str:
+        label = match.group(1)
+        url = match.group(2).strip()
+        return f'<a href="{url}">{label}</a>'
+
+    src = re.sub(r"\[([^\]]+)\]\((https?://[^\s\)]+)\)", replace_link, src)
+
+    # 5. Headings: # H1, ## H2, ### H3 -> <b>...</b>
+    src = re.sub(r"^(#{1,6})\s+(.+)$", r"<b>\2</b>", src, flags=re.MULTILINE)
+
+    # 6. Bold: **text** or __text__ -> <b>text</b>
+    src = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", src)
+    src = re.sub(r"__(.+?)__", r"<b>\1</b>", src)
+
+    # 7. Italic: *text* or _text_ (excluding words with internal underscores like var_name)
+    src = re.sub(r"(?<!\w)\*([^\*\n]+?)\*(?!\w)", r"<i>\1</i>", src)
+    src = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", src)
+
+    # 8. Strikethrough: ~~text~~ -> <s>text</s>
+    src = re.sub(r"~~(.+?)~~", r"<s>\1</s>", src)
+
+    # 9. Blockquotes: > quote -> <blockquote>...</blockquote>
+    def replace_blockquote(match: re.Match) -> str:
+        raw = match.group(0).rstrip("\r\n")
+        lines = [re.sub(r"^&gt;\s?", "", l) for l in raw.split("\n")]
+        return f"<blockquote>{chr(10).join(lines)}</blockquote>\n"
+
+    src = re.sub(r"^(?:&gt;.*(?:\n|$))+", replace_blockquote, src, flags=re.MULTILINE)
+
+    # 10. Horizontal rules: --- or ***
+    src = re.sub(r"^(?:---|\*\*\*|___)\s*$", "———", src, flags=re.MULTILINE)
+
+    # 11. Bullet lists: - item, * item, + item -> • item
+    src = re.sub(r"^[\*\-\+]\s+(.+)$", r"• \1", src, flags=re.MULTILINE)
+
+    # 12. Restore protected inline code and code blocks
+    for idx, tag in enumerate(inline_codes):
+        src = src.replace(f"\x00IC{idx}\x00", tag)
+    for idx, tag in enumerate(code_blocks):
+        src = src.replace(f"\x00CB{idx}\x00", tag)
+
+    return balance_telegram_html(src)
+
+
 def format_tool_summary(tool_name: str, state: str, tool_info: Dict[str, Any]) -> str:
     """Format a concise single-line tool execution status."""
     params = tool_info.get("parameters", {}) if isinstance(tool_info, dict) else {}
-    
-    # Extract representative parameter for quick visual identification
+
     param_summary = ""
     if tool_name == "run_command":
         cmd = params.get("CommandLine", "")
@@ -63,7 +234,7 @@ def format_streaming_message(
 ) -> str:
     """
     Build a live streaming preview message combining recent tool activities
-    and the ongoing generated text.
+    and formatted generated text.
     """
     sections: List[str] = []
 
@@ -73,26 +244,27 @@ def format_streaming_message(
         tools_block = "\n".join(recent_tools)
         sections.append(f"<b>[Progress]</b>\n{tools_block}")
 
-    # Text content
-    cursor_char = " ▌" if cursor else ""
-    body = current_text + cursor_char if current_text else "(thinking...)"
-    sections.append(body)
+    # Convert ongoing markdown text to Telegram HTML
+    formatted_body = markdown_to_telegram_html(current_text) if current_text else "<i>(thinking...)</i>"
+    cursor_char = " ▌" if cursor and current_text else ""
+    sections.append(formatted_body + cursor_char)
 
     full_content = "\n\n".join(sections)
     if len(full_content) <= max_len:
-        return full_content
+        return balance_telegram_html(full_content)
 
-    # If exceeding max_len, trim the body text from the top (rolling window)
+    # If exceeding max_len, trim the body text from top
     header = ""
     if tool_events:
         header = f"<b>[Progress]</b>\n" + "\n".join(tool_events[-3:]) + "\n\n[...earlier text omitted...]\n"
 
-    available_space = max_len - len(header) - len(cursor_char) - 10
+    available_space = max_len - len(header) - len(cursor_char) - 20
     if available_space < 100:
         available_space = 100
 
-    tail_body = current_text[-available_space:] + cursor_char
-    return f"{header}{tail_body}"
+    tail_body = current_text[-available_space:]
+    tail_html = markdown_to_telegram_html(tail_body) + cursor_char
+    return balance_telegram_html(f"{header}{tail_html}")
 
 
 def format_final_result(
@@ -102,7 +274,9 @@ def format_final_result(
     thinking_tokens: Optional[int] = None,
     conversation_id: Optional[str] = None,
 ) -> str:
-    """Format final response with metadata footer."""
+    """Format final response by converting Markdown to Telegram HTML and appending metadata footer."""
+    formatted_body = markdown_to_telegram_html(response_text) if response_text else "<i>(No response text)</i>"
+
     footer_parts: List[str] = []
     if duration_seconds is not None:
         footer_parts.append(f"⏱ {duration_seconds:.1f}s")
@@ -116,13 +290,13 @@ def format_final_result(
         footer_parts.append(f"🆔 <code>{short_id}</code>")
 
     footer = f"\n\n———\n{' | '.join(footer_parts)}" if footer_parts else ""
-    return (response_text or "(No response text)").strip() + footer
+    return balance_telegram_html(formatted_body.strip() + footer)
 
 
 def split_text_chunks(text: str, chunk_size: int = MAX_TELEGRAM_MESSAGE_LEN) -> List[str]:
-    """Split long message text into safe chunks under chunk_size."""
+    """Split long message text into safe chunks under chunk_size with balanced tags."""
     if len(text) <= chunk_size:
-        return [text]
+        return [balance_telegram_html(text)]
 
     chunks: List[str] = []
     remaining = text
@@ -135,26 +309,40 @@ def split_text_chunks(text: str, chunk_size: int = MAX_TELEGRAM_MESSAGE_LEN) -> 
         if split_idx == -1:
             split_idx = remaining.rfind(" ", 0, chunk_size)
         if split_idx == -1 or split_idx < chunk_size // 2:
-            # Hard split if no good boundary
             split_idx = chunk_size
 
         chunk = remaining[:split_idx].strip()
         if chunk:
-            chunks.append(chunk)
+            chunks.append(balance_telegram_html(chunk))
         remaining = remaining[split_idx:].strip()
 
     if remaining:
-        chunks.append(remaining)
+        chunks.append(balance_telegram_html(remaining))
 
     return chunks
 
 
 if __name__ == "__main__":
+    sample = """### Title Header
+Here is **bold text** and `inline code with <brackets> & special`.
+Also link: [Telegram](https://telegram.org)
+
+```python
+def check(x < 5):
+    # This has <b>tags</b> & <symbols>
+    return True
+```
+
+- Item 1 with `code`
+- Item 2 with **bold**
+
+> Note: this is a quote block.
+"""
     t1 = format_tool_summary("run_command", "ACTIVE", {"parameters": {"CommandLine": "ls -la /tmp"}})
     t2 = format_tool_summary("run_command", "DONE", {"parameters": {"CommandLine": "ls -la /tmp"}})
-    stream_msg = format_streaming_message([t1, t2], "Here is the calculation...")
+    stream_msg = format_streaming_message([t1, t2], sample)
     print("Stream preview:\n", stream_msg)
-    final_msg = format_final_result("Calculation completed: 4", 2.3, 17500, 420, "fe3e8351-5b1c-4f91-8a63-2394641269b6")
+    final_msg = format_final_result(sample, 2.3, 17500, 420, "fe3e8351-5b1c-4f91-8a63-2394641269b6")
     print("\nFinal preview:\n", final_msg)
     print("\nSplit chunks test:", len(split_text_chunks("A" * 9000)))
     print("MessageFormatter self-test passed!")

@@ -217,7 +217,7 @@ tail -f -n 50 runtime/gateway.log
 
 - `gateway/config.py` (`python -m gateway.config`): 配置加载与校验。
 - `gateway/session_manager.py` (`python -m gateway.session_manager`): 会话状态管理与持久化 (`runtime/sessions.json`)。
-- `gateway/message_formatter.py` (`python -m gateway.message_formatter`): 消息美化、流式进度排版与 4000 字符分块。
+- `gateway/message_formatter.py` (`python -m gateway.message_formatter`): Markdown 到 Telegram 原生富文本 HTML 智能转换（语法高亮代码块、加粗斜体、对齐表格、标签自闭合与 4000 字符分块）。
 - `gateway/agy_bridge.py` (`python -m gateway.agy_bridge "<prompt>"`): `agy` 子进程异步双向通信、`stream-json` 双向流解析、Steering 注入与进程生命周期管理。
 - `gateway/telegram_client.py` (`python -m gateway.telegram_client`): 异步 Telegram Bot API 客户端（Long polling、流式编辑、429 限流退避）。
 - `gateway/bot.py` (`python -m gateway.bot`): 调度中心、斜杠命令路由、Steering 路由与流式更新任务池。
@@ -233,10 +233,10 @@ tail -f -n 50 runtime/gateway.log
 conda run -n agy-telegram pytest -v
 ```
 
-测试覆盖范围（33 项全部通过）：
+测试覆盖范围（36 项全部通过）：
 - `test_config.py`: 配置解析、Token 格式验证、白名单过滤、默认 runtime 路径
 - `test_session_manager.py`: 会话 CRUD、持久化与恢复、并发状态保护、Legacy 迁移
-- `test_message_formatter.py`: HTML 转义、工具状态美化、分块策略、流式窗口截断
+- `test_message_formatter.py`: HTML 实体转义、Markdown 转 Telegram HTML、代码高亮、标签自闭合、表格转换、分块策略
 - `test_agy_bridge.py`: 命令构建、stream-json 协议解析、Mock 管道流、`steer()` 注入测试
 - `test_telegram_client.py`: API 调用、HTML 实体解析失败自动降级、304 抑制
 - `test_bot.py`: 所有斜杠命令路由、未授权拦截、流式处理管线、`/steer` 引导、`/stop` 中断
