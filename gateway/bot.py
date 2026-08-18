@@ -32,20 +32,20 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_BOT_COMMANDS: List[Dict[str, str]] = [
-    {"command": "help", "description": "📖 显示帮助指南与指令列表"},
-    {"command": "status", "description": "📊 查看当前项目、模型与状态"},
-    {"command": "projects", "description": "📁 列出所有项目与工作区"},
-    {"command": "open", "description": "📂 打开/切换到指定项目 (/open <name>)"},
-    {"command": "new", "description": "✨ 创建新项目工作区 (/new <name> <path>)"},
-    {"command": "model", "description": "🧠 切换或重置模型 (/model <name> | reset)"},
-    {"command": "effort", "description": "⚡ 设置推理深度 (low | medium | high)"},
-    {"command": "export", "description": "📄 导出当前会话为独立 HTML 报告"},
-    {"command": "file", "description": "📎 发送项目工作区文件 (/file <path>)"},
-    {"command": "dir", "description": "📍 设定项目工作区目录 (/dir <path>)"},
-    {"command": "steer", "description": "🎯 实时引导运行中的任务 (/steer <text>)"},
-    {"command": "stop", "description": "🛑 终止当前正在运行的任务"},
-    {"command": "reset", "description": "🔄 重置当前项目对话上下文"},
-    {"command": "delete", "description": "🗑️ 删除指定项目 (/delete <name>)"},
+    {"command": "help", "description": "📖 Show manual & slash command guide"},
+    {"command": "status", "description": "📊 Show active project, model & status"},
+    {"command": "projects", "description": "📁 List all projects & workspaces"},
+    {"command": "open", "description": "📂 Open / switch project (/open <name>)"},
+    {"command": "new", "description": "✨ Create new project (/new <name> <path>)"},
+    {"command": "model", "description": "🧠 Set or reset model (/model <name>|reset)"},
+    {"command": "effort", "description": "⚡ Set reasoning effort (low|medium|high)"},
+    {"command": "export", "description": "📄 Export conversation as HTML report"},
+    {"command": "file", "description": "📎 Send workspace file (/file <path>)"},
+    {"command": "dir", "description": "📍 Set workspace directory (/dir <path>)"},
+    {"command": "steer", "description": "🎯 Steer active task (/steer <text>)"},
+    {"command": "stop", "description": "🛑 Interrupt running agy prompt"},
+    {"command": "reset", "description": "🔄 Clear active project conversation"},
+    {"command": "delete", "description": "🗑️ Delete a project (/delete <name>)"},
 ]
 
 
