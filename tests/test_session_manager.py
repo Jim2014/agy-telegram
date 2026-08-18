@@ -1,7 +1,8 @@
-"""Unit tests for gateway.session_manager."""
+"""Unit tests for gateway.session_manager with project-based architecture."""
 
-import os
+import json
 from pathlib import Path
+import pytest
 from gateway.session_manager import ChatSession, SessionManager
 
 
@@ -9,15 +10,23 @@ def test_session_crud():
     mgr = SessionManager()
     session = mgr.get_session(1001)
     assert session.chat_id == 1001
+    assert session.active_project is None
+    assert session.projects == {}
     assert session.conversation_id is None
+    assert session.active_path() is None
     assert session.model is None
     assert session.effort is None
     assert session.is_busy is False
 
+    mgr.create_project(1001, "myproj", "/tmp")
+    s = mgr.get_session(1001)
+    assert s.active_project == "myproj"
+    assert s.active_path() == str(Path("/tmp").resolve())
+    assert s.conversation_id is None
+
     mgr.set_conversation_id(1001, "conv-uuid-1234")
     mgr.set_model(1001, "gemini-2.5-flash")
     mgr.set_effort(1001, "high")
-    mgr.set_working_dir(1001, "/tmp")
 
     s = mgr.get_session(1001)
     assert s.conversation_id == "conv-uuid-1234"
@@ -25,10 +34,11 @@ def test_session_crud():
     assert s.effort == "high"
     assert s.working_dir == str(Path("/tmp").resolve())
 
-    # Reset conversation preserves preferences
+    # Reset conversation preserves project and preferences
     mgr.reset_conversation(1001)
     s2 = mgr.get_session(1001)
     assert s2.conversation_id is None
+    assert s2.active_project == "myproj"
     assert s2.model == "gemini-2.5-flash"
     assert s2.effort == "high"
 
@@ -42,16 +52,119 @@ def test_busy_flag():
     assert mgr.is_busy(2002) is False
 
 
+def test_project_lifecycle():
+    mgr = SessionManager()
+    chat_id = 5005
+
+    # Create project
+    mgr.create_project(chat_id, "p1", "/tmp/p1")
+    mgr.set_conversation_id(chat_id, "conv-p1")
+    s = mgr.get_session(chat_id)
+    assert s.active_project == "p1"
+    assert s.conversation_id == "conv-p1"
+
+    # Creating duplicate project name raises ValueError
+    with pytest.raises(ValueError, match="already exists"):
+        mgr.create_project(chat_id, "p1", "/tmp/p1_other")
+
+    # Create second project
+    mgr.create_project(chat_id, "p2", "/tmp/p2")
+    mgr.set_conversation_id(chat_id, "conv-p2")
+    s = mgr.get_session(chat_id)
+    assert s.active_project == "p2"
+    assert s.conversation_id == "conv-p2"
+
+    # Switch back to p1
+    mgr.open_project(chat_id, "p1")
+    s = mgr.get_session(chat_id)
+    assert s.active_project == "p1"
+    assert s.conversation_id == "conv-p1"
+
+    # Open nonexistent project raises KeyError
+    with pytest.raises(KeyError):
+        mgr.open_project(chat_id, "p_nonexistent")
+
+    # Update project path
+    mgr.set_project_path(chat_id, "p1", "/tmp/p1_updated")
+    assert mgr.get_session(chat_id).active_path() == str(Path("/tmp/p1_updated").resolve())
+
+    # Delete active project p1 -> active becomes None
+    assert mgr.delete_project(chat_id, "p1") is True
+    s = mgr.get_session(chat_id)
+    assert s.active_project is None
+    assert s.conversation_id is None
+    assert "p1" not in s.projects
+    assert "p2" in s.projects
+
+    # Delete nonexistent project returns False
+    assert mgr.delete_project(chat_id, "p_unknown") is False
+
+    # Reset with no active project raises ValueError
+    with pytest.raises(ValueError, match="No active project"):
+        mgr.reset_conversation(chat_id)
+
+
 def test_persistence(tmp_path):
     persist_file = tmp_path / "sessions.json"
     mgr1 = SessionManager(persistence_file=persist_file)
-    mgr1.set_conversation_id(3003, "conv-persistent-111")
+    mgr1.create_project(3003, "proj_alpha", "/tmp/alpha")
+    mgr1.set_conversation_id(3003, "conv-alpha-999")
     mgr1.set_model(3003, "gemini-2.5-pro")
+    mgr1.set_effort(3003, "medium")
+
+    mgr1.create_project(3003, "proj_beta", "/tmp/beta")
+    mgr1.set_conversation_id(3003, "conv-beta-888")
 
     assert persist_file.exists()
 
     # Load in new instance
     mgr2 = SessionManager(persistence_file=persist_file)
     s = mgr2.get_session(3003)
-    assert s.conversation_id == "conv-persistent-111"
+    assert s.active_project == "proj_beta"
+    assert s.conversation_id == "conv-beta-888"
     assert s.model == "gemini-2.5-pro"
+    assert s.effort == "medium"
+    assert "proj_alpha" in s.projects
+    assert s.projects["proj_alpha"]["conversation_id"] == "conv-alpha-999"
+
+
+def test_legacy_migration(tmp_path):
+    persist_file = tmp_path / "legacy_sessions.json"
+    legacy_data = {
+        "100": {
+            "chat_id": 100,
+            "conversation_id": "conv-legacy-1",
+            "model": "gemini-2.5-pro",
+            "effort": "high",
+            "working_dir": "/tmp/legacy_dir",
+            "created_at": 1000.0,
+            "last_active_at": 2000.0,
+        },
+        "200": {
+            "chat_id": 200,
+            "conversation_id": "conv-legacy-2",
+            "model": None,
+            "effort": None,
+            "working_dir": None,
+            "created_at": 1000.0,
+            "last_active_at": 2000.0,
+        },
+    }
+    with open(persist_file, "w", encoding="utf-8") as f:
+        json.dump(legacy_data, f)
+
+    mgr = SessionManager(persistence_file=persist_file)
+
+    # Verify chat 100 migration
+    s100 = mgr.get_session(100)
+    assert s100.active_project == "legacy_dir"
+    assert s100.conversation_id == "conv-legacy-1"
+    assert s100.active_path() == str(Path("/tmp/legacy_dir").resolve())
+    assert s100.model == "gemini-2.5-pro"
+    assert s100.effort == "high"
+
+    # Verify chat 200 migration
+    s200 = mgr.get_session(200)
+    assert s200.active_project == "default"
+    assert s200.conversation_id == "conv-legacy-2"
+    assert "default" in s200.projects

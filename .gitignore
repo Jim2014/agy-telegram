@@ -7,3 +7,4 @@ gateway.log
 sessions.json
 .pytest_cache/
 .coverage
+tasks/

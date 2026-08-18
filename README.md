@@ -23,8 +23,8 @@
 
 1. **Telegram Long-Polling**: 基于 Telegram Bot API，无需公网 IP 或 Webhook 配置。
 2. **实时流式与中间过程可视化**: 实时捕获 agy 的 `stream-json` 事件，展示工具调用（`run_command`, `list_dir`, `view_file` 等）、思考状态并限频推回 Telegram。
-3. **会话持久化与隔离**: 每个 Telegram chat 维护独立的 `conversation_id`，支持 `/new` 丢弃旧会话、`/status` 查看当前状态。
-4. **灵活参数调整**: 通过 `/model` 切换模型，通过 `/effort` 调整推理强度 (low/medium/high)，通过 `/dir` 切换工作区。
+3. **项目化会话持久化与隔离**: 支持多项目工作区管理（`/new`, `/open`, `/delete`, `/reset`, `/projects`），每个项目独立保存 `path` 与 `conversation_id`，跨项目持久化无缝切换。
+4. **灵活参数调整**: 通过 `/model` 切换模型，通过 `/effort` 调整推理强度 (low/medium/high)，通过 `/dir` 调整当前项目工作区。
 5. **安全与健壮性**:
    - 支持 `ALLOWED_CHAT_IDS` 白名单鉴权。
    - 支持 `/stop` 中断正在执行的 agy 子进程。
@@ -145,11 +145,15 @@ LOG_LEVEL=INFO
 | 命令 | 说明 | 示例 |
 | :--- | :--- | :--- |
 | **直接发送文本** | 将消息直接发送给 agy 处理，实时返回工具调用与回答 | `请帮我查看当前目录下的文件` |
-| `/new` | 重置会话，开始全新的 agy 对话（清除 `conversation_id`） | `/new` |
-| `/status` | 查看当前 Chat ID、会话 ID、模型、推理强度及运行状态 | `/status` |
+| `/new <name> <path>` | 创建新项目并设为当前活跃工作区（已存在则切换） | `/new myapp /Users/jim/myapp` |
+| `/open <name>` | 打开并切换到已有项目，恢复其历史会话 | `/open myapp` |
+| `/projects` | 列出所有项目、活跃标记、工作区路径与最后活跃时间 | `/projects` |
+| `/delete <name>` | 删除指定项目（如为活跃项目则重置活跃状态） | `/delete myapp` |
+| `/reset` | 清空当前活跃项目的 `conversation_id`（重置会话） | `/reset` |
+| `/dir <path>` | 修改当前活跃项目的工作目录路径 | `/dir /Users/jim/my-project` |
+| `/status` | 查看当前活跃项目、会话 ID、模型、推理强度及运行状态 | `/status` |
 | `/model <name>` | 切换当前对话使用的模型（或 `/model reset` 恢复默认） | `/model gemini-2.5-pro` |
 | `/effort <level>` | 调整推理强度：`low`、`medium`、`high` | `/effort high` |
-| `/dir <path>` | 切换 agy 的工作目录（或 `/dir reset` 恢复默认） | `/dir /Users/jim/my-project` |
 | `/stop` | 强制中断当前正在执行的 agy 任务 | `/stop` |
 | `/help` | 查看帮助说明与命令列表 | `/help` |
 

@@ -85,7 +85,6 @@ class AgyTelegramBot:
         """Gracefully shut down active bridge processes and HTTP client."""
         logger.info("Shutting down bot gateway...")
         self.running = False
-        # Stop any active tasks
         for chat_id, bridge in list(self.active_bridges.items()):
             try:
                 await bridge.stop()
@@ -127,7 +126,15 @@ class AgyTelegramBot:
             if cmd in ("/start", "/help"):
                 await self.handle_cmd_help(chat_id)
             elif cmd == "/new":
-                await self.handle_cmd_new(chat_id)
+                await self.handle_cmd_new(chat_id, arg)
+            elif cmd == "/open":
+                await self.handle_cmd_open(chat_id, arg)
+            elif cmd == "/delete":
+                await self.handle_cmd_delete(chat_id, arg)
+            elif cmd == "/reset":
+                await self.handle_cmd_reset(chat_id)
+            elif cmd == "/projects":
+                await self.handle_cmd_projects(chat_id)
             elif cmd == "/status":
                 await self.handle_cmd_status(chat_id)
             elif cmd == "/model":
@@ -151,55 +158,238 @@ class AgyTelegramBot:
     async def handle_cmd_help(self, chat_id: int) -> None:
         """Send help message."""
         session = self.session_manager.get_session(chat_id)
-        conv_text = f"<code>{session.conversation_id[:8]}...</code>" if session.conversation_id else "<i>(New session)</i>"
+        active_proj = session.active_project or "(none)"
+        conv_id = session.conversation_id
+        conv_text = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(New session)</i>"
         help_text = (
             "🤖 <b>agy-telegram Gateway</b>\n\n"
-            "Direct Telegram interface to <b>agy</b> (Antigravity CLI) with real-time intermediate streaming output.\n\n"
-            "<b>Available Commands:</b>\n"
-            "• <code>/new</code> — Start a fresh agy conversation (clears history)\n"
-            "• <code>/status</code> — Show active session, model, effort, & workspace\n"
+            "Direct Telegram interface to <b>agy</b> (Antigravity CLI) with project-based session management and intermediate streaming output.\n\n"
+            "<b>Project Management:</b>\n"
+            "• <code>/new &lt;name&gt; &lt;path&gt;</code> — Create a new project workspace\n"
+            "• <code>/open &lt;name&gt;</code> — Open and switch to an existing project\n"
+            "• <code>/projects</code> — List all projects and active status\n"
+            "• <code>/delete &lt;name&gt;</code> — Delete a project\n"
+            "• <code>/reset</code> — Clear conversation history for active project\n"
+            "• <code>/dir &lt;path&gt;</code> — Set workspace directory for active project\n\n"
+            "<b>Configuration & Control:</b>\n"
+            "• <code>/status</code> — Show active project, conversation, model, & effort\n"
             "• <code>/model &lt;name&gt;</code> — Set model (e.g. <code>/model gemini-2.5-pro</code>) or <code>/model reset</code>\n"
             "• <code>/effort &lt;low|medium|high&gt;</code> — Set reasoning effort\n"
-            "• <code>/dir &lt;path&gt;</code> — Set workspace directory (or <code>/dir reset</code>)\n"
             "• <code>/stop</code> — Interrupt currently executing agy prompt\n"
             "• <code>/help</code> — Show this manual\n\n"
-            f"<b>Current Session:</b> {conv_text}\n"
+            f"<b>Active Project:</b> <code>{escape_html(active_proj)}</code> ({conv_text})\n"
             "<i>Simply type any message to talk to agy!</i>"
         )
         await self.client.send_message(chat_id=chat_id, text=help_text)
 
-    async def handle_cmd_new(self, chat_id: int) -> None:
-        """Reset conversation."""
+    async def handle_cmd_new(self, chat_id: int, arg: str) -> None:
+        """Create a new project workspace (/new <name> <path>) or open if exists."""
         if self.session_manager.is_busy(chat_id):
             await self.client.send_message(
                 chat_id=chat_id,
-                text="⚠️ A task is currently running. Please /stop it first before starting a new conversation.",
+                text="⚠️ A task is currently running. Please /stop it first before switching projects.",
+            )
+            return
+
+        parts = arg.split(maxsplit=1) if arg else []
+        session = self.session_manager.get_session(chat_id)
+
+        if len(parts) == 0:
+            await self.client.send_message(
+                chat_id=chat_id,
+                text="⚠️ Usage: <code>/new &lt;name&gt; &lt;path&gt;</code>\nCreate and switch to a new project workspace.",
+            )
+            return
+
+        name = parts[0].strip()
+
+        # If project already exists, treat as /open
+        if name in session.projects:
+            self.session_manager.open_project(chat_id, name)
+            path_val = session.active_path() or ""
+            conv_id = session.conversation_id
+            conv_text = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(New session)</i>"
+            await self.client.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"📂 Project <b>{escape_html(name)}</b> already exists. Switched to it!\n"
+                    f"• <b>Path:</b> <code>{escape_html(path_val)}</code>\n"
+                    f"• <b>Conversation:</b> {conv_text}"
+                ),
+            )
+            return
+
+        # Name does not exist yet; requires path
+        if len(parts) < 2:
+            await self.client.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Usage: <code>/new {escape_html(name)} &lt;path&gt;</code>\nPlease provide the directory path for the new project.",
+            )
+            return
+
+        path_str = parts[1].strip()
+        target_path = str(Path(path_str).expanduser().resolve())
+        self.session_manager.create_project(chat_id, name, target_path)
+
+        await self.client.send_message(
+            chat_id=chat_id,
+            text=(
+                f"✨ <b>Project created and activated!</b>\n"
+                f"• <b>Project:</b> <code>{escape_html(name)}</code>\n"
+                f"• <b>Path:</b> <code>{escape_html(target_path)}</code>\n"
+                f"• <b>Conversation:</b> <i>(New session)</i>"
+            ),
+        )
+
+    async def handle_cmd_open(self, chat_id: int, arg: str) -> None:
+        """Open and switch to an existing project (/open <name>)."""
+        if self.session_manager.is_busy(chat_id):
+            await self.client.send_message(
+                chat_id=chat_id,
+                text="⚠️ A task is currently running. Please /stop it first before switching projects.",
+            )
+            return
+
+        if not arg:
+            await self.client.send_message(
+                chat_id=chat_id,
+                text="⚠️ Usage: <code>/open &lt;name&gt;</code>\nUse <code>/projects</code> to see available projects.",
+            )
+            return
+
+        name = arg.strip()
+        session = self.session_manager.get_session(chat_id)
+
+        if name not in session.projects:
+            projects = self.session_manager.list_projects(chat_id)
+            if projects:
+                plist = "\n".join([f"• <code>{escape_html(p)}</code>" for p in projects.keys()])
+                msg = f"❌ Project <code>{escape_html(name)}</code> not found.\n\n<b>Available projects:</b>\n{plist}\n\nUse <code>/projects</code> to view details."
+            else:
+                msg = f"❌ Project <code>{escape_html(name)}</code> not found. No projects exist yet.\nUse <code>/new &lt;name&gt; &lt;path&gt;</code> to create one."
+            await self.client.send_message(chat_id=chat_id, text=msg)
+            return
+
+        self.session_manager.open_project(chat_id, name)
+        path_val = session.active_path() or ""
+        conv_id = session.conversation_id
+        conv_text = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(New session)</i>"
+
+        await self.client.send_message(
+            chat_id=chat_id,
+            text=(
+                f"📂 <b>Opened project:</b> <code>{escape_html(name)}</code>\n"
+                f"• <b>Path:</b> <code>{escape_html(path_val)}</code>\n"
+                f"• <b>Conversation:</b> {conv_text}"
+            ),
+        )
+
+    async def handle_cmd_delete(self, chat_id: int, arg: str) -> None:
+        """Delete a project (/delete <name>)."""
+        if self.session_manager.is_busy(chat_id):
+            await self.client.send_message(
+                chat_id=chat_id,
+                text="⚠️ A task is currently running. Please /stop it first.",
+            )
+            return
+
+        if not arg:
+            await self.client.send_message(
+                chat_id=chat_id,
+                text="⚠️ Usage: <code>/delete &lt;name&gt;</code>",
+            )
+            return
+
+        name = arg.strip()
+        deleted = self.session_manager.delete_project(chat_id, name)
+        if deleted:
+            await self.client.send_message(
+                chat_id=chat_id,
+                text=f"🗑 <b>Project deleted:</b> <code>{escape_html(name)}</code>",
+            )
+        else:
+            await self.client.send_message(
+                chat_id=chat_id,
+                text=f"❌ Project <code>{escape_html(name)}</code> not found.",
+            )
+
+    async def handle_cmd_reset(self, chat_id: int) -> None:
+        """Clear conversation_id for active project."""
+        if self.session_manager.is_busy(chat_id):
+            await self.client.send_message(
+                chat_id=chat_id,
+                text="⚠️ A task is currently running. Please /stop it first before resetting conversation.",
+            )
+            return
+
+        session = self.session_manager.get_session(chat_id)
+        if not session.active_project or session.active_project not in session.projects:
+            await self.client.send_message(
+                chat_id=chat_id,
+                text="⚠️ No active project. Use <code>/new &lt;name&gt; &lt;path&gt;</code> or <code>/open &lt;name&gt;</code> first.",
             )
             return
 
         self.session_manager.reset_conversation(chat_id)
         await self.client.send_message(
             chat_id=chat_id,
-            text="🔄 <b>New conversation started!</b> Previous agy conversation ID discarded.",
+            text=f"🔄 <b>Conversation reset</b> for project <code>{escape_html(session.active_project)}</code>.",
+        )
+
+    async def handle_cmd_projects(self, chat_id: int) -> None:
+        """List all projects for this chat."""
+        session = self.session_manager.get_session(chat_id)
+        projects = self.session_manager.list_projects(chat_id)
+
+        if not projects:
+            await self.client.send_message(
+                chat_id=chat_id,
+                text="📁 <b>No projects found.</b>\nUse <code>/new &lt;name&gt; &lt;path&gt;</code> to create a project.",
+            )
+            return
+
+        entries: List[str] = []
+        for p_name, p_data in projects.items():
+            is_active = (p_name == session.active_project)
+            badge = " ⭐ <b>[ACTIVE]</b>" if is_active else ""
+            p_path = p_data.get("path", "")
+            conv = p_data.get("conversation_id")
+            conv_disp = f"<code>{escape_html(conv[:8])}...</code>" if conv else "<i>(none)</i>"
+            t_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(p_data.get("last_active_at", time.time())))
+            entries.append(
+                f"• <b>{escape_html(p_name)}</b>{badge}\n"
+                f"  Path: <code>{escape_html(p_path)}</code>\n"
+                f"  Conv: {conv_disp}\n"
+                f"  Last active: <code>{t_str}</code>"
+            )
+
+        body = "\n\n".join(entries)
+        await self.client.send_message(
+            chat_id=chat_id,
+            text=f"📁 <b>Projects ({len(projects)}):</b>\n\n{body}",
         )
 
     async def handle_cmd_status(self, chat_id: int) -> None:
         """Display current chat status."""
         session = self.session_manager.get_session(chat_id)
-        conv_id = session.conversation_id or "<i>(None - new project)</i>"
+        active_name = session.active_project or "<i>(None)</i>"
+        active_path = session.active_path() or "<i>(None)</i>"
+        conv_id = session.conversation_id or "<i>(None - new session)</i>"
         model = session.model or self.config.default_model or "<i>(agy default)</i>"
         effort = session.effort or self.config.default_effort or "medium"
-        wdir = session.working_dir or self.config.agy_working_dir or "<i>(default)</i>"
         busy = "🏃 <b>Running</b>" if session.is_busy else "💤 <b>Idle</b>"
+        total_projects = len(session.projects)
 
         status_text = (
             "📊 <b>agy-telegram Status</b>\n\n"
-            f"• <b>Chat ID:</b> <code>{chat_id}</code>\n"
             f"• <b>Status:</b> {busy}\n"
-            f"• <b>Conversation ID:</b> <code>{conv_id}</code>\n"
+            f"• <b>Active Project:</b> <code>{escape_html(active_name)}</code>\n"
+            f"• <b>Project Path:</b> <code>{escape_html(active_path)}</code>\n"
+            f"• <b>Conversation ID:</b> <code>{escape_html(conv_id)}</code>\n"
+            f"• <b>Total Projects:</b> <code>{total_projects}</code>\n"
             f"• <b>Model:</b> {escape_html(model)}\n"
             f"• <b>Effort:</b> <code>{escape_html(effort)}</code>\n"
-            f"• <b>Working Dir:</b> <code>{escape_html(wdir)}</code>\n"
+            f"• <b>Chat ID:</b> <code>{chat_id}</code>\n"
             f"• <b>agy Binary:</b> <code>{escape_html(self.config.get_resolved_agy_bin())}</code>"
         )
         await self.client.send_message(chat_id=chat_id, text=status_text)
@@ -244,28 +434,36 @@ class AgyTelegramBot:
             await self.client.send_message(chat_id=chat_id, text="⚠️ Invalid effort. Choose: <code>low</code>, <code>medium</code>, or <code>high</code>.")
 
     async def handle_cmd_dir(self, chat_id: int, arg: str) -> None:
-        """Configure working directory."""
-        if not arg:
-            session = self.session_manager.get_session(chat_id)
-            current = session.working_dir or self.config.agy_working_dir
+        """Configure workspace directory for current active project."""
+        session = self.session_manager.get_session(chat_id)
+        if not session.active_project or session.active_project not in session.projects:
             await self.client.send_message(
                 chat_id=chat_id,
-                text=f"📁 Current workspace: <code>{escape_html(current)}</code>\nUsage: <code>/dir &lt;path&gt;</code> or <code>/dir reset</code>",
+                text="⚠️ No active project. Use <code>/new &lt;name&gt; &lt;path&gt;</code> or <code>/open &lt;name&gt;</code> first.",
             )
             return
 
-        if arg.lower() in ("reset", "default"):
-            self.session_manager.set_working_dir(chat_id, None)
-            await self.client.send_message(chat_id=chat_id, text="🔄 Working directory reset to default.")
+        if not arg:
+            current = session.active_path() or "(None)"
+            await self.client.send_message(
+                chat_id=chat_id,
+                text=f"📁 Current workspace for <b>{escape_html(session.active_project)}</b>:\n<code>{escape_html(current)}</code>\n\nUsage: <code>/dir &lt;path&gt;</code>",
+            )
             return
 
         target_dir = Path(arg).expanduser().resolve()
         if not target_dir.is_dir():
-            await self.client.send_message(chat_id=chat_id, text=f"⚠️ Directory does not exist: <code>{escape_html(str(target_dir))}</code>")
+            await self.client.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Directory does not exist: <code>{escape_html(str(target_dir))}</code>",
+            )
             return
 
-        self.session_manager.set_working_dir(chat_id, str(target_dir))
-        await self.client.send_message(chat_id=chat_id, text=f"✅ Workspace directory set to:\n<code>{escape_html(str(target_dir))}</code>")
+        self.session_manager.set_project_path(chat_id, session.active_project, str(target_dir))
+        await self.client.send_message(
+            chat_id=chat_id,
+            text=f"✅ Workspace directory for <b>{escape_html(session.active_project)}</b> set to:\n<code>{escape_html(str(target_dir))}</code>",
+        )
 
     async def handle_cmd_stop(self, chat_id: int) -> None:
         """Interrupt active agy prompt execution."""
@@ -290,6 +488,20 @@ class AgyTelegramBot:
             )
             return
 
+        # Ensure active project exists or auto-initialize default
+        if not session.active_project or session.active_project not in session.projects:
+            if session.projects:
+                await self.client.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ No active project selected. Use <code>/open &lt;name&gt;</code> to select a project or <code>/new &lt;name&gt; &lt;path&gt;</code> to create one.",
+                    reply_to_message_id=reply_to_id,
+                )
+                return
+            else:
+                default_dir = self.config.agy_working_dir or os.getcwd()
+                self.session_manager.create_project(chat_id, "default", default_dir)
+                session = self.session_manager.get_session(chat_id)
+
         self.session_manager.set_busy(chat_id, True)
 
         # Send initial placeholder message
@@ -307,7 +519,7 @@ class AgyTelegramBot:
         # Prepare bridge parameters
         effective_model = session.model or self.config.default_model or None
         effective_effort = session.effort or self.config.default_effort or None
-        effective_dir = session.working_dir or self.config.agy_working_dir or None
+        effective_dir = session.active_path() or self.config.agy_working_dir or None
 
         bridge = AgyBridge(
             agy_bin=self.config.get_resolved_agy_bin(),

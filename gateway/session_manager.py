@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -14,37 +14,75 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ChatSession:
-    """State for a single Telegram chat."""
+    """State for a single Telegram chat with multiple project workspaces."""
 
     chat_id: int
-    conversation_id: Optional[str] = None
+    active_project: Optional[str] = None
+    projects: Dict[str, dict] = field(default_factory=dict)
     model: Optional[str] = None
     effort: Optional[str] = None
-    working_dir: Optional[str] = None
     is_busy: bool = False
     created_at: float = field(default_factory=time.time)
     last_active_at: float = field(default_factory=time.time)
+
+    @property
+    def conversation_id(self) -> Optional[str]:
+        """Read-only property returning conversation_id of active project (or None)."""
+        if self.active_project and self.active_project in self.projects:
+            return self.projects[self.active_project].get("conversation_id")
+        return None
+
+    def active_path(self) -> Optional[str]:
+        """Return the filesystem path of current active project (or None)."""
+        if self.active_project and self.active_project in self.projects:
+            return self.projects[self.active_project].get("path")
+        return None
+
+    @property
+    def working_dir(self) -> Optional[str]:
+        """Backward-compatibility property for active project path."""
+        return self.active_path()
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert session to serializable dict (excluding runtime transient flags)."""
         return {
             "chat_id": self.chat_id,
-            "conversation_id": self.conversation_id,
+            "active_project": self.active_project,
             "model": self.model,
             "effort": self.effort,
-            "working_dir": self.working_dir,
             "created_at": self.created_at,
             "last_active_at": self.last_active_at,
+            "projects": self.projects,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> ChatSession:
+        """Deserialize ChatSession from dict with lossless migration for legacy schemas."""
+        projects = data.get("projects")
+        active_project = data.get("active_project")
+
+        # Migration logic for legacy flat format
+        if projects is None:
+            projects = {}
+            old_wdir = data.get("working_dir")
+            old_conv = data.get("conversation_id")
+            if old_wdir or old_conv or ("working_dir" in data or "conversation_id" in data):
+                name = Path(old_wdir).name if (old_wdir and str(old_wdir).strip()) else "default"
+                path = str(Path(old_wdir).resolve()) if (old_wdir and str(old_wdir).strip()) else str(Path.cwd().resolve())
+                projects[name] = {
+                    "name": name,
+                    "path": path,
+                    "conversation_id": old_conv,
+                    "last_active_at": data.get("last_active_at", time.time()),
+                }
+                active_project = name
+
         return cls(
             chat_id=int(data["chat_id"]),
-            conversation_id=data.get("conversation_id"),
+            active_project=active_project,
+            projects=projects,
             model=data.get("model"),
             effort=data.get("effort"),
-            working_dir=data.get("working_dir"),
             is_busy=False,
             created_at=data.get("created_at", time.time()),
             last_active_at=data.get("last_active_at", time.time()),
@@ -52,7 +90,7 @@ class ChatSession:
 
 
 class SessionManager:
-    """Manages chat sessions with persistence."""
+    """Manages chat sessions with project-based multi-workspace persistence."""
 
     def __init__(self, persistence_file: Optional[str | Path] = None) -> None:
         self.persistence_file = Path(persistence_file) if persistence_file else None
@@ -68,30 +106,116 @@ class SessionManager:
         session.last_active_at = time.time()
         return session
 
-    def reset_conversation(self, chat_id: int) -> ChatSession:
-        """Reset conversation_id for chat, starting fresh next time."""
+    def create_project(self, chat_id: int, name: str, path: str) -> ChatSession:
+        """Create a new project, set as active, and initialize conversation_id to None."""
+        name = name.strip()
+        if not name:
+            raise ValueError("Project name cannot be empty")
         session = self.get_session(chat_id)
-        session.conversation_id = None
+        if name in session.projects:
+            raise ValueError(f"Project '{name}' already exists")
+
+        resolved_path = str(Path(path).expanduser().resolve())
+        session.projects[name] = {
+            "name": name,
+            "path": resolved_path,
+            "conversation_id": None,
+            "last_active_at": time.time(),
+        }
+        session.active_project = name
         session.last_active_at = time.time()
         self.save()
         return session
 
-    def set_conversation_id(self, chat_id: int, conversation_id: str) -> None:
-        """Record the active agy conversation ID for this chat."""
+    def open_project(self, chat_id: int, name: str) -> ChatSession:
+        """Switch active project to existing project name."""
+        name = name.strip()
         session = self.get_session(chat_id)
-        session.conversation_id = conversation_id
+        if name not in session.projects:
+            raise KeyError(f"Project '{name}' does not exist")
+
+        session.active_project = name
+        session.projects[name]["last_active_at"] = time.time()
+        session.last_active_at = time.time()
+        self.save()
+        return session
+
+    def delete_project(self, chat_id: int, name: str) -> bool:
+        """Delete project. If it was active, active_project is reset to None."""
+        name = name.strip()
+        session = self.get_session(chat_id)
+        if name not in session.projects:
+            return False
+
+        del session.projects[name]
+        if session.active_project == name:
+            session.active_project = None
+        session.last_active_at = time.time()
+        self.save()
+        return True
+
+    def reset_conversation(self, chat_id: int) -> ChatSession:
+        """Reset conversation_id for the current active project."""
+        session = self.get_session(chat_id)
+        if not session.active_project or session.active_project not in session.projects:
+            raise ValueError("No active project to reset conversation")
+
+        session.projects[session.active_project]["conversation_id"] = None
+        session.projects[session.active_project]["last_active_at"] = time.time()
+        session.last_active_at = time.time()
+        self.save()
+        return session
+
+    def set_conversation_id(self, chat_id: int, conversation_id: Optional[str]) -> None:
+        """Record the active agy conversation ID for the current active project."""
+        session = self.get_session(chat_id)
+        if session.active_project and session.active_project in session.projects:
+            session.projects[session.active_project]["conversation_id"] = conversation_id
+            session.projects[session.active_project]["last_active_at"] = time.time()
         session.last_active_at = time.time()
         self.save()
 
+    def set_project_path(self, chat_id: int, name: str, path: str) -> None:
+        """Update workspace path for a specific project."""
+        name = name.strip()
+        session = self.get_session(chat_id)
+        if name not in session.projects:
+            raise KeyError(f"Project '{name}' does not exist")
+
+        resolved_path = str(Path(path).expanduser().resolve())
+        session.projects[name]["path"] = resolved_path
+        session.projects[name]["last_active_at"] = time.time()
+        session.last_active_at = time.time()
+        self.save()
+
+    def list_projects(self, chat_id: int) -> Dict[str, dict]:
+        """Return dict of all projects for this chat."""
+        session = self.get_session(chat_id)
+        return dict(session.projects)
+
+    def set_working_dir(self, chat_id: int, working_dir: Optional[str]) -> None:
+        """Update path for active project (backward compatibility)."""
+        session = self.get_session(chat_id)
+        if session.active_project and working_dir:
+            self.set_project_path(chat_id, session.active_project, working_dir)
+        elif working_dir:
+            resolved = str(Path(working_dir).expanduser().resolve())
+            proj_name = Path(resolved).name or "default"
+            if proj_name in session.projects:
+                self.open_project(chat_id, proj_name)
+                self.set_project_path(chat_id, proj_name, resolved)
+            else:
+                self.create_project(chat_id, proj_name, resolved)
+
     def set_model(self, chat_id: int, model: Optional[str]) -> None:
-        """Set or clear model override."""
+        """Set or clear model override (chat-level)."""
         session = self.get_session(chat_id)
         session.model = model.strip() if model else None
         session.last_active_at = time.time()
         self.save()
 
     def set_effort(self, chat_id: int, effort: Optional[str]) -> None:
-        """Set or clear effort override (low, medium, high)."""
+        """Set or clear effort override (chat-level: low, medium, high)."""
         session = self.get_session(chat_id)
         if effort:
             eff = effort.strip().lower()
@@ -99,13 +223,6 @@ class SessionManager:
                 session.effort = eff
         else:
             session.effort = None
-        session.last_active_at = time.time()
-        self.save()
-
-    def set_working_dir(self, chat_id: int, working_dir: Optional[str]) -> None:
-        """Set or clear custom working directory."""
-        session = self.get_session(chat_id)
-        session.working_dir = str(Path(working_dir).resolve()) if working_dir else None
         session.last_active_at = time.time()
         self.save()
 
@@ -148,15 +265,31 @@ class SessionManager:
 
 
 if __name__ == "__main__":
-    mgr = SessionManager("test_sessions.json")
+    test_file = Path("test_sessions_tmp.json")
+    if test_file.exists():
+        test_file.unlink()
+
+    mgr = SessionManager(test_file)
     s = mgr.get_session(12345)
     print("Initial session:", s)
+    mgr.create_project(12345, "demo", "/tmp")
     mgr.set_conversation_id(12345, "conv-abc-123")
     mgr.set_model(12345, "gemini-2.5-pro")
     mgr.set_effort(12345, "high")
     print("Updated session:", mgr.get_session(12345))
+    print("Active path:", mgr.get_session(12345).active_path())
+    print("Conversation ID:", mgr.get_session(12345).conversation_id)
+
     mgr.reset_conversation(12345)
-    print("Reset session:", mgr.get_session(12345))
-    if Path("test_sessions.json").exists():
-        Path("test_sessions.json").unlink()
+    print("Reset session conv:", mgr.get_session(12345).conversation_id)
+
+    # Persistence verification
+    mgr2 = SessionManager(test_file)
+    s2 = mgr2.get_session(12345)
+    assert s2.active_project == "demo"
+    assert "demo" in s2.projects
+    assert s2.model == "gemini-2.5-pro"
+
+    if test_file.exists():
+        test_file.unlink()
     print("SessionManager self-test passed!")
