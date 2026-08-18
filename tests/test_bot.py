@@ -718,13 +718,14 @@ async def test_bot_callback_query_effort_and_model(mock_bot):
 
 
 @pytest.mark.asyncio
-async def test_bot_voice_message_flow(mock_bot, tmp_path):
+async def test_bot_voice_message_flow_transcribed(mock_bot, tmp_path):
     fake_voice_file = tmp_path / "voice_100_v123.oga"
     fake_voice_file.write_bytes(b"TEST_AUDIO")
 
     mock_bot.client.download_file_by_id = AsyncMock(
         return_value=(fake_voice_file, {"file_id": "v123", "file_path": "voice/file.oga"})
     )
+    mock_bot.transcriber.transcribe = AsyncMock(return_value="Check line counts in project")
 
     captured_prompt = {}
 
@@ -752,22 +753,21 @@ async def test_bot_voice_message_flow(mock_bot, tmp_path):
 
     mock_bot.client.send_chat_action.assert_called_with(chat_id=100, action="record_voice")
     mock_bot.client.download_file_by_id.assert_called_once()
+    mock_bot.transcriber.transcribe.assert_called_once_with(fake_voice_file)
     assert captured_prompt["chat_id"] == 100
     assert captured_prompt["reply_to_id"] == 777
-    assert str(fake_voice_file.resolve()) in captured_prompt["prompt"]
-    assert "Duration: 8s" in captured_prompt["prompt"]
-    assert "MIME Type: audio/ogg" in captured_prompt["prompt"]
-    assert "inspect and transcribe/listen to this audio file" in captured_prompt["prompt"]
+    assert captured_prompt["prompt"] == "Check line counts in project"
 
 
 @pytest.mark.asyncio
-async def test_bot_voice_message_steer(mock_bot, tmp_path):
+async def test_bot_voice_message_steer_transcribed(mock_bot, tmp_path):
     fake_voice_file = tmp_path / "voice_100_steer.oga"
     fake_voice_file.write_bytes(b"STEER_AUDIO")
 
     mock_bot.client.download_file_by_id = AsyncMock(
         return_value=(fake_voice_file, {"file_id": "v_steer", "file_path": "voice/steer.oga"})
     )
+    mock_bot.transcriber.transcribe = AsyncMock(return_value="Add unit tests for this")
 
     # Simulate busy bridge
     session = mock_bot.session_manager.get_session(100)
@@ -793,22 +793,57 @@ async def test_bot_voice_message_steer(mock_bot, tmp_path):
 
     assert fake_bridge.steer.called
     steer_call_arg = fake_bridge.steer.call_args[0][0]
-    assert str(fake_voice_file.resolve()) in steer_call_arg
-    assert "Duration: 5s" in steer_call_arg
+    assert "Add unit tests for this" in steer_call_arg
 
     # Confirmation sent to chat
     sent_text = mock_bot.client.send_message.call_args[1]["text"]
-    assert "Steered voice instruction (5s)" in sent_text
-    assert str(fake_voice_file.resolve()) in sent_text
+    assert "Add unit tests for this" in sent_text
 
 
 @pytest.mark.asyncio
-async def test_bot_audio_message_with_caption(mock_bot, tmp_path):
-    fake_audio_file = tmp_path / "audio_100_song.mp3"
-    fake_audio_file.write_bytes(b"AUDIO_DATA")
+async def test_bot_voice_transcription_fallback_to_raw_path(mock_bot, tmp_path):
+    fake_voice_file = tmp_path / "voice_100_v123.oga"
+    fake_voice_file.write_bytes(b"TEST_AUDIO")
 
     mock_bot.client.download_file_by_id = AsyncMock(
-        return_value=(fake_audio_file, {"file_id": "a999", "file_path": "music/song.mp3"})
+        return_value=(fake_voice_file, {"file_id": "v123", "file_path": "voice/file.oga"})
+    )
+    # Transcription fails or returns None
+    mock_bot.transcriber.transcribe = AsyncMock(return_value=None)
+
+    captured_prompt = {}
+
+    async def mock_handle_prompt(chat_id, prompt, reply_to_id):
+        captured_prompt["prompt"] = prompt
+
+    mock_bot.handle_prompt = mock_handle_prompt
+
+    update = {
+        "message": {
+            "chat": {"id": 100},
+            "message_id": 777,
+            "voice": {
+                "file_id": "v123",
+                "file_unique_id": "vu123",
+                "duration": 8,
+                "mime_type": "audio/ogg",
+            },
+        }
+    }
+
+    await mock_bot.process_update(update)
+
+    assert str(fake_voice_file.resolve()) in captured_prompt["prompt"]
+    assert "inspect and transcribe/listen to this audio file" in captured_prompt["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_bot_document_message_flow(mock_bot, tmp_path):
+    fake_doc_file = tmp_path / "doc_100_data.csv"
+    fake_doc_file.write_bytes(b"col1,col2\n1,2")
+
+    mock_bot.client.download_file_by_id = AsyncMock(
+        return_value=(fake_doc_file, {"file_id": "d123", "file_path": "documents/data.csv"})
     )
 
     captured_prompt = {}
@@ -821,21 +856,59 @@ async def test_bot_audio_message_with_caption(mock_bot, tmp_path):
     update = {
         "message": {
             "chat": {"id": 100},
-            "message_id": 900,
-            "audio": {
-                "file_id": "a999",
-                "file_unique_id": "au999",
-                "duration": 12,
-                "mime_type": "audio/mpeg",
+            "message_id": 890,
+            "document": {
+                "file_id": "d123",
+                "file_unique_id": "du123",
+                "file_name": "data.csv",
+                "file_size": 256,
+                "mime_type": "text/csv",
             },
-            "caption": "Please translate this voice message",
+            "caption": "Please analyze this CSV dataset",
         }
     }
 
     await mock_bot.process_update(update)
 
-    assert "Accompanying Caption: Please translate this voice message" in captured_prompt["prompt"]
-    assert str(fake_audio_file.resolve()) in captured_prompt["prompt"]
+    mock_bot.client.send_chat_action.assert_called_with(chat_id=100, action="upload_document")
+    assert str(fake_doc_file.resolve()) in captured_prompt["prompt"]
+    assert "data.csv" in captured_prompt["prompt"]
+    assert "User Instructions/Caption: Please analyze this CSV dataset" in captured_prompt["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_bot_photo_message_flow(mock_bot, tmp_path):
+    fake_photo_file = tmp_path / "photo_pu456.jpg"
+    fake_photo_file.write_bytes(b"IMAGE_BYTES")
+
+    mock_bot.client.download_file_by_id = AsyncMock(
+        return_value=(fake_photo_file, {"file_id": "p456", "file_path": "photos/photo.jpg"})
+    )
+
+    captured_prompt = {}
+
+    async def mock_handle_prompt(chat_id, prompt, reply_to_id):
+        captured_prompt["prompt"] = prompt
+
+    mock_bot.handle_prompt = mock_handle_prompt
+
+    update = {
+        "message": {
+            "chat": {"id": 100},
+            "message_id": 891,
+            "photo": [
+                {"file_id": "p123", "file_size": 100},
+                {"file_id": "p456", "file_unique_id": "pu456", "file_size": 500},
+            ],
+            "caption": "Please describe this architecture diagram",
+        }
+    }
+
+    await mock_bot.process_update(update)
+
+    assert str(fake_photo_file.resolve()) in captured_prompt["prompt"]
+    assert "photo_pu456.jpg" in captured_prompt["prompt"]
+    assert "Please describe this architecture diagram" in captured_prompt["prompt"]
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,7 @@ from gateway.message_formatter import (
 )
 from gateway.session_manager import ChatSession, SessionManager
 from gateway.telegram_client import TelegramClient
+from gateway.transcriber import VoiceTranscriber
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,11 @@ class AgyTelegramBot:
         self.config = config
         self.client = TelegramClient(bot_token=config.bot_token)
         self.session_manager = SessionManager(persistence_file=config.sessions_file)
+        self.transcriber = VoiceTranscriber(
+            model_size=config.whisper_model,
+            device=config.whisper_device,
+            compute_type=config.whisper_compute_type,
+        )
         self.active_bridges: Dict[int, AgyBridge] = {}
         self.running = False
         self.bot_info: Dict[str, Any] = {}
@@ -299,6 +305,11 @@ class AgyTelegramBot:
             # Voice or audio message handling
             if message.get("voice") or message.get("audio"):
                 await self.handle_voice_message(chat_id, message, message_id)
+                return
+
+            # Document or photo file handling
+            if message.get("document") or message.get("photo"):
+                await self.handle_document_message(chat_id, message, message_id)
                 return
 
             text = message.get("text", "").strip()
@@ -1112,7 +1123,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
         message: Dict[str, Any],
         message_id: Optional[int],
     ) -> None:
-        """Handle incoming voice notes or audio files, download locally, and send to agy as a voice instruction."""
+        """Handle incoming voice notes or audio files, download locally, transcribe via Whisper, and pass to agy."""
         voice_obj = message.get("voice") or message.get("audio") or {}
         file_id = voice_obj.get("file_id")
         if not file_id:
@@ -1162,19 +1173,154 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
 
         abs_path = str(saved_path.resolve())
 
+        # Transcribe audio using faster-whisper
+        transcribed_text: Optional[str] = None
+        try:
+            transcribed_text = await self.transcriber.transcribe(saved_path)
+        except Exception as e:
+            logger.warning("Voice transcription failed for audio %s: %s", abs_path, e)
+
+        if transcribed_text:
+            logger.info("Transcribed voice message for chat %s: '%s'", chat_id, transcribed_text[:80])
+            user_instruction = transcribed_text
+            if caption:
+                user_instruction = f"{transcribed_text}\n\n[Caption: {caption}]"
+
+            # Check if session is currently busy -> steer into active session
+            session = self.session_manager.get_session(chat_id)
+            if session.is_busy and chat_id in self.active_bridges:
+                steer_msg = f"🎙️ [Voice Steering]: {user_instruction}"
+                steered = await self.active_bridges[chat_id].steer(steer_msg)
+                if steered:
+                    dur_text = f" ({duration}s)" if duration else ""
+                    await self._safe_send_message(
+                        chat_id=chat_id,
+                        text=(
+                            f"🎯 <b>Steered voice instruction{dur_text}:</b>\n"
+                            f"<i>\"{escape_html(user_instruction)}\"</i>"
+                        ),
+                        reply_to_message_id=message_id,
+                    )
+                    return
+
+            # Execute transcribed prompt directly through agy
+            await self.handle_prompt(chat_id, user_instruction, message_id)
+        else:
+            # Fallback if transcription is unavailable or failed
+            prompt_lines = [
+                "🎙️ [User Voice Command]",
+                "The user sent a voice instruction in Telegram.",
+                f"• Local Audio File Path: {abs_path}",
+                f"• Duration: {duration}s",
+                f"• MIME Type: {mime_type}",
+            ]
+            if caption:
+                prompt_lines.append(f"• Accompanying Caption: {caption}")
+            prompt_lines.append("")
+            prompt_lines.append(
+                "Please inspect and transcribe/listen to this audio file to understand the user's instructions, and then execute the requested task."
+            )
+            prompt_text = "\n".join(prompt_lines)
+
+            session = self.session_manager.get_session(chat_id)
+            if session.is_busy and chat_id in self.active_bridges:
+                steered = await self.active_bridges[chat_id].steer(prompt_text)
+                if steered:
+                    dur_text = f" ({duration}s)" if duration else ""
+                    await self._safe_send_message(
+                        chat_id=chat_id,
+                        text=(
+                            f"🎯 <b>Steered voice instruction{dur_text} into active session!</b>\n"
+                            f"• <b>Audio File:</b> <code>{escape_html(abs_path)}</code>"
+                        ),
+                        reply_to_message_id=message_id,
+                    )
+                    return
+
+            await self.handle_prompt(chat_id, prompt_text, message_id)
+
+    async def handle_document_message(
+        self,
+        chat_id: int,
+        message: Dict[str, Any],
+        message_id: Optional[int],
+    ) -> None:
+        """Handle incoming documents or photos, download locally, and send file path to agy."""
+        file_id: Optional[str] = None
+        file_name = "document"
+        file_size = 0
+        mime_type = "application/octet-stream"
+
+        if "document" in message:
+            doc = message["document"]
+            file_id = doc.get("file_id")
+            file_name = doc.get("file_name", "document")
+            file_size = int(doc.get("file_size", 0))
+            mime_type = doc.get("mime_type", "application/octet-stream")
+        elif "photo" in message and isinstance(message["photo"], list) and message["photo"]:
+            photo_obj = message["photo"][-1]
+            file_id = photo_obj.get("file_id")
+            file_unique_id = photo_obj.get("file_unique_id", "photo")
+            file_name = f"photo_{file_unique_id}.jpg"
+            file_size = int(photo_obj.get("file_size", 0))
+            mime_type = "image/jpeg"
+
+        if not file_id:
+            logger.warning("Document/Photo message received without file_id in chat %s", chat_id)
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text="⚠️ Unable to process file: missing file ID.",
+                reply_to_message_id=message_id,
+            )
+            return
+
+        caption = message.get("caption", "").strip()
+
+        logger.info(
+            "Received document/attachment '%s' in chat %s (size=%d, mime=%s)",
+            file_name,
+            chat_id,
+            file_size,
+            mime_type,
+        )
+
+        await self._safe_send_chat_action(chat_id=chat_id, action="upload_document")
+
+        # Download file to runtime/documents directory
+        doc_dir = Path("runtime/documents")
+        doc_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            saved_path, _ = await self.client.download_file_by_id(
+                file_id=file_id,
+                destination_dir=doc_dir,
+                filename_prefix=f"doc_{chat_id}",
+            )
+        except Exception as e:
+            logger.error("Failed to download document %s: %s", file_id, e)
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Failed to download file: <code>{escape_html(str(e))}</code>",
+                reply_to_message_id=message_id,
+            )
+            return
+
+        abs_path = str(saved_path.resolve())
+
         # Construct prompt for agy
         prompt_lines = [
-            "🎙️ [User Voice Command]",
-            "The user sent a voice instruction in Telegram.",
-            f"• Local Audio File Path: {abs_path}",
-            f"• Duration: {duration}s",
+            "📎 [User Uploaded File]",
+            "The user sent a file in Telegram:",
+            f"• Original File Name: {file_name}",
+            f"• Local File Path: {abs_path}",
+            f"• File Size: {file_size} bytes",
             f"• MIME Type: {mime_type}",
         ]
         if caption:
-            prompt_lines.append(f"• Accompanying Caption: {caption}")
+            prompt_lines.append(f"• User Instructions/Caption: {caption}")
         prompt_lines.append("")
         prompt_lines.append(
-            "Please inspect and transcribe/listen to this audio file to understand the user's instructions, and then execute the requested task."
+            "Please inspect this file and execute the requested task."
         )
         prompt_text = "\n".join(prompt_lines)
 
@@ -1183,12 +1329,12 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
         if session.is_busy and chat_id in self.active_bridges:
             steered = await self.active_bridges[chat_id].steer(prompt_text)
             if steered:
-                dur_text = f" ({duration}s)" if duration else ""
                 await self._safe_send_message(
                     chat_id=chat_id,
                     text=(
-                        f"🎯 <b>Steered voice instruction{dur_text} into active session!</b>\n"
-                        f"• <b>Audio File:</b> <code>{escape_html(abs_path)}</code>"
+                        f"📎 <b>Steered uploaded file into active session:</b>\n"
+                        f"• <b>File:</b> <code>{escape_html(file_name)}</code>\n"
+                        f"• <b>Path:</b> <code>{escape_html(abs_path)}</code>"
                     ),
                     reply_to_message_id=message_id,
                 )
