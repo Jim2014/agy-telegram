@@ -42,15 +42,22 @@ class AgyBridge:
         agy_bin: str = "/Users/jim/.local/bin/agy",
         default_working_dir: Optional[str] = None,
         timeout_seconds: int = 300,
+        system_prompt: Optional[str] = None,
     ) -> None:
         self.agy_bin = agy_bin
         self.default_working_dir = default_working_dir or os.getcwd()
         self.timeout_seconds = timeout_seconds
+        self.system_prompt = system_prompt
         self._current_process: Optional[asyncio.subprocess.Process] = None
         self._is_stopped = False
         self._pending_turns = 0
         self._lock = asyncio.Lock()
         self._steer_history: List[str] = []
+
+    def is_running(self) -> bool:
+        """Check if the agy process is currently running and active."""
+        proc = self._current_process
+        return proc is not None and proc.returncode is None and not self._is_stopped
 
     def build_command(
         self,
@@ -123,6 +130,7 @@ class AgyBridge:
         model: Optional[str] = None,
         effort: Optional[str] = None,
         working_dir: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> AsyncIterator[AgyEvent]:
         """Run agy CLI with stream-json input/output and yield streaming AgyEvent instances."""
         self._is_stopped = False
@@ -162,10 +170,19 @@ class AgyBridge:
         assert process.stderr is not None
         assert process.stdin is not None
 
+        # Determine effective prompt for the turn (inject system prompt only on the first turn of a session)
+        eff_sys_prompt = system_prompt if system_prompt is not None else self.system_prompt
+        is_first_turn = not bool(conversation_id)
+
+        if is_first_turn and eff_sys_prompt and eff_sys_prompt.strip():
+            initial_content = f"{eff_sys_prompt.strip()}\n\n---\n\n{prompt}"
+        else:
+            initial_content = prompt
+
         # Send initial user prompt turn
         async with self._lock:
             self._pending_turns = 1
-            init_payload = json.dumps({"type": "user", "message": {"content": prompt}}) + "\n"
+            init_payload = json.dumps({"type": "user", "message": {"content": initial_content}}) + "\n"
             process.stdin.write(init_payload.encode("utf-8"))
             await process.stdin.drain()
 

@@ -13,6 +13,45 @@ from dotenv import load_dotenv
 # Base directory for the agy-telegram project
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+DEFAULT_SYSTEM_PROMPT = """You are interacting with a user via the agy-telegram gateway on Telegram.
+
+# Output Conventions & Protocol
+
+1. **Short / Standard Responses (Default)**:
+   - For regular questions, brief explanations, command outputs, or concise discussions, reply directly with plain text using standard Markdown (bold, italic, inline code, and short code blocks).
+   - The gateway automatically converts your Markdown into Telegram HTML format.
+   - Keep answers concise, clear, and easy to read on mobile devices.
+
+2. **Long / Complex Responses (Single-Page Mobile HTML File Export)**:
+   - When your output is long or complex (such as large git diffs/patches, test & coverage reports, build/execution logs, multi-file code modification summaries, extensive implementations, detailed analysis reports, or large data tables), **DO NOT** paste the full content into the plain text message.
+   - Instead:
+     1. Provide a concise summary or preview in the text response with a note (e.g. "📄 完整内容见下方导出的 HTML 报告").
+     2. Export the complete content as a standalone, mobile-friendly HTML document using the `[AGY_FILE]` protocol block.
+
+3. **`[AGY_FILE]` Protocol Specification**:
+   To export a document, output an explicit block enclosed by `[AGY_FILE]` and `[END_AGY_FILE]` tags (each must be on its own standalone line):
+
+   [AGY_FILE]
+   filename: <descriptive_filename.html>
+   title: <Document Title>
+   layout: mobile
+   ---
+   <Content: Markdown, Raw HTML, or Workspace File Path>
+   [END_AGY_FILE]
+
+   **Protocol Rules:**
+   - **Headers** (before `---` separator):
+     - `filename`: (Optional) Desired filename ending in `.html` (default: `report.html`).
+     - `title`: (Optional) Human-readable title for the document header (default: `agy Response`).
+     - `layout`: (Optional) Layout mode (default: `mobile`).
+   - **Content Modes** (after `---` separator):
+     (a) **Markdown**: Standard Markdown text. The gateway will render it into a polished, responsive single-page HTML with syntax highlighting, diff coloring, and touch-scrollable tables.
+     (b) **Raw HTML**: Complete `<!DOCTYPE html>...</html>` or HTML fragments. Must be responsive and narrow-screen friendly.
+     (c) **File Path**: Relative or absolute path to a file generated in the workspace (e.g. `runtime/artifacts/diff.html`). The gateway will read and send the file.
+   - **Multiple Files**: You can include multiple `[AGY_FILE]...[END_AGY_FILE]` blocks in a single response to send multiple documents.
+   - **Mobile-First Design**: All HTML exports are viewed primarily on mobile phones (360px~430px+ width). Ensure code blocks (`pre`) and tables (`table`) do not overflow horizontally and can scroll smoothly on touch screens.
+""".strip()
+
 
 @dataclass
 class Config:
@@ -29,6 +68,7 @@ class Config:
     log_level: str = "INFO"
     log_file: str = "runtime/gateway.log"
     sessions_file: str = "runtime/sessions.json"
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT
 
     @classmethod
     def load(cls, env_path: str | Path | None = None) -> Config:
@@ -88,6 +128,27 @@ class Config:
         log_file = os.getenv("LOG_FILE", "runtime/gateway.log").strip()
         sessions_file = os.getenv("SESSIONS_FILE", "runtime/sessions.json").strip()
 
+        # System prompt loading (Priority: AGY_SYSTEM_PROMPT_FILE > AGY_SYSTEM_PROMPT > DEFAULT_SYSTEM_PROMPT)
+        system_prompt = ""
+        prompt_file_val = os.getenv("AGY_SYSTEM_PROMPT_FILE", "").strip()
+        if prompt_file_val:
+            pf = Path(prompt_file_val).expanduser()
+            if not pf.is_absolute():
+                pf = (BASE_DIR / pf).resolve()
+            if pf.is_file():
+                try:
+                    system_prompt = pf.read_text(encoding="utf-8").strip()
+                except Exception:
+                    pass
+
+        if not system_prompt:
+            raw_prompt = os.getenv("AGY_SYSTEM_PROMPT", "").strip()
+            if raw_prompt:
+                system_prompt = raw_prompt.replace("\\n", "\n").strip()
+
+        if not system_prompt:
+            system_prompt = DEFAULT_SYSTEM_PROMPT
+
         return cls(
             bot_token=bot_token,
             allowed_chat_ids=allowed_chat_ids,
@@ -100,6 +161,7 @@ class Config:
             log_level=log_level,
             log_file=log_file,
             sessions_file=sessions_file,
+            system_prompt=system_prompt,
         )
 
     def is_token_valid(self) -> bool:
@@ -145,3 +207,5 @@ if __name__ == "__main__":
     print(f"Timeout (s):           {cfg.agy_timeout_seconds}")
     print(f"Log Level:             {cfg.log_level}")
     print(f"Log File:              {cfg.log_file}")
+    print(f"System Prompt:         {len(cfg.system_prompt)} chars configured")
+

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -58,7 +59,7 @@ class TelegramClient:
         if not data.get("ok"):
             err_code = data.get("error_code", resp.status_code)
             desc = data.get("description", "Unknown error")
-            
+
             # Handle rate limits
             if err_code == 429:
                 params = data.get("parameters", {})
@@ -70,7 +71,7 @@ class TelegramClient:
                 data = resp.json()
                 if data.get("ok"):
                     return data.get("result", {})
-            
+
             raise TelegramAPIError(err_code, desc)
 
         return data.get("result", {})
@@ -166,8 +167,70 @@ class TelegramClient:
                     raise e2
             raise
 
+    async def send_document(
+        self,
+        chat_id: int,
+        document_content: bytes | str | Path,
+        filename: str = "document.html",
+        caption: Optional[str] = None,
+        parse_mode: Optional[str] = "HTML",
+        reply_to_message_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Send document file to Telegram via multipart/form-data upload."""
+        client = await self.get_client()
+        url = f"{self.base_url}/sendDocument"
+
+        if isinstance(document_content, str):
+            file_bytes = document_content.encode("utf-8")
+        elif isinstance(document_content, Path):
+            file_bytes = document_content.read_bytes()
+            if not filename or filename == "document.html":
+                filename = document_content.name
+        else:
+            file_bytes = document_content
+
+        data: Dict[str, Any] = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption
+        if parse_mode:
+            data["parse_mode"] = parse_mode
+        if reply_to_message_id:
+            data["reply_to_message_id"] = str(reply_to_message_id)
+
+        mime_type = "text/html"
+        if filename.endswith(".diff") or filename.endswith(".patch"):
+            mime_type = "text/x-diff"
+        elif filename.endswith(".json"):
+            mime_type = "application/json"
+        elif filename.endswith(".txt") or filename.endswith(".md"):
+            mime_type = "text/plain"
+
+        files = {"document": (filename, file_bytes, mime_type)}
+
+        try:
+            resp = await client.post(url, data=data, files=files, timeout=60.0)
+            res_json = resp.json()
+        except httpx.RequestError as e:
+            logger.error("HTTP request error calling sendDocument: %s", e)
+            raise
+
+        if not res_json.get("ok"):
+            err_code = res_json.get("error_code", resp.status_code)
+            desc = res_json.get("description", "Unknown error")
+            if parse_mode and ("can't parse entities" in desc.lower() or "tag" in desc.lower()):
+                logger.debug("HTML parse failed for sendDocument caption, retrying plain text: %s", desc)
+                data.pop("parse_mode", None)
+                files_retry = {"document": (filename, file_bytes, mime_type)}
+                resp2 = await client.post(url, data=data, files=files_retry, timeout=60.0)
+                res_json = resp2.json()
+                if res_json.get("ok"):
+                    return res_json.get("result", {})
+            raise TelegramAPIError(err_code, desc)
+
+        return res_json.get("result", {})
+
     async def send_chat_action(self, chat_id: int, action: str = "typing") -> bool:
-        """Send chat action (e.g. typing)."""
+        """Send chat action (e.g. typing, upload_document)."""
         try:
             await self._post("sendChatAction", {"chat_id": chat_id, "action": action})
             return True

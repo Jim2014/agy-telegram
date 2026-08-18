@@ -1,4 +1,4 @@
-"""Telegram Bot orchestrator: handles long polling, slash commands, and streaming bridge."""
+"""Telegram Bot orchestrator: handles long polling, slash commands, streaming bridge, and HTML file exports."""
 
 from __future__ import annotations
 
@@ -14,10 +14,15 @@ from typing import Any, Dict, List, Optional
 from gateway.agy_bridge import AgyBridge, AgyEvent
 from gateway.config import Config
 from gateway.message_formatter import (
+    AgyFileBlock,
     escape_html,
+    extract_agy_file_blocks,
     format_final_result,
     format_streaming_message,
     format_tool_summary,
+    generate_standalone_html,
+    render_agy_file,
+    should_export_as_file,
     split_text_chunks,
 )
 from gateway.session_manager import ChatSession, SessionManager
@@ -27,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgyTelegramBot:
-    """Core bot runner managing Telegram communication and agy executions."""
+    """Core bot runner managing Telegram communication, agy executions, and document exports."""
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -36,6 +41,82 @@ class AgyTelegramBot:
         self.active_bridges: Dict[int, AgyBridge] = {}
         self.running = False
         self.bot_info: Dict[str, Any] = {}
+
+    async def _safe_send_message(
+        self,
+        chat_id: int,
+        text: str,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Send message safely, catching all Telegram / network errors."""
+        try:
+            return await self.client.send_message(
+                chat_id=chat_id,
+                text=text,
+                **kwargs,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("Telegram send_message failed for chat %s: %s", chat_id, e)
+            return None
+
+    async def _safe_edit_message_text(
+        self,
+        chat_id: int,
+        message_id: Optional[int],
+        text: str,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Edit message text safely, catching all Telegram / network errors."""
+        if not message_id:
+            return None
+        try:
+            return await self.client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                **kwargs,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("Telegram edit_message_text failed for chat %s, msg %s: %s", chat_id, message_id, e)
+            return None
+
+    async def _safe_send_document(
+        self,
+        chat_id: int,
+        document_content: bytes | str | Path,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Send document safely, catching all Telegram / network errors."""
+        try:
+            return await self.client.send_document(
+                chat_id=chat_id,
+                document_content=document_content,
+                **kwargs,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("Telegram send_document failed for chat %s: %s", chat_id, e)
+            return None
+
+    async def _safe_send_chat_action(
+        self,
+        chat_id: int,
+        action: str = "typing",
+        **kwargs: Any,
+    ) -> bool:
+        """Send chat action safely, catching all Telegram / network errors."""
+        try:
+            return await self.client.send_chat_action(chat_id=chat_id, action=action, **kwargs)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("Telegram send_chat_action failed for chat %s: %s", chat_id, e)
+            return False
 
     async def start(self) -> None:
         """Initialize and run the Telegram long-polling loop."""
@@ -69,8 +150,13 @@ class AgyTelegramBot:
                     update_id = update.get("update_id")
                     if update_id is not None:
                         offset = update_id + 1
-                    # Dispatch update asynchronously to prevent blocking long polling
-                    asyncio.create_task(self.process_update(update))
+                    task = asyncio.create_task(self.process_update(update))
+
+                    def _on_task_done(t: asyncio.Task) -> None:
+                        if not t.cancelled() and t.exception():
+                            logger.error("Unhandled exception in update task: %s", t.exception())
+
+                    task.add_done_callback(_on_task_done)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -95,79 +181,88 @@ class AgyTelegramBot:
         logger.info("Shutdown complete.")
 
     async def process_update(self, update: Dict[str, Any]) -> None:
-        """Process a single Telegram update."""
-        message = update.get("message")
-        if not message:
-            return
+        """Process a single Telegram update safely."""
+        try:
+            message = update.get("message")
+            if not message:
+                return
 
-        chat = message.get("chat", {})
-        chat_id = chat.get("id")
-        text = message.get("text", "").strip()
-        message_id = message.get("message_id")
+            chat = message.get("chat", {})
+            chat_id = chat.get("id")
+            text = message.get("text", "").strip()
+            message_id = message.get("message_id")
 
-        if not chat_id or not text:
-            return
+            if not chat_id or not text:
+                return
 
-        # Check authorization whitelist
-        if not self.config.is_chat_allowed(chat_id):
-            logger.warning("Unauthorized access attempt from chat_id %d", chat_id)
-            await self.client.send_message(
-                chat_id=chat_id,
-                text="⛔ <b>Access Denied</b>\nThis bot is private and your chat ID is not authorized.",
-            )
-            return
-
-        # Slash command routing
-        if text.startswith("/"):
-            parts = text.split(maxsplit=1)
-            cmd = parts[0].lower().split("@")[0]  # Strip bot @username if in group
-            arg = parts[1].strip() if len(parts) > 1 else ""
-
-            if cmd in ("/start", "/help"):
-                await self.handle_cmd_help(chat_id)
-            elif cmd == "/new":
-                await self.handle_cmd_new(chat_id, arg)
-            elif cmd == "/open":
-                await self.handle_cmd_open(chat_id, arg)
-            elif cmd == "/delete":
-                await self.handle_cmd_delete(chat_id, arg)
-            elif cmd == "/reset":
-                await self.handle_cmd_reset(chat_id)
-            elif cmd == "/projects":
-                await self.handle_cmd_projects(chat_id)
-            elif cmd == "/status":
-                await self.handle_cmd_status(chat_id)
-            elif cmd == "/model":
-                await self.handle_cmd_model(chat_id, arg)
-            elif cmd == "/effort":
-                await self.handle_cmd_effort(chat_id, arg)
-            elif cmd == "/dir":
-                await self.handle_cmd_dir(chat_id, arg)
-            elif cmd == "/steer":
-                await self.handle_cmd_steer(chat_id, arg, message_id)
-            elif cmd == "/stop":
-                await self.handle_cmd_stop(chat_id)
-            else:
-                await self.client.send_message(
+            # Check authorization whitelist
+            if not self.config.is_chat_allowed(chat_id):
+                logger.warning("Unauthorized access attempt from chat_id %d", chat_id)
+                await self._safe_send_message(
                     chat_id=chat_id,
-                    text=f"❓ Unknown command <code>{escape_html(cmd)}</code>. Use /help for instructions.",
-                )
-            return
-
-        # If a prompt is running and user sends a new message -> steer into active session!
-        session = self.session_manager.get_session(chat_id)
-        if session.is_busy and chat_id in self.active_bridges:
-            steered = await self.active_bridges[chat_id].steer(text)
-            if steered:
-                await self.client.send_message(
-                    chat_id=chat_id,
-                    text=f"🎯 <b>Steered into active session:</b>\n<i>{escape_html(text)}</i>",
-                    reply_to_message_id=message_id,
+                    text="⛔ <b>Access Denied</b>\nThis bot is private and your chat ID is not authorized.",
                 )
                 return
 
-        # Regular prompt -> agy bridge execution
-        await self.handle_prompt(chat_id, text, message_id)
+            # Slash command routing
+            if text.startswith("/"):
+                parts = text.split(maxsplit=1)
+                cmd = parts[0].lower().split("@")[0]  # Strip bot @username if in group
+                arg = parts[1].strip() if len(parts) > 1 else ""
+
+                if cmd in ("/start", "/help"):
+                    await self.handle_cmd_help(chat_id)
+                elif cmd == "/new":
+                    await self.handle_cmd_new(chat_id, arg)
+                elif cmd == "/open":
+                    await self.handle_cmd_open(chat_id, arg)
+                elif cmd == "/delete":
+                    await self.handle_cmd_delete(chat_id, arg)
+                elif cmd == "/reset":
+                    await self.handle_cmd_reset(chat_id)
+                elif cmd == "/projects":
+                    await self.handle_cmd_projects(chat_id)
+                elif cmd == "/status":
+                    await self.handle_cmd_status(chat_id)
+                elif cmd == "/model":
+                    await self.handle_cmd_model(chat_id, arg)
+                elif cmd == "/effort":
+                    await self.handle_cmd_effort(chat_id, arg)
+                elif cmd == "/dir":
+                    await self.handle_cmd_dir(chat_id, arg)
+                elif cmd in ("/file", "/sendfile"):
+                    await self.handle_cmd_file(chat_id, arg, message_id)
+                elif cmd in ("/export", "/html"):
+                    await self.handle_cmd_export(chat_id, message_id)
+                elif cmd == "/steer":
+                    await self.handle_cmd_steer(chat_id, arg, message_id)
+                elif cmd == "/stop":
+                    await self.handle_cmd_stop(chat_id)
+                else:
+                    await self._safe_send_message(
+                        chat_id=chat_id,
+                        text=f"❓ Unknown command <code>{escape_html(cmd)}</code>. Use /help for instructions.",
+                    )
+                return
+
+            # If a prompt is running and user sends a new message -> steer into active session!
+            session = self.session_manager.get_session(chat_id)
+            if session.is_busy and chat_id in self.active_bridges:
+                steered = await self.active_bridges[chat_id].steer(text)
+                if steered:
+                    await self._safe_send_message(
+                        chat_id=chat_id,
+                        text=f"🎯 <b>Steered into active session:</b>\n<i>{escape_html(text)}</i>",
+                        reply_to_message_id=message_id,
+                    )
+                    return
+
+            # Regular prompt -> agy bridge execution
+            await self.handle_prompt(chat_id, text, message_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error("Unhandled error processing update %s: %s", update, e, exc_info=True)
 
     async def handle_cmd_help(self, chat_id: int) -> None:
         """Send help message."""
@@ -177,7 +272,7 @@ class AgyTelegramBot:
         conv_text = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(New session)</i>"
         help_text = (
             "🤖 <b>agy-telegram Gateway</b>\n\n"
-            "Direct Telegram interface to <b>agy</b> (Antigravity CLI) with project-based session management, real-time intermediate streaming, and mid-flight steering.\n\n"
+            "Direct Telegram interface to <b>agy</b> (Antigravity CLI) with project-based session management, real-time streaming, mid-flight steering, and HTML document exports.\n\n"
             "<b>Project Management:</b>\n"
             "• <code>/new &lt;name&gt; &lt;path&gt;</code> — Create a new project workspace\n"
             "• <code>/open &lt;name&gt;</code> — Open and switch to an existing project\n"
@@ -185,6 +280,9 @@ class AgyTelegramBot:
             "• <code>/delete &lt;name&gt;</code> — Delete a project\n"
             "• <code>/reset</code> — Clear conversation history for active project\n"
             "• <code>/dir &lt;path&gt;</code> — Set workspace directory for active project\n\n"
+            "<b>Files & Exports:</b>\n"
+            "• <code>/file &lt;path&gt;</code> — Send any project workspace file as document\n"
+            "• <code>/export</code> — Export current conversation report as standalone HTML\n\n"
             "<b>Configuration & Control:</b>\n"
             "• <code>/status</code> — Show active project, conversation, model, & effort\n"
             "• <code>/model &lt;name&gt;</code> — Set model (e.g. <code>/model gemini-2.5-pro</code>) or <code>/model reset</code>\n"
@@ -193,14 +291,14 @@ class AgyTelegramBot:
             "• <code>/stop</code> — Interrupt currently executing agy prompt\n"
             "• <code>/help</code> — Show this manual\n\n"
             f"<b>Active Project:</b> <code>{escape_html(active_proj)}</code> ({conv_text})\n\n"
-            "💡 <i>Tip: While agy is running, you can send any message or use /steer to seamlessly guide the session!</i>"
+            "💡 <i>Tip: Long responses, code diffs, and test reports are automatically generated and sent as formatted HTML file attachments!</i>"
         )
-        await self.client.send_message(chat_id=chat_id, text=help_text)
+        await self._safe_send_message(chat_id=chat_id, text=help_text)
 
     async def handle_cmd_new(self, chat_id: int, arg: str) -> None:
         """Create a new project workspace (/new <name> <path>) or open if exists."""
         if self.session_manager.is_busy(chat_id):
-            await self.client.send_message(
+            await self._safe_send_message(
                 chat_id=chat_id,
                 text="⚠️ A task is currently running. Please /stop it first before switching projects.",
             )
@@ -210,7 +308,7 @@ class AgyTelegramBot:
         session = self.session_manager.get_session(chat_id)
 
         if len(parts) == 0:
-            await self.client.send_message(
+            await self._safe_send_message(
                 chat_id=chat_id,
                 text="⚠️ Usage: <code>/new &lt;name&gt; &lt;path&gt;</code>\nCreate and switch to a new project workspace.",
             )
@@ -224,7 +322,7 @@ class AgyTelegramBot:
             path_val = session.active_path() or ""
             conv_id = session.conversation_id
             conv_text = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(New session)</i>"
-            await self.client.send_message(
+            await self._safe_send_message(
                 chat_id=chat_id,
                 text=(
                     f"📂 Project <b>{escape_html(name)}</b> already exists. Switched to it!\n"
@@ -236,7 +334,7 @@ class AgyTelegramBot:
 
         # Name does not exist yet; requires path
         if len(parts) < 2:
-            await self.client.send_message(
+            await self._safe_send_message(
                 chat_id=chat_id,
                 text=f"⚠️ Usage: <code>/new {escape_html(name)} &lt;path&gt;</code>\nPlease provide the directory path for the new project.",
             )
@@ -246,7 +344,7 @@ class AgyTelegramBot:
         target_path = str(Path(path_str).expanduser().resolve())
         self.session_manager.create_project(chat_id, name, target_path)
 
-        await self.client.send_message(
+        await self._safe_send_message(
             chat_id=chat_id,
             text=(
                 f"✨ <b>Project created and activated!</b>\n"
@@ -259,14 +357,14 @@ class AgyTelegramBot:
     async def handle_cmd_open(self, chat_id: int, arg: str) -> None:
         """Open and switch to an existing project (/open <name>)."""
         if self.session_manager.is_busy(chat_id):
-            await self.client.send_message(
+            await self._safe_send_message(
                 chat_id=chat_id,
                 text="⚠️ A task is currently running. Please /stop it first before switching projects.",
             )
             return
 
         if not arg:
-            await self.client.send_message(
+            await self._safe_send_message(
                 chat_id=chat_id,
                 text="⚠️ Usage: <code>/open &lt;name&gt;</code>\nUse <code>/projects</code> to see available projects.",
             )
@@ -282,7 +380,7 @@ class AgyTelegramBot:
                 msg = f"❌ Project <code>{escape_html(name)}</code> not found.\n\n<b>Available projects:</b>\n{plist}\n\nUse <code>/projects</code> to view details."
             else:
                 msg = f"❌ Project <code>{escape_html(name)}</code> not found. No projects exist yet.\nUse <code>/new &lt;name&gt; &lt;path&gt;</code> to create one."
-            await self.client.send_message(chat_id=chat_id, text=msg)
+            await self._safe_send_message(chat_id=chat_id, text=msg)
             return
 
         self.session_manager.open_project(chat_id, name)
@@ -290,7 +388,7 @@ class AgyTelegramBot:
         conv_id = session.conversation_id
         conv_text = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(New session)</i>"
 
-        await self.client.send_message(
+        await self._safe_send_message(
             chat_id=chat_id,
             text=(
                 f"📂 <b>Opened project:</b> <code>{escape_html(name)}</code>\n"
@@ -299,216 +397,302 @@ class AgyTelegramBot:
             ),
         )
 
-    async def handle_cmd_delete(self, chat_id: int, arg: str) -> None:
-        """Delete a project (/delete <name>)."""
-        if self.session_manager.is_busy(chat_id):
-            await self.client.send_message(
+    async def handle_cmd_projects(self, chat_id: int) -> None:
+        """List all projects in current session."""
+        session = self.session_manager.get_session(chat_id)
+        projects = session.projects
+
+        if not projects:
+            await self._safe_send_message(
                 chat_id=chat_id,
-                text="⚠️ A task is currently running. Please /stop it first.",
+                text="📂 No projects configured yet.\nUse <code>/new &lt;name&gt; &lt;path&gt;</code> to create your first project!",
+            )
+            return
+
+        lines = ["📁 <b>Available Projects:</b>\n"]
+        for name, proj in projects.items():
+            is_active = (name == session.active_project)
+            active_marker = "🌟 <b>[ACTIVE]</b> " if is_active else "• "
+            conv_id = proj.get("conversation_id")
+            conv_str = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(None)</i>"
+            path_str = proj.get("path", "")
+            lines.append(
+                f"{active_marker}<b>{escape_html(name)}</b>\n"
+                f"   Path: <code>{escape_html(path_str)}</code>\n"
+                f"   Session: {conv_str}\n"
+            )
+
+        lines.append("💡 Use <code>/open &lt;name&gt;</code> to switch or <code>/new &lt;name&gt; &lt;path&gt;</code> to add.")
+        await self._safe_send_message(chat_id=chat_id, text="\n".join(lines))
+
+    async def handle_cmd_delete(self, chat_id: int, arg: str) -> None:
+        """Delete a project workspace (/delete <name>)."""
+        if self.session_manager.is_busy(chat_id):
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text="⚠️ A task is currently running. Please /stop it first before deleting projects.",
             )
             return
 
         if not arg:
-            await self.client.send_message(
+            await self._safe_send_message(
                 chat_id=chat_id,
-                text="⚠️ Usage: <code>/delete &lt;name&gt;</code>",
+                text="⚠️ Usage: <code>/delete &lt;name&gt;</code>\nDelete a project workspace from session manager.",
             )
             return
 
         name = arg.strip()
-        deleted = self.session_manager.delete_project(chat_id, name)
-        if deleted:
-            await self.client.send_message(
-                chat_id=chat_id,
-                text=f"🗑 <b>Project deleted:</b> <code>{escape_html(name)}</code>",
-            )
-        else:
-            await self.client.send_message(
-                chat_id=chat_id,
-                text=f"❌ Project <code>{escape_html(name)}</code> not found.",
-            )
-
-    async def handle_cmd_reset(self, chat_id: int) -> None:
-        """Clear conversation_id for active project."""
-        if self.session_manager.is_busy(chat_id):
-            await self.client.send_message(
-                chat_id=chat_id,
-                text="⚠️ A task is currently running. Please /stop it first before resetting conversation.",
-            )
-            return
-
         session = self.session_manager.get_session(chat_id)
-        if not session.active_project or session.active_project not in session.projects:
-            await self.client.send_message(
+
+        if name not in session.projects:
+            await self._safe_send_message(
                 chat_id=chat_id,
-                text="⚠️ No active project. Use <code>/new &lt;name&gt; &lt;path&gt;</code> or <code>/open &lt;name&gt;</code> first.",
+                text=f"❌ Project <code>{escape_html(name)}</code> does not exist.",
             )
             return
 
-        self.session_manager.reset_conversation(chat_id)
-        await self.client.send_message(
+        self.session_manager.delete_project(chat_id, name)
+        await self._safe_send_message(
             chat_id=chat_id,
-            text=f"🔄 <b>Conversation reset</b> for project <code>{escape_html(session.active_project)}</code>.",
+            text=f"🗑️ Project <b>{escape_html(name)}</b> deleted successfully.",
         )
 
-    async def handle_cmd_projects(self, chat_id: int) -> None:
-        """List all projects for this chat."""
-        session = self.session_manager.get_session(chat_id)
-        projects = self.session_manager.list_projects(chat_id)
-
-        if not projects:
-            await self.client.send_message(
+    async def handle_cmd_reset(self, chat_id: int) -> None:
+        """Reset conversation_id for active project."""
+        if self.session_manager.is_busy(chat_id):
+            await self._safe_send_message(
                 chat_id=chat_id,
-                text="📁 <b>No projects found.</b>\nUse <code>/new &lt;name&gt; &lt;path&gt;</code> to create a project.",
+                text="⚠️ A task is currently running. Please /stop it first before resetting.",
             )
             return
 
-        entries: List[str] = []
-        for p_name, p_data in projects.items():
-            is_active = (p_name == session.active_project)
-            badge = " ⭐ <b>[ACTIVE]</b>" if is_active else ""
-            p_path = p_data.get("path", "")
-            conv = p_data.get("conversation_id")
-            conv_disp = f"<code>{escape_html(conv[:8])}...</code>" if conv else "<i>(none)</i>"
-            t_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(p_data.get("last_active_at", time.time())))
-            entries.append(
-                f"• <b>{escape_html(p_name)}</b>{badge}\n"
-                f"  Path: <code>{escape_html(p_path)}</code>\n"
-                f"  Conv: {conv_disp}\n"
-                f"  Last active: <code>{t_str}</code>"
-            )
+        session = self.session_manager.get_session(chat_id)
+        active = session.active_project
+        self.session_manager.reset_session(chat_id)
 
-        body = "\n\n".join(entries)
-        await self.client.send_message(
+        proj_info = f" for project <b>{escape_html(active)}</b>" if active else ""
+        await self._safe_send_message(
             chat_id=chat_id,
-            text=f"📁 <b>Projects ({len(projects)}):</b>\n\n{body}",
+            text=f"🔄 <b>Session reset{proj_info}.</b> Next message will start a fresh conversation.",
         )
 
     async def handle_cmd_status(self, chat_id: int) -> None:
-        """Display current chat status."""
+        """Display current bot & session status."""
         session = self.session_manager.get_session(chat_id)
-        active_name = session.active_project or "<i>(None)</i>"
-        active_path = session.active_path() or "<i>(None)</i>"
-        conv_id = session.conversation_id or "<i>(None - new session)</i>"
-        model = session.model or self.config.default_model or "<i>(agy default)</i>"
-        effort = session.effort or self.config.default_effort or "medium"
-        busy = "🏃 <b>Running</b>" if session.is_busy else "💤 <b>Idle</b>"
-        total_projects = len(session.projects)
+        conv_id = session.conversation_id or "<i>(None - new conversation)</i>"
+        if session.conversation_id:
+            conv_id = f"<code>{escape_html(session.conversation_id)}</code>"
+
+        active_proj = session.active_project or "<i>(default / none)</i>"
+        active_path = session.active_path() or self.config.agy_working_dir or os.getcwd()
+        model_str = session.model or self.config.default_model or "<i>(CLI default)</i>"
+        effort_str = session.effort or self.config.default_effort or "medium"
+        busy_status = "🔴 Busy (Running prompt)" if session.is_busy else "🟢 Idle"
 
         status_text = (
-            "📊 <b>agy-telegram Status</b>\n\n"
-            f"• <b>Status:</b> {busy}\n"
-            f"• <b>Active Project:</b> <code>{escape_html(active_name)}</code>\n"
-            f"• <b>Project Path:</b> <code>{escape_html(active_path)}</code>\n"
-            f"• <b>Conversation ID:</b> <code>{escape_html(conv_id)}</code>\n"
-            f"• <b>Total Projects:</b> <code>{total_projects}</code>\n"
-            f"• <b>Model:</b> {escape_html(model)}\n"
-            f"• <b>Effort:</b> <code>{escape_html(effort)}</code>\n"
-            f"• <b>Chat ID:</b> <code>{chat_id}</code>\n"
-            f"• <b>agy Binary:</b> <code>{escape_html(self.config.get_resolved_agy_bin())}</code>"
+            "📊 <b>Session & System Status:</b>\n\n"
+            f"• <b>Status:</b> {busy_status}\n"
+            f"• <b>Active Project:</b> <code>{escape_html(active_proj)}</code>\n"
+            f"• <b>Working Directory:</b> <code>{escape_html(active_path)}</code>\n"
+            f"• <b>Conversation ID:</b> {conv_id}\n"
+            f"• <b>Model:</b> {model_str}\n"
+            f"• <b>Effort:</b> <code>{escape_html(effort_str)}</code>\n"
+            f"• <b>Configured Projects:</b> {len(session.projects)}\n"
         )
-        await self.client.send_message(chat_id=chat_id, text=status_text)
+        await self._safe_send_message(chat_id=chat_id, text=status_text)
 
     async def handle_cmd_model(self, chat_id: int, arg: str) -> None:
-        """Configure model override."""
+        """Change or view model."""
+        session = self.session_manager.get_session(chat_id)
         if not arg:
-            session = self.session_manager.get_session(chat_id)
-            current = session.model or self.config.default_model or "agy default"
-            await self.client.send_message(
+            cur = session.model or self.config.default_model or "default"
+            await self._safe_send_message(
                 chat_id=chat_id,
-                text=f"ℹ️ Current model: <code>{escape_html(current)}</code>\nUsage: <code>/model &lt;name&gt;</code> or <code>/model reset</code>",
+                text=f"🤖 Current model: <code>{escape_html(cur)}</code>\nUse <code>/model &lt;name&gt;</code> to change or <code>/model reset</code> to reset.",
             )
             return
 
-        if arg.lower() in ("reset", "default", "none"):
+        val = arg.strip()
+        if val.lower() in ("reset", "default"):
             self.session_manager.set_model(chat_id, None)
-            await self.client.send_message(chat_id=chat_id, text="🔄 Model reset to default.")
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text="🤖 Model reset to default.",
+            )
         else:
-            self.session_manager.set_model(chat_id, arg)
-            await self.client.send_message(chat_id=chat_id, text=f"✅ Model set to: <code>{escape_html(arg)}</code>")
+            self.session_manager.set_model(chat_id, val)
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=f"🤖 Model updated to <code>{escape_html(val)}</code>.",
+            )
 
     async def handle_cmd_effort(self, chat_id: int, arg: str) -> None:
-        """Configure effort level."""
-        if not arg:
-            session = self.session_manager.get_session(chat_id)
-            current = session.effort or self.config.default_effort or "medium"
-            await self.client.send_message(
-                chat_id=chat_id,
-                text=f"ℹ️ Current effort: <code>{escape_html(current)}</code>\nUsage: <code>/effort &lt;low|medium|high&gt;</code>",
-            )
-            return
-
-        arg_lower = arg.lower()
-        if arg_lower in ("low", "medium", "high"):
-            self.session_manager.set_effort(chat_id, arg_lower)
-            await self.client.send_message(chat_id=chat_id, text=f"✅ Reasoning effort set to: <code>{arg_lower}</code>")
-        elif arg_lower in ("reset", "default"):
-            self.session_manager.set_effort(chat_id, None)
-            await self.client.send_message(chat_id=chat_id, text="🔄 Effort reset to default.")
-        else:
-            await self.client.send_message(chat_id=chat_id, text="⚠️ Invalid effort. Choose: <code>low</code>, <code>medium</code>, or <code>high</code>.")
-
-    async def handle_cmd_dir(self, chat_id: int, arg: str) -> None:
-        """Configure workspace directory for current active project."""
+        """Change reasoning effort."""
         session = self.session_manager.get_session(chat_id)
-        if not session.active_project or session.active_project not in session.projects:
-            await self.client.send_message(
-                chat_id=chat_id,
-                text="⚠️ No active project. Use <code>/new &lt;name&gt; &lt;path&gt;</code> or <code>/open &lt;name&gt;</code> first.",
-            )
-            return
-
         if not arg:
-            current = session.active_path() or "(None)"
-            await self.client.send_message(
+            cur = session.effort or self.config.default_effort or "medium"
+            await self._safe_send_message(
                 chat_id=chat_id,
-                text=f"📁 Current workspace for <b>{escape_html(session.active_project)}</b>:\n<code>{escape_html(current)}</code>\n\nUsage: <code>/dir &lt;path&gt;</code>",
+                text=f"⚙️ Current reasoning effort: <code>{escape_html(cur)}</code>\nOptions: <code>low</code>, <code>medium</code>, <code>high</code>.",
             )
             return
 
-        target_dir = Path(arg).expanduser().resolve()
-        if not target_dir.is_dir():
-            await self.client.send_message(
+        val = arg.strip().lower()
+        if val not in ("low", "medium", "high"):
+            await self._safe_send_message(
                 chat_id=chat_id,
-                text=f"⚠️ Directory does not exist: <code>{escape_html(str(target_dir))}</code>",
+                text="⚠️ Invalid effort value. Allowed: <code>low</code>, <code>medium</code>, <code>high</code>.",
             )
             return
 
-        self.session_manager.set_project_path(chat_id, session.active_project, str(target_dir))
-        await self.client.send_message(
+        self.session_manager.set_effort(chat_id, val)
+        await self._safe_send_message(
             chat_id=chat_id,
-            text=f"✅ Workspace directory for <b>{escape_html(session.active_project)}</b> set to:\n<code>{escape_html(str(target_dir))}</code>",
+            text=f"⚙️ Reasoning effort set to <code>{escape_html(val)}</code>.",
         )
 
-    async def handle_cmd_steer(self, chat_id: int, arg: str, reply_to_id: Optional[int] = None) -> None:
-        """Explicitly steer instructions into the currently running session."""
+    async def handle_cmd_dir(self, chat_id: int, arg: str) -> None:
+        """Change directory for active project."""
         if not arg:
-            await self.client.send_message(
+            session = self.session_manager.get_session(chat_id)
+            cur = session.active_path() or self.config.agy_working_dir or os.getcwd()
+            await self._safe_send_message(
                 chat_id=chat_id,
-                text="⚠️ Usage: <code>/steer &lt;instruction&gt;</code>\nProvide mid-flight guidance to the running agent.",
+                text=f"📁 Current working directory: <code>{escape_html(cur)}</code>\nUse <code>/dir &lt;path&gt;</code> to change.",
+            )
+            return
+
+        p = Path(arg.strip()).expanduser().resolve()
+        if not p.is_dir():
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Directory does not exist: <code>{escape_html(str(p))}</code>",
+            )
+            return
+
+        session = self.session_manager.get_session(chat_id)
+        active = session.active_project
+        if active:
+            self.session_manager.update_project_path(chat_id, active, str(p))
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=f"📁 Working directory for <b>{escape_html(active)}</b> set to <code>{escape_html(str(p))}</code>.",
+            )
+        else:
+            self.session_manager.create_project(chat_id, "default", str(p))
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=f"📁 Default working directory set to <code>{escape_html(str(p))}</code>.",
+            )
+
+    async def handle_cmd_file(self, chat_id: int, arg: str, reply_to_id: Optional[int]) -> None:
+        """Send a project workspace file as document (/file <relative_or_abs_path>)."""
+        if not arg:
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text="⚠️ Usage: <code>/file &lt;relative_or_abs_path&gt;</code>\nSend a workspace file directly to Telegram.",
                 reply_to_message_id=reply_to_id,
             )
             return
 
         session = self.session_manager.get_session(chat_id)
-        bridge = self.active_bridges.get(chat_id)
+        base_dir = Path(session.active_path() or self.config.agy_working_dir or os.getcwd())
+        raw_path = Path(arg.strip()).expanduser()
 
-        if session.is_busy and bridge:
+        target_file = (base_dir / raw_path).resolve() if not raw_path.is_absolute() else raw_path.resolve()
+
+        if not target_file.is_file():
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=f"❌ File not found: <code>{escape_html(str(target_file))}</code>",
+                reply_to_message_id=reply_to_id,
+            )
+            return
+
+        size_kb = target_file.stat().st_size / 1024
+        size_str = f"{size_kb:.1f} KB" if size_kb >= 1 else f"{target_file.stat().st_size} bytes"
+
+        await self._safe_send_chat_action(chat_id, "upload_document")
+        res = await self._safe_send_document(
+            chat_id=chat_id,
+            document_content=target_file,
+            filename=target_file.name,
+            caption=f"📄 <b>{escape_html(target_file.name)}</b> ({size_str})",
+            reply_to_message_id=reply_to_id,
+        )
+        if not res:
+            logger.error("Failed to send file %s to chat %d", target_file, chat_id)
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=f"❌ Failed to send document: <code>{escape_html(target_file.name)}</code>",
+                reply_to_message_id=reply_to_id,
+            )
+
+    async def handle_cmd_export(self, chat_id: int, reply_to_id: Optional[int]) -> None:
+        """Export current session status and conversation report as standalone HTML document."""
+        session = self.session_manager.get_session(chat_id)
+        active_proj = session.active_project or "default"
+        active_path = session.active_path() or self.config.agy_working_dir or os.getcwd()
+        conv_id = session.conversation_id or "New session"
+
+        report_md = f"""# Project Report: {active_proj}
+
+### Workspace Details
+- **Project Name:** `{active_proj}`
+- **Working Directory:** `{active_path}`
+- **Conversation ID:** `{conv_id}`
+- **Model:** `{session.model or self.config.default_model or 'Default'}`
+- **Effort:** `{session.effort or self.config.default_effort or 'medium'}`
+
+### Recent Status
+Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}.
+"""
+        html_doc = generate_standalone_html(
+            title=f"Session Report - {active_proj}",
+            markdown_content=report_md,
+            metadata={
+                "model": session.model or self.config.default_model,
+                "conversation_id": session.conversation_id,
+                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+        )
+        filename = f"session_report_{active_proj}_{int(time.time())}.html"
+        await self._safe_send_chat_action(chat_id, "upload_document")
+        await self._safe_send_document(
+            chat_id=chat_id,
+            document_content=html_doc,
+            filename=filename,
+            caption=f"📄 <b>{escape_html(filename)}</b>",
+            reply_to_message_id=reply_to_id,
+        )
+
+    async def handle_cmd_steer(self, chat_id: int, arg: str, reply_to_id: Optional[int]) -> None:
+        """Steer/guide the currently executing agy prompt with new instruction."""
+        if not arg:
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text="⚠️ Usage: <code>/steer &lt;instruction&gt;</code>\nInjects instruction into ongoing agy execution.",
+                reply_to_message_id=reply_to_id,
+            )
+            return
+
+        bridge = self.active_bridges.get(chat_id)
+        if bridge and bridge.is_running():
             steered = await bridge.steer(arg)
             if steered:
-                await self.client.send_message(
+                await self._safe_send_message(
                     chat_id=chat_id,
                     text=f"🎯 <b>Steering instruction sent:</b>\n<i>{escape_html(arg)}</i>\n\nThe agent will incorporate this guidance into the ongoing turn.",
                     reply_to_message_id=reply_to_id,
                 )
             else:
-                await self.client.send_message(
+                await self._safe_send_message(
                     chat_id=chat_id,
                     text="⚠️ Could not steer: the current task is already concluding.",
                     reply_to_message_id=reply_to_id,
                 )
         else:
-            await self.client.send_message(
+            await self._safe_send_message(
                 chat_id=chat_id,
                 text="ℹ️ No task is currently running to steer. Send a regular prompt to start.",
                 reply_to_message_id=reply_to_id,
@@ -521,12 +705,12 @@ class AgyTelegramBot:
             await bridge.stop()
             self.active_bridges.pop(chat_id, None)
             self.session_manager.set_busy(chat_id, False)
-            await self.client.send_message(chat_id=chat_id, text="🛑 <b>Task interrupted by user.</b>")
+            await self._safe_send_message(chat_id=chat_id, text="🛑 <b>Task interrupted by user.</b>")
         else:
-            await self.client.send_message(chat_id=chat_id, text="ℹ️ No active task is currently running.")
+            await self._safe_send_message(chat_id=chat_id, text="ℹ️ No active task is currently running.")
 
     async def handle_prompt(self, chat_id: int, prompt: str, reply_to_id: Optional[int]) -> None:
-        """Execute agy with prompt and stream real-time results back to Telegram."""
+        """Execute agy with prompt and stream real-time results back to Telegram with document export support."""
         session = self.session_manager.get_session(chat_id)
 
         if session.is_busy:
@@ -535,14 +719,14 @@ class AgyTelegramBot:
             if bridge:
                 steered = await bridge.steer(prompt)
                 if steered:
-                    await self.client.send_message(
+                    await self._safe_send_message(
                         chat_id=chat_id,
                         text=f"🎯 <b>Steered into active session:</b>\n<i>{escape_html(prompt)}</i>",
                         reply_to_message_id=reply_to_id,
                     )
                     return
 
-            await self.client.send_message(
+            await self._safe_send_message(
                 chat_id=chat_id,
                 text="⏳ A prompt is currently processing. Use /steer to guide it or /stop to cancel.",
                 reply_to_message_id=reply_to_id,
@@ -552,7 +736,7 @@ class AgyTelegramBot:
         # Ensure active project exists or auto-initialize default
         if not session.active_project or session.active_project not in session.projects:
             if session.projects:
-                await self.client.send_message(
+                await self._safe_send_message(
                     chat_id=chat_id,
                     text="⚠️ No active project selected. Use <code>/open &lt;name&gt;</code> to select a project or <code>/new &lt;name&gt; &lt;path&gt;</code> to create one.",
                     reply_to_message_id=reply_to_id,
@@ -565,17 +749,13 @@ class AgyTelegramBot:
 
         self.session_manager.set_busy(chat_id, True)
 
-        # Send initial placeholder message
-        init_msg = await self.client.send_message(
+        # Send initial placeholder message safely
+        init_msg = await self._safe_send_message(
             chat_id=chat_id,
             text="⏳ <i>Contacting agy...</i>",
             reply_to_message_id=reply_to_id,
         )
-        msg_id = init_msg.get("message_id")
-        if not msg_id:
-            logger.error("Failed to obtain message_id for initial response")
-            self.session_manager.set_busy(chat_id, False)
-            return
+        msg_id = init_msg.get("message_id") if init_msg else None
 
         # Prepare bridge parameters
         effective_model = session.model or self.config.default_model or None
@@ -586,10 +766,12 @@ class AgyTelegramBot:
             agy_bin=self.config.get_resolved_agy_bin(),
             default_working_dir=effective_dir,
             timeout_seconds=self.config.agy_timeout_seconds,
+            system_prompt=self.config.system_prompt,
         )
         self.active_bridges[chat_id] = bridge
 
         tool_events: List[str] = []
+        created_files: List[Path] = []
         accumulated_text = ""
         last_edit_time = time.time()
         last_edited_content = ""
@@ -606,6 +788,7 @@ class AgyTelegramBot:
                 model=effective_model,
                 effort=effective_effort,
                 working_dir=effective_dir,
+                system_prompt=self.config.system_prompt,
             ):
                 now = time.time()
 
@@ -620,7 +803,15 @@ class AgyTelegramBot:
                         event.tool_state or "ACTIVE",
                         event.tool_info,
                     )
-                    # If this is updating the most recent active tool, replace it
+                    # Track files generated/written by tools
+                    if event.tool_name in ("write_to_file", "replace_file_content") and event.tool_state == "DONE":
+                        params = event.tool_info.get("parameters", {}) if isinstance(event.tool_info, dict) else {}
+                        file_path_str = params.get("TargetFile") or params.get("AbsolutePath")
+                        if file_path_str:
+                            p = Path(file_path_str)
+                            if p.is_file() and p not in created_files:
+                                created_files.append(p)
+
                     if event.tool_state in ("DONE", "ERROR") and tool_events:
                         tool_events[-1] = t_summary
                     else:
@@ -630,7 +821,6 @@ class AgyTelegramBot:
                     accumulated_text += event.text_delta
 
                 elif event.type == "turn_complete":
-                    # Intermediate turn finished as part of multi-turn steer exchange
                     if event.usage:
                         total_tokens += event.usage.get("total_tokens", 0)
                         thinking_tokens += event.usage.get("thinking_tokens", 0)
@@ -648,32 +838,50 @@ class AgyTelegramBot:
 
                 # Throttled live update
                 if (now - last_edit_time) >= self.config.stream_throttle_seconds:
+                    clean_stream_text, stream_blocks = extract_agy_file_blocks(accumulated_text)
+                    display_stream_text = clean_stream_text
+                    if stream_blocks:
+                        files_label = ", ".join(b.filename for b in stream_blocks)
+                        if display_stream_text:
+                            display_stream_text += f"\n\n📄 <i>[正在生成单页报告: {files_label}...]</i>"
+                        else:
+                            display_stream_text = f"📄 <i>[正在生成单页报告: {files_label}...]</i>"
+
                     preview = format_streaming_message(
                         tool_events=tool_events,
-                        current_text=accumulated_text,
+                        current_text=display_stream_text,
                         cursor=True,
                     )
                     if preview != last_edited_content:
-                        await self.client.edit_message_text(
+                        edit_res = await self._safe_edit_message_text(
                             chat_id=chat_id,
                             message_id=msg_id,
                             text=preview,
                         )
-                        last_edited_content = preview
-                        last_edit_time = now
+                        if edit_res:
+                            last_edited_content = preview
+                            last_edit_time = now
 
             # Process final message output
             if bridge._is_stopped:
-                await self.client.edit_message_text(
+                res = await self._safe_edit_message_text(
                     chat_id=chat_id,
                     message_id=msg_id,
                     text="🛑 <b>Task cancelled by /stop</b>",
                 )
+                if res is None and not msg_id:
+                    await self._safe_send_message(
+                        chat_id=chat_id,
+                        text="🛑 <b>Task cancelled by /stop</b>",
+                        reply_to_message_id=reply_to_id,
+                    )
                 return
 
             if final_event and final_event.type == "error":
                 err_text = f"❌ <b>agy execution error:</b>\n{escape_html(final_event.response)}"
-                await self.client.edit_message_text(chat_id=chat_id, message_id=msg_id, text=err_text)
+                res = await self._safe_edit_message_text(chat_id=chat_id, message_id=msg_id, text=err_text)
+                if res is None and not msg_id:
+                    await self._safe_send_message(chat_id=chat_id, text=err_text, reply_to_message_id=reply_to_id)
                 return
 
             # Normal success outcome
@@ -689,49 +897,215 @@ class AgyTelegramBot:
             tokens_val = total_tokens or (final_event.usage.get("total_tokens") if final_event else None)
             thinking_val = thinking_tokens or (final_event.usage.get("thinking_tokens") if final_event else None)
 
-            formatted_final = format_final_result(
-                response_text=final_text,
-                duration_seconds=duration,
-                total_tokens=tokens_val,
-                thinking_tokens=thinking_val,
-                conversation_id=conv_id,
-            )
+            # Check for explicit [AGY_FILE] protocol blocks first
+            cleaned_text, file_blocks = extract_agy_file_blocks(final_text)
 
-            # Check if text fits in a single Telegram message
-            chunks = split_text_chunks(formatted_final)
-            if len(chunks) == 1:
-                await self.client.edit_message_text(
+            if file_blocks:
+                effective_dir = session.active_path() or self.config.agy_working_dir or os.getcwd()
+                sent_count = 0
+                file_errors: List[str] = []
+
+                for block in file_blocks:
+                    metadata = {
+                        "time": f"{duration:.1f}s" if duration else None,
+                        "tokens": f"{tokens_val/1000:.1f}k" if tokens_val and tokens_val >= 1000 else tokens_val,
+                        "model": effective_model,
+                        "conversation_id": conv_id,
+                        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    html_doc, err_msg = render_agy_file(block, base_dir=effective_dir, metadata=metadata)
+                    if err_msg:
+                        logger.warning("Failed to render [AGY_FILE] %s: %s", block.filename, err_msg)
+                        file_errors.append(f"❌ 导出文件失败 (<code>{escape_html(block.filename)}</code>): {escape_html(err_msg)}")
+                        continue
+
+                    await self._safe_send_chat_action(chat_id, "upload_document")
+                    doc_res = await self._safe_send_document(
+                        chat_id=chat_id,
+                        document_content=html_doc,
+                        filename=block.filename,
+                        caption=f"📄 <b>{escape_html(block.filename)}</b>\n💡 可在 Telegram 内直接打开查看完整排版与代码高亮",
+                        reply_to_message_id=reply_to_id or msg_id,
+                    )
+                    if doc_res:
+                        sent_count += 1
+                    else:
+                        file_errors.append(f"❌ 发送文件失败: <code>{escape_html(block.filename)}</code>")
+
+                # Update text message with summary/preview and file notice
+                preview_length = 1500
+                visible_body = cleaned_text.strip()
+                if not visible_body:
+                    visible_body = "📄 <b>任务报告已生成</b>"
+                elif len(visible_body) > preview_length:
+                    visible_body = visible_body[:preview_length].strip() + "\n\n<i>[...完整内容见下方导出的 HTML 报告...]</i>"
+
+                formatted_summary = format_final_result(
+                    response_text=visible_body,
+                    duration_seconds=duration,
+                    total_tokens=tokens_val,
+                    thinking_tokens=thinking_val,
+                    conversation_id=conv_id,
+                )
+
+                notices: List[str] = []
+                if sent_count > 0:
+                    if sent_count == 1:
+                        notices.append("📄 <b>已生成完整报告文件并发送至下方 ⬇️</b>")
+                    else:
+                        notices.append(f"📄 <b>已生成 {sent_count} 个报告文件并发送至下方 ⬇️</b>")
+                if file_errors:
+                    notices.extend(file_errors)
+
+                notice_text = ("\n\n" + "\n\n".join(notices)) if notices else ""
+                full_text = formatted_summary + notice_text
+
+                res = await self._safe_edit_message_text(
                     chat_id=chat_id,
                     message_id=msg_id,
-                    text=chunks[0],
+                    text=full_text,
+                )
+                if res is None and not msg_id:
+                    await self._safe_send_message(
+                        chat_id=chat_id,
+                        text=full_text,
+                        reply_to_message_id=reply_to_id,
+                    )
+
+            elif should_export_as_file(prompt=prompt, response_text=final_text):
+                # Fallback heuristic file export
+                preview_length = 1200
+                summary_snippet = final_text[:preview_length].strip()
+                if len(final_text) > preview_length:
+                    summary_snippet += "\n\n<i>[...完整内容见下方导出的 HTML 报告...]</i>"
+
+                formatted_summary = format_final_result(
+                    response_text=summary_snippet,
+                    duration_seconds=duration,
+                    total_tokens=tokens_val,
+                    thinking_tokens=thinking_val,
+                    conversation_id=conv_id,
+                )
+                notice = "\n\n📄 <b>已自动生成完整 HTML 报告文件并发送至下方 ⬇️</b>"
+                res = await self._safe_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    text=formatted_summary + notice,
+                )
+                if res is None and not msg_id:
+                    await self._safe_send_message(
+                        chat_id=chat_id,
+                        text=formatted_summary + notice,
+                        reply_to_message_id=reply_to_id,
+                    )
+
+                # Generate and upload standalone HTML document
+                is_diff = "```diff" in final_text or "diff --git" in final_text
+                doc_title = "Diff Report" if is_diff else f"agy Response: {prompt[:40]}"
+                html_doc = generate_standalone_html(
+                    title=doc_title,
+                    markdown_content=final_text,
+                    metadata={
+                        "time": f"{duration:.1f}s" if duration else None,
+                        "tokens": f"{tokens_val/1000:.1f}k" if tokens_val and tokens_val >= 1000 else tokens_val,
+                        "model": effective_model,
+                        "conversation_id": conv_id,
+                        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    },
+                )
+                prefix = "diff" if is_diff else "report"
+                filename = f"{prefix}_{int(time.time())}.html"
+
+                await self._safe_send_chat_action(chat_id, "upload_document")
+                await self._safe_send_document(
+                    chat_id=chat_id,
+                    document_content=html_doc,
+                    filename=filename,
+                    caption=f"📄 <b>{escape_html(filename)}</b>\n💡 可在 Telegram 内直接打开查看完整排版与代码高亮",
+                    reply_to_message_id=reply_to_id or msg_id,
                 )
             else:
-                # Update first message with chunk 1, send remaining chunks
-                await self.client.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    text=chunks[0],
+                # Normal formatted message output
+                formatted_final = format_final_result(
+                    response_text=final_text,
+                    duration_seconds=duration,
+                    total_tokens=tokens_val,
+                    thinking_tokens=thinking_val,
+                    conversation_id=conv_id,
                 )
-                for chunk in chunks[1:]:
-                    await self.client.send_message(
+
+                chunks = split_text_chunks(formatted_final)
+                if len(chunks) == 1:
+                    res = await self._safe_edit_message_text(
                         chat_id=chat_id,
-                        text=chunk,
+                        message_id=msg_id,
+                        text=chunks[0],
                     )
+                    if res is None and not msg_id:
+                        await self._safe_send_message(
+                            chat_id=chat_id,
+                            text=chunks[0],
+                            reply_to_message_id=reply_to_id,
+                        )
+                else:
+                    res = await self._safe_edit_message_text(
+                        chat_id=chat_id,
+                        message_id=msg_id,
+                        text=chunks[0],
+                    )
+                    if res is None and not msg_id:
+                        await self._safe_send_message(
+                            chat_id=chat_id,
+                            text=chunks[0],
+                            reply_to_message_id=reply_to_id,
+                        )
+                    for chunk in chunks[1:]:
+                        await self._safe_send_message(
+                            chat_id=chat_id,
+                            text=chunk,
+                        )
+
+            # If tools created specific new files and user might want them
+            if created_files:
+                for created_p in created_files[:2]:
+                    try:
+                        await self._safe_send_document(
+                            chat_id=chat_id,
+                            document_content=created_p,
+                            filename=created_p.name,
+                            caption=f"📁 Generated: <code>{escape_html(created_p.name)}</code>",
+                            reply_to_message_id=reply_to_id or msg_id,
+                        )
+                    except Exception as e:
+                        logger.debug("Failed sending tool created file: %s", e)
 
         except asyncio.CancelledError:
             logger.info("handle_prompt cancelled for chat %s", chat_id)
-            await self.client.edit_message_text(
+            res = await self._safe_edit_message_text(
                 chat_id=chat_id,
                 message_id=msg_id,
                 text="🛑 <b>Task interrupted.</b>",
             )
+            if res is None and not msg_id:
+                await self._safe_send_message(
+                    chat_id=chat_id,
+                    text="🛑 <b>Task interrupted.</b>",
+                    reply_to_message_id=reply_to_id,
+                )
         except Exception as e:
             logger.error("Error running agy prompt for chat %s: %s", chat_id, e, exc_info=True)
-            await self.client.edit_message_text(
+            err_msg = f"❌ <b>Internal Gateway Error:</b>\n{escape_html(str(e))}"
+            res = await self._safe_edit_message_text(
                 chat_id=chat_id,
                 message_id=msg_id,
-                text=f"❌ <b>Internal Gateway Error:</b>\n{escape_html(str(e))}",
+                text=err_msg,
             )
+            if res is None and not msg_id:
+                await self._safe_send_message(
+                    chat_id=chat_id,
+                    text=err_msg,
+                    reply_to_message_id=reply_to_id,
+                )
         finally:
             self.active_bridges.pop(chat_id, None)
             self.session_manager.set_busy(chat_id, False)
@@ -740,4 +1114,4 @@ class AgyTelegramBot:
 if __name__ == "__main__":
     cfg = Config.load()
     bot = AgyTelegramBot(cfg)
-    print("AgyTelegramBot class initialized successfully with steering support!")
+    print("AgyTelegramBot initialized with file export and steering support!")

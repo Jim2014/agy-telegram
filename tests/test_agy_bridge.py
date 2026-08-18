@@ -224,3 +224,203 @@ async def test_steer_method(monkeypatch):
     assert len(proc.stdin.written) == 1
     payload = json.loads(proc.stdin.written[0].decode())
     assert payload == {"type": "user", "message": {"content": "Please focus on Python"}}
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_injection_first_turn(monkeypatch):
+    """Test that system prompt is injected on the first turn (no conversation_id)."""
+    bridge = AgyBridge(system_prompt="[SYSTEM] Follow markdown conventions.")
+
+    class MockStdin:
+        def __init__(self):
+            self.written = []
+            self.closed = False
+
+        def write(self, data):
+            self.written.append(data)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+        def is_closing(self):
+            return self.closed
+
+    class MockStream:
+        def __init__(self, lines):
+            self.lines = list(lines)
+
+        async def readline(self):
+            if self.lines:
+                return self.lines.pop(0)
+            return b""
+
+        async def read(self):
+            return b""
+
+    class MockProcess:
+        def __init__(self):
+            self.stdin = MockStdin()
+            self.stdout = MockStream([
+                b'{"event":"init","conversation_id":"conv-new-1"}\n',
+                b'{"event":"result","result":{"status":"SUCCESS","response":"Done"}}\n',
+            ])
+            self.stderr = MockStream([])
+            self.returncode = 0
+            self.pid = 11111
+
+        async def wait(self):
+            return 0
+
+    proc = MockProcess()
+    async def mock_exec(*args, **kwargs):
+        return proc
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
+
+    events = []
+    async for ev in bridge.run_streaming(prompt="Please write a summary", conversation_id=None):
+        events.append(ev)
+
+    assert len(proc.stdin.written) == 1
+    payload = json.loads(proc.stdin.written[0].decode())
+    expected_content = "[SYSTEM] Follow markdown conventions.\n\n---\n\nPlease write a summary"
+    assert payload == {"type": "user", "message": {"content": expected_content}}
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_subsequent_turn_not_injected(monkeypatch):
+    """Test that system prompt is NOT re-injected on subsequent turns (conversation_id provided)."""
+    bridge = AgyBridge(system_prompt="[SYSTEM] Follow markdown conventions.")
+
+    class MockStdin:
+        def __init__(self):
+            self.written = []
+            self.closed = False
+
+        def write(self, data):
+            self.written.append(data)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+        def is_closing(self):
+            return self.closed
+
+    class MockStream:
+        def __init__(self, lines):
+            self.lines = list(lines)
+
+        async def readline(self):
+            if self.lines:
+                return self.lines.pop(0)
+            return b""
+
+        async def read(self):
+            return b""
+
+    class MockProcess:
+        def __init__(self):
+            self.stdin = MockStdin()
+            self.stdout = MockStream([
+                b'{"event":"result","result":{"status":"SUCCESS","response":"Continued"}}\n',
+            ])
+            self.stderr = MockStream([])
+            self.returncode = 0
+            self.pid = 22222
+
+        async def wait(self):
+            return 0
+
+    proc = MockProcess()
+    async def mock_exec(*args, **kwargs):
+        return proc
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
+
+    events = []
+    async for ev in bridge.run_streaming(prompt="Next turn question", conversation_id="conv-existing-99"):
+        events.append(ev)
+
+    assert len(proc.stdin.written) == 1
+    payload = json.loads(proc.stdin.written[0].decode())
+    # Should only contain user prompt, no system prompt prepended
+    assert payload == {"type": "user", "message": {"content": "Next turn question"}}
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_empty_or_none(monkeypatch):
+    """Test that empty or None system prompt does not add separator or prefix."""
+    bridge = AgyBridge(system_prompt=None)
+
+    class MockStdin:
+        def __init__(self):
+            self.written = []
+            self.closed = False
+
+        def write(self, data):
+            self.written.append(data)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+        def is_closing(self):
+            return self.closed
+
+    class MockStream:
+        def __init__(self, lines):
+            self.lines = list(lines)
+
+        async def readline(self):
+            if self.lines:
+                return self.lines.pop(0)
+            return b""
+
+        async def read(self):
+            return b""
+
+    class MockProcess:
+        def __init__(self):
+            self.stdin = MockStdin()
+            self.stdout = MockStream([
+                b'{"event":"result","result":{"status":"SUCCESS","response":"Ok"}}\n',
+            ])
+            self.stderr = MockStream([])
+            self.returncode = 0
+            self.pid = 33333
+
+        async def wait(self):
+            return 0
+
+    proc = MockProcess()
+    async def mock_exec(*args, **kwargs):
+        return proc
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
+
+    async for _ in bridge.run_streaming(prompt="Raw prompt", conversation_id=None, system_prompt=""):
+        pass
+
+    assert len(proc.stdin.written) == 1
+    payload = json.loads(proc.stdin.written[0].decode())
+    assert payload == {"type": "user", "message": {"content": "Raw prompt"}}
+
+
+def test_is_running():
+    bridge = AgyBridge()
+    assert bridge.is_running() is False
+
+    class DummyProc:
+        returncode = None
+
+    bridge._current_process = DummyProc()
+    assert bridge.is_running() is True
+
+    bridge._is_stopped = True
+    assert bridge.is_running() is False
+

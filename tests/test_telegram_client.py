@@ -82,3 +82,37 @@ async def test_telegram_client_edit_message_not_modified(monkeypatch):
     res = await client.edit_message_text(chat_id=100, message_id=42, text="Same text")
     assert res is None  # Gracefully swallowed
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_telegram_client_send_document(monkeypatch):
+    client = TelegramClient("12345:TESTTOKEN")
+    captured_data = {}
+
+    async def mock_post(url, **kwargs):
+        req = httpx.Request("POST", url)
+        captured_data["url"] = url
+        captured_data["data"] = kwargs.get("data")
+        captured_data["files"] = kwargs.get("files")
+        return httpx.Response(
+            200,
+            json={"ok": True, "result": {"message_id": 77, "document": {"file_name": "test.html"}}},
+            request=req,
+        )
+
+    mock_client = httpx.AsyncClient()
+    monkeypatch.setattr(mock_client, "post", mock_post)
+    client._client = mock_client
+
+    res = await client.send_document(
+        chat_id=123,
+        document_content="<html><body>Hello</body></html>",
+        filename="report.html",
+        caption="📄 Report",
+    )
+    assert res["message_id"] == 77
+    assert captured_data["data"]["chat_id"] == "123"
+    assert captured_data["data"]["caption"] == "📄 Report"
+    assert "document" in captured_data["files"]
+    assert captured_data["files"]["document"][0] == "report.html"
+    await client.close()

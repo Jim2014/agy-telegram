@@ -63,3 +63,39 @@ def test_load_from_env_file(tmp_path):
     assert cfg.default_effort == "high"
     assert cfg.stream_throttle_seconds == 2.5
     assert cfg.agy_timeout_seconds == 180
+
+
+def test_default_system_prompt():
+    cfg = Config.load(env_path=Path("/non_existent_env_file"))
+    assert "[AGY_FILE]" in cfg.system_prompt
+    assert "[END_AGY_FILE]" in cfg.system_prompt
+    assert "mobile" in cfg.system_prompt
+    assert "Markdown" in cfg.system_prompt
+    assert "Raw HTML" in cfg.system_prompt
+    assert "File Path" in cfg.system_prompt
+    assert "agy-telegram" in cfg.system_prompt
+
+
+def test_system_prompt_env_override(tmp_path):
+    env_file = tmp_path / ".test.prompt.env"
+    env_file.write_text(
+        "BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz\n"
+        "AGY_SYSTEM_PROMPT=Custom instruction line 1\\nCustom instruction line 2\n"
+    )
+    cfg = Config.load(env_path=env_file)
+    assert "Custom instruction line 1\nCustom instruction line 2" == cfg.system_prompt
+
+
+def test_system_prompt_file_override(tmp_path):
+    prompt_file = tmp_path / "custom_prompt.md"
+    prompt_file.write_text("# Custom Instructions\nFollow strict rules for output.", encoding="utf-8")
+
+    env_file = tmp_path / ".test.prompt_file.env"
+    env_file.write_text(
+        f"BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz\n"
+        f"AGY_SYSTEM_PROMPT_FILE={prompt_file}\n"
+        f"AGY_SYSTEM_PROMPT=Should be overridden by file\n"
+    )
+    cfg = Config.load(env_path=env_file)
+    assert cfg.system_prompt == "# Custom Instructions\nFollow strict rules for output."
+

@@ -166,6 +166,10 @@ class SessionManager:
         self.save()
         return session
 
+    def reset_session(self, chat_id: int) -> ChatSession:
+        """Alias for reset_conversation."""
+        return self.reset_conversation(chat_id)
+
     def set_conversation_id(self, chat_id: int, conversation_id: Optional[str]) -> None:
         """Record the active agy conversation ID for the current active project."""
         session = self.get_session(chat_id)
