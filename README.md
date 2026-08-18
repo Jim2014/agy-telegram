@@ -29,8 +29,9 @@
 3. **中途引导 (Steering) 支持**: 当 agy 正在思考或执行多步工具时，无需中断或 `/stop` 整个会话，系统可直接将补充指引与追加要求 **Steer（注入）** 进当前运行会话，平滑接续执行。
 4. **项目化会话持久化与隔离**: 支持多项目工作区管理（`/new`, `/open`, `/delete`, `/reset`, `/projects`），每个项目独立保存 `path` 与 `conversation_id`，跨项目持久化无缝切换。
 5. **灵活参数调整**: 通过 `/model` 切换模型，通过 `/effort` 调整推理强度 (low/medium/high)，通过 `/dir` 调整当前项目工作区。
-6. **运行时隔离与 Git 保护**: 所有运行时日志（`runtime/gateway.log`）、进程 PID（`runtime/gateway.pid`）、会话持久化（`runtime/sessions.json`）均自动归档在 `runtime/` 目录，已加入 `.gitignore` 彻底杜绝误提交。
-7. **安全与健壮性 (Harden & Auto-Heal)**:
+6. **语音消息与音频交互 (Voice Messages Support)**: 支持直接在 Telegram 中发送语音条或音频文件，网关自动接收并下载至 `runtime/voice/` 目录，将绝对路径与音频元数据构造为语音任务提示词交由 `agy` 自主解析、转录与执行；在任务运行中发送语音亦可实时 Steering 注入当前会话。
+7. **运行时隔离与 Git 保护**: 所有运行时日志（`runtime/gateway.log`）、进程 PID（`runtime/gateway.pid`）、会话持久化（`runtime/sessions.json`）与语音缓存（`runtime/voice/`）均自动归档在 `runtime/` 目录，已加入 `.gitignore` 彻底杜绝误提交。
+8. **安全与健壮性 (Harden & Auto-Heal)**:
    - 支持 `ALLOWED_CHAT_IDS` 白名单鉴权。
    - **Telegram 网络异常免疫**：所有 Telegram API 调用统一走安全封装，遭遇 `httpx.ReadError`、超时、网络瞬断时自动降级并不中断流式任务或退出主进程。
    - **看门狗崩溃自动拉起 (Watchdog Supervisor)**：提供独立的看门狗守护进程（`runtime/watchdog.sh` / `./restart.sh watch`），周期巡检进程状态，意外退出后 10 秒内自动拉起。
@@ -212,9 +213,10 @@ tail -f -n 50 runtime/watchdog.log
 
 在 Telegram 中与你的 Bot 对话：
 
-| 命令 | 说明 | 示例 |
+| 命令 / 交互 | 说明 | 示例 |
 | :--- | :--- | :--- |
 | **直接发送文本** | 处于空闲时启动新轮次；处于运行中时**自动作为 Steering 注入当前会话** | `请帮我查看当前目录下的文件` |
+| **直接发送语音 / 音频** | 自动下载至本地 `runtime/voice/`，将路径与音频信息传给 agy 解析并执行；运行中发送则自动 Steering | 🎙️ 发送一段语音指令 |
 | `/help` | 查看帮助说明与命令列表 | `/help` |
 | `/status` | 查看当前活跃项目、会话累计统计（轮次、累计 Token、思考 Token、会话存活时长、总运行耗时）、模型及系统状态 | `/status` |
 | `/projects` | 列出所有项目、活跃标记、工作区路径与最后活跃时间 | `/projects` |

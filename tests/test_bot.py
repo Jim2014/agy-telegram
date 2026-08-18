@@ -717,5 +717,170 @@ async def test_bot_callback_query_effort_and_model(mock_bot):
     )
 
 
+@pytest.mark.asyncio
+async def test_bot_voice_message_flow(mock_bot, tmp_path):
+    fake_voice_file = tmp_path / "voice_100_v123.oga"
+    fake_voice_file.write_bytes(b"TEST_AUDIO")
+
+    mock_bot.client.download_file_by_id = AsyncMock(
+        return_value=(fake_voice_file, {"file_id": "v123", "file_path": "voice/file.oga"})
+    )
+
+    captured_prompt = {}
+
+    async def mock_handle_prompt(chat_id, prompt, reply_to_id):
+        captured_prompt["chat_id"] = chat_id
+        captured_prompt["prompt"] = prompt
+        captured_prompt["reply_to_id"] = reply_to_id
+
+    mock_bot.handle_prompt = mock_handle_prompt
+
+    update = {
+        "message": {
+            "chat": {"id": 100},
+            "message_id": 777,
+            "voice": {
+                "file_id": "v123",
+                "file_unique_id": "vu123",
+                "duration": 8,
+                "mime_type": "audio/ogg",
+            },
+        }
+    }
+
+    await mock_bot.process_update(update)
+
+    mock_bot.client.send_chat_action.assert_called_with(chat_id=100, action="record_voice")
+    mock_bot.client.download_file_by_id.assert_called_once()
+    assert captured_prompt["chat_id"] == 100
+    assert captured_prompt["reply_to_id"] == 777
+    assert str(fake_voice_file.resolve()) in captured_prompt["prompt"]
+    assert "Duration: 8s" in captured_prompt["prompt"]
+    assert "MIME Type: audio/ogg" in captured_prompt["prompt"]
+    assert "inspect and transcribe/listen to this audio file" in captured_prompt["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_bot_voice_message_steer(mock_bot, tmp_path):
+    fake_voice_file = tmp_path / "voice_100_steer.oga"
+    fake_voice_file.write_bytes(b"STEER_AUDIO")
+
+    mock_bot.client.download_file_by_id = AsyncMock(
+        return_value=(fake_voice_file, {"file_id": "v_steer", "file_path": "voice/steer.oga"})
+    )
+
+    # Simulate busy bridge
+    session = mock_bot.session_manager.get_session(100)
+    session.is_busy = True
+    fake_bridge = AsyncMock()
+    fake_bridge.steer = AsyncMock(return_value=True)
+    mock_bot.active_bridges[100] = fake_bridge
+
+    update = {
+        "message": {
+            "chat": {"id": 100},
+            "message_id": 888,
+            "voice": {
+                "file_id": "v_steer",
+                "file_unique_id": "vu_steer",
+                "duration": 5,
+                "mime_type": "audio/ogg",
+            },
+        }
+    }
+
+    await mock_bot.process_update(update)
+
+    assert fake_bridge.steer.called
+    steer_call_arg = fake_bridge.steer.call_args[0][0]
+    assert str(fake_voice_file.resolve()) in steer_call_arg
+    assert "Duration: 5s" in steer_call_arg
+
+    # Confirmation sent to chat
+    sent_text = mock_bot.client.send_message.call_args[1]["text"]
+    assert "Steered voice instruction (5s)" in sent_text
+    assert str(fake_voice_file.resolve()) in sent_text
+
+
+@pytest.mark.asyncio
+async def test_bot_audio_message_with_caption(mock_bot, tmp_path):
+    fake_audio_file = tmp_path / "audio_100_song.mp3"
+    fake_audio_file.write_bytes(b"AUDIO_DATA")
+
+    mock_bot.client.download_file_by_id = AsyncMock(
+        return_value=(fake_audio_file, {"file_id": "a999", "file_path": "music/song.mp3"})
+    )
+
+    captured_prompt = {}
+
+    async def mock_handle_prompt(chat_id, prompt, reply_to_id):
+        captured_prompt["prompt"] = prompt
+
+    mock_bot.handle_prompt = mock_handle_prompt
+
+    update = {
+        "message": {
+            "chat": {"id": 100},
+            "message_id": 900,
+            "audio": {
+                "file_id": "a999",
+                "file_unique_id": "au999",
+                "duration": 12,
+                "mime_type": "audio/mpeg",
+            },
+            "caption": "Please translate this voice message",
+        }
+    }
+
+    await mock_bot.process_update(update)
+
+    assert "Accompanying Caption: Please translate this voice message" in captured_prompt["prompt"]
+    assert str(fake_audio_file.resolve()) in captured_prompt["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_bot_voice_download_error(mock_bot):
+    mock_bot.client.download_file_by_id = AsyncMock(side_effect=RuntimeError("Connection reset by peer"))
+
+    update = {
+        "message": {
+            "chat": {"id": 100},
+            "message_id": 901,
+            "voice": {
+                "file_id": "v_err",
+                "file_unique_id": "vu_err",
+                "duration": 3,
+            },
+        }
+    }
+
+    await mock_bot.process_update(update)
+
+    sent_text = mock_bot.client.send_message.call_args[1]["text"]
+    assert "Failed to download voice message" in sent_text
+    assert "Connection reset by peer" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_bot_voice_unauthorized(mock_bot):
+    update = {
+        "message": {
+            "chat": {"id": 999},  # Unauthorized chat ID
+            "message_id": 902,
+            "voice": {
+                "file_id": "v_unauth",
+                "file_unique_id": "vu_unauth",
+                "duration": 3,
+            },
+        }
+    }
+
+    await mock_bot.process_update(update)
+
+    sent_text = mock_bot.client.send_message.call_args[1]["text"]
+    assert "Access Denied" in sent_text
+
+
+
 
 

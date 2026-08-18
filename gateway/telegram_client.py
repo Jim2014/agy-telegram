@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -27,6 +28,7 @@ class TelegramClient:
     def __init__(self, bot_token: str, base_url: str = "https://api.telegram.org") -> None:
         self.bot_token = bot_token
         self.base_url = f"{base_url.rstrip('/')}/bot{bot_token}"
+        self.file_base_url = f"{base_url.rstrip('/')}/file/bot{bot_token}"
         self._client: Optional[httpx.AsyncClient] = None
 
     async def get_client(self) -> httpx.AsyncClient:
@@ -79,6 +81,50 @@ class TelegramClient:
     async def get_me(self) -> Dict[str, Any]:
         """Test bot token and get bot metadata."""
         return await self._post("getMe", {})
+
+    async def get_file(self, file_id: str) -> Dict[str, Any]:
+        """Get file metadata from Telegram (including file_path)."""
+        return await self._post("getFile", {"file_id": file_id})
+
+    async def download_file(
+        self,
+        file_path: str,
+        destination: Path | str,
+        timeout: float = 60.0,
+    ) -> Path:
+        """Download a file from Telegram by its file_path and save locally."""
+        client = await self.get_client()
+        url = f"{self.file_base_url}/{file_path.lstrip('/')}"
+        dest_path = Path(destination).resolve()
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            resp = await client.get(url, timeout=timeout)
+            resp.raise_for_status()
+            dest_path.write_bytes(resp.content)
+            return dest_path
+        except httpx.RequestError as e:
+            logger.error("HTTP error downloading file %s: %s", file_path, e)
+            raise
+
+    async def download_file_by_id(
+        self,
+        file_id: str,
+        destination_dir: Path | str,
+        filename_prefix: str = "voice",
+    ) -> Tuple[Path, Dict[str, Any]]:
+        """Fetch file metadata and download file to destination directory."""
+        file_info = await self.get_file(file_id)
+        remote_path = file_info.get("file_path")
+        if not remote_path:
+            raise ValueError(f"No file_path returned by Telegram for file_id {file_id}")
+
+        ext = Path(remote_path).suffix or ".oga"
+        file_unique_id = file_info.get("file_unique_id", "file")
+        filename = f"{filename_prefix}_{file_unique_id}_{int(time.time())}{ext}"
+        dest = Path(destination_dir) / filename
+        saved_path = await self.download_file(remote_path, dest)
+        return saved_path, file_info
 
     async def get_updates(
         self,

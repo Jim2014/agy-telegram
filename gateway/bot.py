@@ -11,6 +11,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Ensure repository root is in sys.path when executed directly
+_repo_root = str(Path(__file__).resolve().parent.parent)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
 from gateway.agy_bridge import AgyBridge, AgyEvent
 from gateway.config import Config
 from gateway.dir_tree import generate_dir_tree_html, scan_directory_tree
@@ -277,10 +282,9 @@ class AgyTelegramBot:
 
             chat = message.get("chat", {})
             chat_id = chat.get("id")
-            text = message.get("text", "").strip()
             message_id = message.get("message_id")
 
-            if not chat_id or not text:
+            if not chat_id:
                 return
 
             # Check authorization whitelist
@@ -290,6 +294,15 @@ class AgyTelegramBot:
                     chat_id=chat_id,
                     text="⛔ <b>Access Denied</b>\nThis bot is private and your chat ID is not authorized.",
                 )
+                return
+
+            # Voice or audio message handling
+            if message.get("voice") or message.get("audio"):
+                await self.handle_voice_message(chat_id, message, message_id)
+                return
+
+            text = message.get("text", "").strip()
+            if not text:
                 return
 
             # Slash command routing
@@ -377,7 +390,10 @@ class AgyTelegramBot:
             "• <code>/effort</code> — Set reasoning effort (low | medium | high)\n"
             "• <code>/steer &lt;instruction&gt;</code> — Steer/guide currently running agy prompt\n"
             "• <code>/stop</code> — Interrupt currently executing agy prompt\n"
-            "• <code>/help</code> — Show this manual\n\n"
+            "<b>Interaction:</b>\n"
+            "• Send text messages to converse directly with agy\n"
+            "• 🎙️ Send voice/audio messages — agy will inspect, transcribe, and execute voice instructions\n"
+            "• Send text/voice while a task is running to <b>steer</b> mid-flight\n\n"
             f"<b>Active Project:</b> <code>{escape_html(active_proj)}</code> ({conv_text})\n\n"
             "💡 <i>Tip: Long responses, code diffs, and test reports are automatically generated and sent as formatted HTML file attachments!</i>"
         )
@@ -1089,6 +1105,97 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
             await self._safe_send_message(chat_id=chat_id, text="🛑 <b>Task interrupted by user.</b>")
         else:
             await self._safe_send_message(chat_id=chat_id, text="ℹ️ No active task is currently running.")
+
+    async def handle_voice_message(
+        self,
+        chat_id: int,
+        message: Dict[str, Any],
+        message_id: Optional[int],
+    ) -> None:
+        """Handle incoming voice notes or audio files, download locally, and send to agy as a voice instruction."""
+        voice_obj = message.get("voice") or message.get("audio") or {}
+        file_id = voice_obj.get("file_id")
+        if not file_id:
+            logger.warning("Voice/Audio message received without file_id in chat %s", chat_id)
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text="⚠️ Unable to process audio: missing file ID.",
+                reply_to_message_id=message_id,
+            )
+            return
+
+        duration = int(voice_obj.get("duration", 0))
+        mime_type = voice_obj.get("mime_type", "audio/ogg")
+        file_size = voice_obj.get("file_size")
+        caption = message.get("caption", "").strip()
+        is_voice = "voice" in message
+
+        logger.info(
+            "Received %s in chat %s (duration=%ds, mime=%s, size=%s)",
+            "voice message" if is_voice else "audio file",
+            chat_id,
+            duration,
+            mime_type,
+            file_size,
+        )
+
+        await self._safe_send_chat_action(chat_id=chat_id, action="record_voice")
+
+        # Download file to runtime/voice directory
+        voice_dir = Path("runtime/voice")
+        voice_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            saved_path, _ = await self.client.download_file_by_id(
+                file_id=file_id,
+                destination_dir=voice_dir,
+                filename_prefix=f"voice_{chat_id}",
+            )
+        except Exception as e:
+            logger.error("Failed to download voice message %s: %s", file_id, e)
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Failed to download voice message: <code>{escape_html(str(e))}</code>",
+                reply_to_message_id=message_id,
+            )
+            return
+
+        abs_path = str(saved_path.resolve())
+
+        # Construct prompt for agy
+        prompt_lines = [
+            "🎙️ [User Voice Command]",
+            "The user sent a voice instruction in Telegram.",
+            f"• Local Audio File Path: {abs_path}",
+            f"• Duration: {duration}s",
+            f"• MIME Type: {mime_type}",
+        ]
+        if caption:
+            prompt_lines.append(f"• Accompanying Caption: {caption}")
+        prompt_lines.append("")
+        prompt_lines.append(
+            "Please inspect and transcribe/listen to this audio file to understand the user's instructions, and then execute the requested task."
+        )
+        prompt_text = "\n".join(prompt_lines)
+
+        # Check if session is currently busy -> steer into active session
+        session = self.session_manager.get_session(chat_id)
+        if session.is_busy and chat_id in self.active_bridges:
+            steered = await self.active_bridges[chat_id].steer(prompt_text)
+            if steered:
+                dur_text = f" ({duration}s)" if duration else ""
+                await self._safe_send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"🎯 <b>Steered voice instruction{dur_text} into active session!</b>\n"
+                        f"• <b>Audio File:</b> <code>{escape_html(abs_path)}</code>"
+                    ),
+                    reply_to_message_id=message_id,
+                )
+                return
+
+        # Execute prompt through agy
+        await self.handle_prompt(chat_id, prompt_text, message_id)
 
     async def handle_prompt(self, chat_id: int, prompt: str, reply_to_id: Optional[int]) -> None:
         """Execute agy with prompt and stream real-time results back to Telegram with document export support."""

@@ -159,3 +159,104 @@ async def test_telegram_client_set_my_commands(monkeypatch):
     await client.close()
 
 
+@pytest.mark.asyncio
+async def test_telegram_client_get_file(monkeypatch):
+    client = TelegramClient("12345:TESTTOKEN")
+    captured_payload = {}
+
+    async def mock_post(url, **kwargs):
+        req = httpx.Request("POST", url)
+        captured_payload.update(kwargs.get("json", {}))
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "result": {
+                    "file_id": "v123",
+                    "file_unique_id": "vu123",
+                    "file_size": 1024,
+                    "file_path": "voice/file_0.oga",
+                },
+            },
+            request=req,
+        )
+
+    mock_client = httpx.AsyncClient()
+    monkeypatch.setattr(mock_client, "post", mock_post)
+    client._client = mock_client
+
+    info = await client.get_file("v123")
+    assert info["file_id"] == "v123"
+    assert info["file_path"] == "voice/file_0.oga"
+    assert captured_payload["file_id"] == "v123"
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_telegram_client_download_file(monkeypatch, tmp_path):
+    client = TelegramClient("12345:TESTTOKEN")
+
+    async def mock_get(url, **kwargs):
+        req = httpx.Request("GET", url)
+        assert "voice/file_0.oga" in str(url)
+        return httpx.Response(
+            200,
+            content=b"AUDIO_DATA_BYTES",
+            request=req,
+        )
+
+    mock_client = httpx.AsyncClient()
+    monkeypatch.setattr(mock_client, "get", mock_get)
+    client._client = mock_client
+
+    dest = tmp_path / "voice" / "downloaded.oga"
+    res_path = await client.download_file("voice/file_0.oga", dest)
+    assert res_path.is_file()
+    assert res_path.read_bytes() == b"AUDIO_DATA_BYTES"
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_telegram_client_download_file_by_id(monkeypatch, tmp_path):
+    client = TelegramClient("12345:TESTTOKEN")
+
+    async def mock_post(url, **kwargs):
+        req = httpx.Request("POST", url)
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "result": {
+                    "file_id": "v456",
+                    "file_unique_id": "uniq_v456",
+                    "file_size": 2048,
+                    "file_path": "voice/msg.oga",
+                },
+            },
+            request=req,
+        )
+
+    async def mock_get(url, **kwargs):
+        req = httpx.Request("GET", url)
+        return httpx.Response(
+            200,
+            content=b"OGG_CONTAINER_PAYLOAD",
+            request=req,
+        )
+
+    mock_client = httpx.AsyncClient()
+    monkeypatch.setattr(mock_client, "post", mock_post)
+    monkeypatch.setattr(mock_client, "get", mock_get)
+    client._client = mock_client
+
+    dest_dir = tmp_path / "voice_storage"
+    saved_file, file_info = await client.download_file_by_id("v456", dest_dir, filename_prefix="voice_100")
+    assert saved_file.is_file()
+    assert saved_file.suffix == ".oga"
+    assert "voice_100_uniq_v456" in saved_file.name
+    assert saved_file.read_bytes() == b"OGG_CONTAINER_PAYLOAD"
+    assert file_info["file_id"] == "v456"
+    await client.close()
+
+
+
