@@ -138,12 +138,31 @@ async def test_bot_delete_and_reset_command(mock_bot, tmp_path):
 
 @pytest.mark.asyncio
 async def test_bot_dir_command(mock_bot, tmp_path):
-    valid_dir = str(tmp_path / "custom_dir")
-    Path(valid_dir).mkdir(parents=True, exist_ok=True)
+    proj_dir = tmp_path / "custom_proj"
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    (proj_dir / "main.py").write_text("print('hello')", encoding="utf-8")
+    (proj_dir / "README.md").write_text("# Project", encoding="utf-8")
+    sub = proj_dir / "gateway"
+    sub.mkdir(parents=True, exist_ok=True)
+    (sub / "bot.py").write_text("# bot", encoding="utf-8")
 
-    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": f"/dir {valid_dir}", "message_id": 40}})
-    session = mock_bot.session_manager.get_session(100)
-    assert session.active_path() == valid_dir
+    mock_bot.session_manager.create_project(100, "custom_proj", str(proj_dir))
+
+    # Test /dir
+    mock_bot.client.send_document.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/dir", "message_id": 40}})
+    mock_bot.client.send_document.assert_called_once()
+    call_args = mock_bot.client.send_document.call_args[1]
+    assert "tree_" in call_args["filename"]
+    assert "custom_proj" in call_args["caption"]
+    assert "Folders:" in call_args["caption"]
+    assert "Files:" in call_args["caption"]
+    assert "/file" in call_args["caption"]
+
+    # Test /ls alias
+    mock_bot.client.send_document.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/ls", "message_id": 41}})
+    mock_bot.client.send_document.assert_called_once()
 
 
 @pytest.mark.asyncio

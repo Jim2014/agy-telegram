@@ -222,7 +222,7 @@ tail -f -n 50 runtime/watchdog.log
 | `/new <name> <path>` | 创建新项目并设为当前活跃工作区（已存在则切换） | `/new myapp /Users/jim/myapp` |
 | `/model <name>` | 切换当前对话使用的模型（如 `/model gemini-3.7-flash` 或 `/model gemini-3.1-pro`） | `/model gemini-3.7-flash` |
 | `/effort <level>` | 调整推理强度：`low`、`medium`、`high` | `/effort high` |
-| `/dir <path>` | 修改当前活跃项目的工作目录路径 | `/dir /Users/jim/my-project` |
+| `/dir` 或 `/ls [path]` | 扫描工作区目录并生成交互式折叠 HTML 文件树，支持一键点击复制 `/file` 下载指令 | `/dir` 或 `/ls tests` |
 | `/file <path>` | 发送当前项目工作区中的指定文件至 Telegram 客户端 | `/file README.md` |
 | `/export` | 将当前会话状态或最新输出导出为独立排版的 HTML 文件并发送 | `/export` |
 | `/steer <instruction>` | 显式向正在执行的任务注入引导指令（无需打断当前进程） | `/steer 请使用异步写法` |

@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from gateway.agy_bridge import AgyBridge, AgyEvent
 from gateway.config import Config
+from gateway.dir_tree import generate_dir_tree_html, scan_directory_tree
 from gateway.message_formatter import (
     AgyFileBlock,
     escape_html,
@@ -41,7 +42,7 @@ DEFAULT_BOT_COMMANDS: List[Dict[str, str]] = [
     {"command": "effort", "description": "⚡ Set reasoning effort (low|medium|high)"},
     {"command": "export", "description": "📄 Export conversation as HTML report"},
     {"command": "file", "description": "📎 Send workspace file (/file <path>)"},
-    {"command": "dir", "description": "📍 Set workspace directory (/dir <path>)"},
+    {"command": "dir", "description": "📁 Browse workspace files & interactive tree"},
     {"command": "steer", "description": "🎯 Steer active task (/steer <text>)"},
     {"command": "stop", "description": "🛑 Interrupt running agy prompt"},
     {"command": "reset", "description": "🔄 Clear active project conversation"},
@@ -314,8 +315,8 @@ class AgyTelegramBot:
                     await self.handle_cmd_model(chat_id, arg)
                 elif cmd == "/effort":
                     await self.handle_cmd_effort(chat_id, arg)
-                elif cmd == "/dir":
-                    await self.handle_cmd_dir(chat_id, arg)
+                elif cmd in ("/dir", "/ls"):
+                    await self.handle_cmd_dir(chat_id, arg, message_id)
                 elif cmd in ("/file", "/sendfile"):
                     await self.handle_cmd_file(chat_id, arg, message_id)
                 elif cmd in ("/export", "/html"):
@@ -362,17 +363,17 @@ class AgyTelegramBot:
             "<b>Project Management:</b>\n"
             "• <code>/new &lt;name&gt; &lt;path&gt;</code> — Create a new project workspace\n"
             "• <code>/open &lt;name&gt;</code> — Open and switch to an existing project\n"
-            "• <code>/projects</code> — List all projects and active status\n"
+            "• <code>/projects</code> — List all projects with interactive switch buttons\n"
             "• <code>/delete &lt;name&gt;</code> — Delete a project\n"
-            "• <code>/reset</code> — Clear conversation history for active project\n"
-            "• <code>/dir &lt;path&gt;</code> — Set workspace directory for active project\n\n"
-            "<b>Files & Exports:</b>\n"
-            "• <code>/file &lt;path&gt;</code> — Send any project workspace file as document\n"
+            "• <code>/reset</code> — Clear conversation history for active project\n\n"
+            "<b>Files & Directory Tree:</b>\n"
+            "• <code>/dir</code> or <code>/ls [path]</code> — Browse workspace file tree & interactive HTML navigator\n"
+            "• <code>/file &lt;path&gt;</code> — Send workspace file document to Telegram\n"
             "• <code>/export</code> — Export current conversation report as standalone HTML\n\n"
             "<b>Configuration & Control:</b>\n"
             "• <code>/status</code> — Show active project, conversation, model, & effort\n"
-            "• <code>/model &lt;name&gt;</code> — Set model (e.g. <code>/model gemini-2.5-pro</code>) or <code>/model reset</code>\n"
-            "• <code>/effort &lt;low|medium|high&gt;</code> — Set reasoning effort\n"
+            "• <code>/model</code> — Switch model (Gemini 3.7 Flash / Gemini 3.1 Pro)\n"
+            "• <code>/effort</code> — Set reasoning effort (low | medium | high)\n"
             "• <code>/steer &lt;instruction&gt;</code> — Steer/guide currently running agy prompt\n"
             "• <code>/stop</code> — Interrupt currently executing agy prompt\n"
             "• <code>/help</code> — Show this manual\n\n"
@@ -816,38 +817,75 @@ class AgyTelegramBot:
         else:
             await self._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
 
-    async def handle_cmd_dir(self, chat_id: int, arg: str) -> None:
-        """Change directory for active project."""
-        if not arg:
-            session = self.session_manager.get_session(chat_id)
-            cur = session.active_path() or self.config.agy_working_dir or os.getcwd()
-            await self._safe_send_message(
-                chat_id=chat_id,
-                text=f"📁 Current working directory: <code>{escape_html(cur)}</code>\nUse <code>/dir &lt;path&gt;</code> to change.",
-            )
-            return
-
-        p = Path(arg.strip()).expanduser().resolve()
-        if not p.is_dir():
-            await self._safe_send_message(
-                chat_id=chat_id,
-                text=f"⚠️ Directory does not exist: <code>{escape_html(str(p))}</code>",
-            )
-            return
-
+    async def handle_cmd_dir(self, chat_id: int, arg: str = "", reply_to_id: Optional[int] = None) -> None:
+        """Browse workspace directory and export interactive collapsible HTML file tree viewer."""
         session = self.session_manager.get_session(chat_id)
-        active = session.active_project
-        if active:
-            self.session_manager.update_project_path(chat_id, active, str(p))
-            await self._safe_send_message(
-                chat_id=chat_id,
-                text=f"📁 Working directory for <b>{escape_html(active)}</b> set to <code>{escape_html(str(p))}</code>.",
-            )
+        active_proj = session.active_project or "default"
+        base_dir = session.active_path() or self.config.agy_working_dir or os.getcwd()
+
+        if arg:
+            target_dir = (Path(base_dir) / arg.strip()).expanduser().resolve()
         else:
-            self.session_manager.create_project(chat_id, "default", str(p))
+            target_dir = Path(base_dir).expanduser().resolve()
+
+        if not target_dir.is_dir():
             await self._safe_send_message(
                 chat_id=chat_id,
-                text=f"📁 Default working directory set to <code>{escape_html(str(p))}</code>.",
+                text=f"⚠️ Directory does not exist: <code>{escape_html(str(target_dir))}</code>",
+                reply_to_message_id=reply_to_id,
+            )
+            return
+
+        await self._safe_send_chat_action(chat_id, "upload_document")
+        scan_data = scan_directory_tree(target_dir)
+
+        html_doc = generate_dir_tree_html(
+            root_path=target_dir,
+            project_name=active_proj,
+            scan_data=scan_data,
+        )
+
+        rel_title = f"{active_proj}_{target_dir.name}" if target_dir.name != active_proj else active_proj
+        filename = f"tree_{rel_title}.html"
+
+        total_files = scan_data.get("total_files", 0)
+        total_dirs = scan_data.get("total_dirs", 0)
+        total_size = scan_data.get("total_size_str", "0 B")
+
+        # Top level preview (up to 8 items)
+        top_items = scan_data.get("tree", [])[:8]
+        preview_lines: List[str] = []
+        for item in top_items:
+            icon = "📁" if item.get("is_dir") else item.get("icon", "📄")
+            sz_badge = f" ({item.get('size_str')})" if not item.get("is_dir") else ""
+            preview_lines.append(f"  {icon} <code>{escape_html(item['name'])}</code>{sz_badge}")
+
+        if len(scan_data.get("tree", [])) > 8:
+            preview_lines.append(f"  <i>...and {len(scan_data['tree']) - 8} more items</i>")
+
+        preview_text = "\n".join(preview_lines) if preview_lines else "  <i>(Empty directory)</i>"
+
+        caption = (
+            f"📁 <b>{escape_html(active_proj)} Workspace Tree</b>\n\n"
+            f"• <b>Folders:</b> {total_dirs} | <b>Files:</b> {total_files} | <b>Total:</b> {total_size}\n"
+            f"• <b>Path:</b> <code>{escape_html(str(target_dir))}</code>\n\n"
+            f"<b>Top-Level Preview:</b>\n{preview_text}\n\n"
+            f"💡 <i>Open the attached HTML to expand/collapse folders and tap any file to copy its <code>/file</code> command!</i>"
+        )
+
+        doc_res = await self._safe_send_document(
+            chat_id=chat_id,
+            document_content=html_doc,
+            filename=filename,
+            caption=caption,
+            reply_to_message_id=reply_to_id,
+        )
+
+        if not doc_res:
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=caption,
+                reply_to_message_id=reply_to_id,
             )
 
     async def handle_cmd_file(self, chat_id: int, arg: str, reply_to_id: Optional[int]) -> None:
