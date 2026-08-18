@@ -1,0 +1,185 @@
+"""Async Telegram Bot API client using httpx."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any, Dict, List, Optional
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
+class TelegramAPIError(Exception):
+    """Exception raised when Telegram API returns an error."""
+
+    def __init__(self, error_code: int, description: str) -> None:
+        self.error_code = error_code
+        self.description = description
+        super().__init__(f"Telegram API Error {error_code}: {description}")
+
+
+class TelegramClient:
+    """Lightweight async Telegram Bot API client."""
+
+    def __init__(self, bot_token: str, base_url: str = "https://api.telegram.org") -> None:
+        self.bot_token = bot_token
+        self.base_url = f"{base_url.rstrip('/')}/bot{bot_token}"
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def get_client(self) -> httpx.AsyncClient:
+        """Get or create shared httpx AsyncClient."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0))
+        return self._client
+
+    async def close(self) -> None:
+        """Close underlying HTTP client session."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
+    async def _post(self, method: str, payload: Dict[str, Any], timeout: Optional[float] = None) -> Dict[str, Any]:
+        """Execute a POST request to Telegram Bot API with error handling."""
+        client = await self.get_client()
+        url = f"{self.base_url}/{method}"
+        kwargs: Dict[str, Any] = {"json": payload}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+
+        try:
+            resp = await client.post(url, **kwargs)
+            data = resp.json()
+        except httpx.RequestError as e:
+            logger.error("HTTP request error calling %s: %s", method, e)
+            raise
+
+        if not data.get("ok"):
+            err_code = data.get("error_code", resp.status_code)
+            desc = data.get("description", "Unknown error")
+            
+            # Handle rate limits
+            if err_code == 429:
+                params = data.get("parameters", {})
+                retry_after = params.get("retry_after", 1)
+                logger.warning("Telegram rate limit hit (429). Retry after %ds", retry_after)
+                await asyncio.sleep(retry_after)
+                # Retry once
+                resp = await client.post(url, **kwargs)
+                data = resp.json()
+                if data.get("ok"):
+                    return data.get("result", {})
+            
+            raise TelegramAPIError(err_code, desc)
+
+        return data.get("result", {})
+
+    async def get_me(self) -> Dict[str, Any]:
+        """Test bot token and get bot metadata."""
+        return await self._post("getMe", {})
+
+    async def get_updates(
+        self,
+        offset: Optional[int] = None,
+        limit: int = 100,
+        timeout: int = 30,
+    ) -> List[Dict[str, Any]]:
+        """Long poll updates from Telegram."""
+        payload: Dict[str, Any] = {
+            "timeout": timeout,
+            "limit": limit,
+            "allowed_updates": ["message", "edited_message"],
+        }
+        if offset is not None:
+            payload["offset"] = offset
+
+        # Set HTTP read timeout slightly higher than long poll timeout
+        http_timeout = float(timeout + 15)
+        try:
+            result = await self._post("getUpdates", payload, timeout=http_timeout)
+            if isinstance(result, list):
+                return result
+            return []
+        except Exception as e:
+            logger.warning("getUpdates failed: %s", e)
+            return []
+
+    async def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        parse_mode: Optional[str] = "HTML",
+        reply_to_message_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Send message with automatic fallback to plain text if formatting fails."""
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text,
+        }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        if reply_to_message_id:
+            payload["reply_to_message_id"] = reply_to_message_id
+
+        try:
+            return await self._post("sendMessage", payload)
+        except TelegramAPIError as e:
+            # If parse error occurred, retry as plain text without parse_mode
+            if parse_mode and ("can't parse entities" in e.description.lower() or "tag" in e.description.lower()):
+                logger.debug("HTML parse failed for sendMessage, retrying plain text: %s", e.description)
+                plain_payload = {k: v for k, v in payload.items() if k != "parse_mode"}
+                return await self._post("sendMessage", plain_payload)
+            raise
+
+    async def edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        parse_mode: Optional[str] = "HTML",
+    ) -> Optional[Dict[str, Any]]:
+        """Edit message text with no-op handling for unchanged content and plain-text fallback."""
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+        }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+
+        try:
+            return await self._post("editMessageText", payload)
+        except TelegramAPIError as e:
+            # Telegram returns 400 if text is exactly identical; safe to ignore
+            if "message is not modified" in e.description.lower():
+                return None
+            # If entity parse failed, retry with plain text
+            if parse_mode and ("can't parse entities" in e.description.lower() or "tag" in e.description.lower()):
+                logger.debug("HTML parse failed for editMessageText, retrying plain text: %s", e.description)
+                plain_payload = {k: v for k, v in payload.items() if k != "parse_mode"}
+                try:
+                    return await self._post("editMessageText", plain_payload)
+                except TelegramAPIError as e2:
+                    if "message is not modified" in e2.description.lower():
+                        return None
+                    raise e2
+            raise
+
+    async def send_chat_action(self, chat_id: int, action: str = "typing") -> bool:
+        """Send chat action (e.g. typing)."""
+        try:
+            await self._post("sendChatAction", {"chat_id": chat_id, "action": action})
+            return True
+        except Exception:
+            return False
+
+
+if __name__ == "__main__":
+    async def main() -> None:
+        client = TelegramClient("dummy_token")
+        print("TelegramClient initialized with base_url:", client.base_url)
+        await client.close()
+        print("TelegramClient self-test passed!")
+
+    asyncio.run(main())
