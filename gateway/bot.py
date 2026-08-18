@@ -916,9 +916,9 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
                     if stream_blocks:
                         files_label = ", ".join(b.filename for b in stream_blocks)
                         if display_stream_text:
-                            display_stream_text += f"\n\n📄 <i>[正在生成单页报告: {files_label}...]</i>"
+                            display_stream_text += f"\n\n📄 <i>[Generating standalone report: {files_label}...]</i>"
                         else:
-                            display_stream_text = f"📄 <i>[正在生成单页报告: {files_label}...]</i>"
+                            display_stream_text = f"📄 <i>[Generating standalone report: {files_label}...]</i>"
 
                     preview = format_streaming_message(
                         tool_events=tool_events,
@@ -989,7 +989,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
                     html_doc, err_msg = render_agy_file(block, base_dir=effective_dir, metadata=metadata)
                     if err_msg:
                         logger.warning("Failed to render [AGY_FILE] %s: %s", block.filename, err_msg)
-                        file_errors.append(f"❌ 导出文件失败 (<code>{escape_html(block.filename)}</code>): {escape_html(err_msg)}")
+                        file_errors.append(f"❌ Failed to export file (<code>{escape_html(block.filename)}</code>): {escape_html(err_msg)}")
                         continue
 
                     await self._safe_send_chat_action(chat_id, "upload_document")
@@ -997,21 +997,21 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
                         chat_id=chat_id,
                         document_content=html_doc,
                         filename=block.filename,
-                        caption=f"📄 <b>{escape_html(block.filename)}</b>\n💡 可在 Telegram 内直接打开查看完整排版与代码高亮",
+                        caption=f"📄 <b>{escape_html(block.filename)}</b>\n💡 Open in browser or Telegram viewer for full formatting and syntax highlighting",
                         reply_to_message_id=reply_to_id or msg_id,
                     )
                     if doc_res:
                         sent_count += 1
                     else:
-                        file_errors.append(f"❌ 发送文件失败: <code>{escape_html(block.filename)}</code>")
+                        file_errors.append(f"❌ Failed to send file: <code>{escape_html(block.filename)}</code>")
 
                 # Update text message with summary/preview and file notice
                 preview_length = 1500
                 visible_body = cleaned_text.strip()
                 if not visible_body:
-                    visible_body = "📄 <b>任务报告已生成</b>"
+                    visible_body = "📄 <b>Task report generated</b>"
                 elif len(visible_body) > preview_length:
-                    visible_body = visible_body[:preview_length].strip() + "\n\n<i>[...完整内容见下方导出的 HTML 报告...]</i>"
+                    visible_body = visible_body[:preview_length].strip() + "\n\n<i>[...Full report attached as HTML document below...]</i>"
 
                 formatted_summary = format_final_result(
                     response_text=visible_body,
@@ -1024,9 +1024,9 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
                 notices: List[str] = []
                 if sent_count > 0:
                     if sent_count == 1:
-                        notices.append("📄 <b>已生成完整报告文件并发送至下方 ⬇️</b>")
+                        notices.append("📄 <b>Full report generated and attached below ⬇️</b>")
                     else:
-                        notices.append(f"📄 <b>已生成 {sent_count} 个报告文件并发送至下方 ⬇️</b>")
+                        notices.append(f"📄 <b>{sent_count} report file(s) generated and attached below ⬇️</b>")
                 if file_errors:
                     notices.extend(file_errors)
 
@@ -1050,7 +1050,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
                 preview_length = 1200
                 summary_snippet = final_text[:preview_length].strip()
                 if len(final_text) > preview_length:
-                    summary_snippet += "\n\n<i>[...完整内容见下方导出的 HTML 报告...]</i>"
+                    summary_snippet += "\n\n<i>[...Full report attached as HTML document below...]</i>"
 
                 formatted_summary = format_final_result(
                     response_text=summary_snippet,
@@ -1059,7 +1059,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
                     thinking_tokens=thinking_val,
                     conversation_id=conv_id,
                 )
-                notice = "\n\n📄 <b>已自动生成完整 HTML 报告文件并发送至下方 ⬇️</b>"
+                notice = "\n\n📄 <b>Full HTML report automatically generated and attached below ⬇️</b>"
                 res = await self._safe_edit_message_text(
                     chat_id=chat_id,
                     message_id=msg_id,
@@ -1094,7 +1094,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
                     chat_id=chat_id,
                     document_content=html_doc,
                     filename=filename,
-                    caption=f"📄 <b>{escape_html(filename)}</b>\n💡 可在 Telegram 内直接打开查看完整排版与代码高亮",
+                    caption=f"📄 <b>{escape_html(filename)}</b>\n💡 Open in browser or Telegram viewer for full formatting and syntax highlighting",
                     reply_to_message_id=reply_to_id or msg_id,
                 )
             else:

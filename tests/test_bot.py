@@ -283,7 +283,7 @@ Please review the attached HTML file."""
     assert "[END_AGY_FILE]" not in final_text
     assert "Here is the diff analysis for your review:" in final_text
     assert "Please review the attached HTML file." in final_text
-    assert "已生成完整报告文件并发送至下方" in final_text
+    assert "Full report generated and attached below" in final_text
 
 
 @pytest.mark.asyncio
@@ -365,7 +365,7 @@ non_existent_file.html
     mock_bot.client.send_document.assert_not_called()
     assert mock_bot.client.edit_message_text.called
     final_text = mock_bot.client.edit_message_text.call_args[1]["text"]
-    assert "导出文件失败" in final_text or "File not found" in final_text
+    assert "Failed to export file" in final_text or "File not found" in final_text
 
 
 @pytest.mark.asyncio
@@ -406,7 +406,7 @@ Summary: 2 files exported."""
 
     # Check edit text notice
     final_text = mock_bot.client.edit_message_text.call_args[1]["text"]
-    assert "已生成 2 个报告文件并发送至下方" in final_text
+    assert "2 report file(s) generated and attached below" in final_text
     assert "[AGY_FILE]" not in final_text
 
 

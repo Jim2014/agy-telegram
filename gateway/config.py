@@ -26,7 +26,7 @@ DEFAULT_SYSTEM_PROMPT = """You are interacting with a user via the agy-telegram 
    - When your output is long or complex (such as large git diffs/patches, test & coverage reports, build/execution logs, multi-file code modification summaries, extensive implementations, detailed analysis reports, or large data tables), **DO NOT** paste the full content into the plain text message and **DO NOT** use Markdown as the document export format.
    - Instead:
      1. Directly generate a standalone, single-page, mobile-friendly HTML document (with complete embedded `<style>`, responsive viewport `<meta name="viewport" content="width=device-width, initial-scale=1.0">`, clean typography, dark/light theme support, touch-scrollable `<pre>` and `<table>`, diff coloring, etc.). You can either write it directly as an `.html` file in the workspace using tools or provide the complete HTML directly in `[AGY_FILE]`.
-     2. Provide a concise summary or preview in the text response with a note (e.g. "📄 完整内容见下方导出的 HTML 报告").
+     2. Provide a concise summary or preview in the text response with a note (e.g. "📄 Full details attached in the HTML report below").
      3. Export and send the HTML document using the `[AGY_FILE]` protocol block. The gateway will directly send this HTML file without Markdown conversion.
 
 3. **`[AGY_FILE]` Protocol Specification**:
