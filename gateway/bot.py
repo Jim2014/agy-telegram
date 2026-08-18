@@ -41,6 +41,7 @@ class AgyTelegramBot:
         self.active_bridges: Dict[int, AgyBridge] = {}
         self.running = False
         self.bot_info: Dict[str, Any] = {}
+        self.started_at = time.time()
 
     async def _safe_send_message(
         self,
@@ -118,6 +119,28 @@ class AgyTelegramBot:
             logger.warning("Telegram send_chat_action failed for chat %s: %s", chat_id, e)
             return False
 
+    async def _notify_restart(self) -> None:
+        """Send a short 'gateway (re)started' notice to every known chat with a session."""
+        started_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.started_at))
+        sessions = getattr(self.session_manager, "_sessions", {})
+        for chat_id, session in sessions.items():
+            if not self.config.is_chat_allowed(chat_id):
+                continue
+            proj = session.active_project or "<i>(none)</i>"
+            n = len(getattr(session, "projects", {}))
+            try:
+                await self._safe_send_message(
+                    chat_id=chat_id,
+                    text=(
+                        "🔄 <b>Gateway restarted.</b>\n"
+                        f"• Started: <code>{started_str}</code>\n"
+                        f"• Active project: <code>{escape_html(str(proj))}</code>\n"
+                        f"• {n} project(s) saved — use <code>/status</code> or <code>/open</code> to resume."
+                    ),
+                )
+            except Exception as e:
+                logger.warning("Restart notification failed for chat %s: %s", chat_id, e)
+
     async def start(self) -> None:
         """Initialize and run the Telegram long-polling loop."""
         if not self.config.is_token_valid():
@@ -138,6 +161,9 @@ class AgyTelegramBot:
 
         self.running = True
         print("🚀 agy-telegram gateway is running! Press Ctrl+C to stop.\n")
+
+        # Notify known chats that the gateway (re)started, so the user can see it came back up.
+        await self._notify_restart()
 
         offset: Optional[int] = None
         consecutive_errors = 0
@@ -489,9 +515,20 @@ class AgyTelegramBot:
         effort_str = session.effort or self.config.default_effort or "medium"
         busy_status = "🔴 Busy (Running prompt)" if session.is_busy else "🟢 Idle"
 
+        # Startup time + uptime so the user can tell this is a fresh process
+        started_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.started_at))
+        uptime = max(0, int(time.time() - self.started_at))
+        if uptime < 60:
+            uptime_str = f"{uptime}s"
+        elif uptime < 3600:
+            uptime_str = f"{uptime // 60}m {uptime % 60}s"
+        else:
+            uptime_str = f"{uptime // 3600}h {(uptime % 3600) // 60}m"
+
         status_text = (
             "📊 <b>Session & System Status:</b>\n\n"
             f"• <b>Status:</b> {busy_status}\n"
+            f"• <b>Started:</b> <code>{started_str}</code> (<code>{uptime_str}</code> ago)\n"
             f"• <b>Active Project:</b> <code>{escape_html(active_proj)}</code>\n"
             f"• <b>Working Directory:</b> <code>{escape_html(active_path)}</code>\n"
             f"• <b>Conversation ID:</b> {conv_id}\n"
