@@ -672,7 +672,7 @@ class AgyTelegramBot:
         )
 
     async def handle_cmd_status(self, chat_id: int) -> None:
-        """Display current bot & session status."""
+        """Display current bot & session status with cumulative conversation statistics."""
         session = self.session_manager.get_session(chat_id)
         conv_id = session.conversation_id or "<i>(None - new conversation)</i>"
         if session.conversation_id:
@@ -684,7 +684,7 @@ class AgyTelegramBot:
         effort_str = session.effort or self.config.default_effort or "high"
         busy_status = "🔴 Busy (Running prompt)" if session.is_busy else "🟢 Idle"
 
-        # Startup time + uptime so the user can tell this is a fresh process
+        # Startup time + uptime
         started_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.started_at))
         uptime = max(0, int(time.time() - self.started_at))
         if uptime < 60:
@@ -694,16 +694,47 @@ class AgyTelegramBot:
         else:
             uptime_str = f"{uptime // 3600}h {(uptime % 3600) // 60}m"
 
+        # Cumulative session statistics
+        active_stats = self.session_manager.get_active_stats(chat_id)
+        total_turns = active_stats.get("total_turns", 0)
+        cum_tokens = active_stats.get("total_tokens", 0)
+        cum_thinking = active_stats.get("thinking_tokens", 0)
+        cum_duration = active_stats.get("total_duration_seconds", 0.0)
+        session_start = active_stats.get("session_started_at", session.created_at)
+
+        if cum_tokens >= 1_000_000:
+            tok_str = f"{cum_tokens / 1_000_000:.2f}M ({cum_tokens:,})"
+        elif cum_tokens >= 1_000:
+            tok_str = f"{cum_tokens / 1_000:.1f}k ({cum_tokens:,})"
+        else:
+            tok_str = f"{cum_tokens}"
+
+        if cum_thinking:
+            tok_str += f" (thinking: {cum_thinking:,})"
+
+        session_age = max(0, int(time.time() - session_start))
+        if session_age < 60:
+            sess_age_str = f"{session_age}s"
+        elif session_age < 3600:
+            sess_age_str = f"{session_age // 60}m {session_age % 60}s"
+        else:
+            sess_age_str = f"{session_age // 3600}h {(session_age % 3600) // 60}m"
+
         status_text = (
             "📊 <b>Session & System Status:</b>\n\n"
             f"• <b>Status:</b> {busy_status}\n"
-            f"• <b>Started:</b> <code>{started_str}</code> (<code>{uptime_str}</code> ago)\n"
+            f"• <b>Gateway Uptime:</b> <code>{uptime_str}</code> (started <code>{started_str}</code>)\n"
             f"• <b>Active Project:</b> <code>{escape_html(active_proj)}</code>\n"
             f"• <b>Working Directory:</b> <code>{escape_html(active_path)}</code>\n"
-            f"• <b>Conversation ID:</b> {conv_id}\n"
             f"• <b>Model:</b> <code>{escape_html(model_str)}</code>\n"
-            f"• <b>Effort:</b> <code>{escape_html(effort_str)}</code>\n"
-            f"• <b>Configured Projects:</b> {len(session.projects)}\n"
+            f"• <b>Effort:</b> <code>{escape_html(effort_str)}</code>\n\n"
+            "📈 <b>Active Session Cumulative Stats:</b>\n"
+            f"• <b>Conversation ID:</b> {conv_id}\n"
+            f"• <b>Session Age:</b> <code>{sess_age_str}</code>\n"
+            f"• <b>Total Turns:</b> <code>{total_turns}</code>\n"
+            f"• <b>Total Tokens:</b> <code>{tok_str}</code>\n"
+            f"• <b>Cumulative Runtime:</b> <code>{cum_duration:.1f}s</code>\n\n"
+            f"📁 <b>Configured Projects:</b> {len(session.projects)}\n"
         )
         await self._safe_send_message(chat_id=chat_id, text=status_text)
 
@@ -1123,6 +1154,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
         tool_events: List[str] = []
         created_files: List[Path] = []
         accumulated_text = ""
+        start_time = time.time()
         last_edit_time = time.time()
         last_edited_content = ""
         final_event: Optional[AgyEvent] = None
@@ -1243,9 +1275,40 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
             else:
                 final_text = "(Done, no textual response)"
 
-            duration = total_duration or (final_event.duration_seconds if final_event else None)
-            tokens_val = total_tokens or (final_event.usage.get("total_tokens") if final_event else None)
-            thinking_val = thinking_tokens or (final_event.usage.get("thinking_tokens") if final_event else None)
+            # Calculate this turn's duration and token usage delta
+            turn_duration = max(0.1, time.time() - start_time)
+            usage_dict = final_event.usage if (final_event and isinstance(final_event.usage, dict)) else {}
+            raw_session_tokens = int(total_tokens or usage_dict.get("total_tokens") or 0)
+            raw_session_thinking = int(thinking_tokens or usage_dict.get("thinking_tokens") or 0)
+
+            prev_stats = self.session_manager.get_active_stats(chat_id)
+            prev_tokens = int(prev_stats.get("total_tokens") or 0)
+            prev_thinking = int(prev_stats.get("thinking_tokens") or 0)
+
+            if raw_session_tokens and raw_session_tokens >= prev_tokens and prev_tokens > 0:
+                turn_tokens = raw_session_tokens - prev_tokens
+            else:
+                turn_tokens = raw_session_tokens
+
+            if raw_session_thinking and raw_session_thinking >= prev_thinking and prev_thinking > 0:
+                turn_thinking = raw_session_thinking - prev_thinking
+            else:
+                turn_thinking = raw_session_thinking
+
+            # Record cumulative statistics
+            self.session_manager.record_turn_stats(
+                chat_id=chat_id,
+                turn_tokens=turn_tokens,
+                turn_thinking=turn_thinking,
+                turn_duration=turn_duration,
+                session_total_tokens=raw_session_tokens,
+                session_total_thinking=raw_session_thinking,
+            )
+
+            # Metadata for current turn response display
+            duration = turn_duration
+            tokens_val = turn_tokens if (turn_tokens is not None and turn_tokens > 0) else (raw_session_tokens if raw_session_tokens > 0 else None)
+            thinking_val = turn_thinking if (turn_thinking is not None and turn_thinking > 0) else (raw_session_thinking if raw_session_thinking > 0 else None)
 
             # Check for explicit [AGY_FILE] protocol blocks first
             cleaned_text, file_blocks = extract_agy_file_blocks(final_text)

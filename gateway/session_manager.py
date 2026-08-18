@@ -121,6 +121,13 @@ class SessionManager:
             "path": resolved_path,
             "conversation_id": None,
             "last_active_at": time.time(),
+            "stats": {
+                "total_turns": 0,
+                "total_tokens": 0,
+                "thinking_tokens": 0,
+                "total_duration_seconds": 0.0,
+                "session_started_at": time.time(),
+            },
         }
         session.active_project = name
         session.last_active_at = time.time()
@@ -155,13 +162,21 @@ class SessionManager:
         return True
 
     def reset_conversation(self, chat_id: int) -> ChatSession:
-        """Reset conversation_id for the current active project."""
+        """Reset conversation_id and cumulative statistics for the current active project."""
         session = self.get_session(chat_id)
         if not session.active_project or session.active_project not in session.projects:
             raise ValueError("No active project to reset conversation")
 
-        session.projects[session.active_project]["conversation_id"] = None
-        session.projects[session.active_project]["last_active_at"] = time.time()
+        proj = session.projects[session.active_project]
+        proj["conversation_id"] = None
+        proj["last_active_at"] = time.time()
+        proj["stats"] = {
+            "total_turns": 0,
+            "total_tokens": 0,
+            "thinking_tokens": 0,
+            "total_duration_seconds": 0.0,
+            "session_started_at": time.time(),
+        }
         session.last_active_at = time.time()
         self.save()
         return session
@@ -174,10 +189,85 @@ class SessionManager:
         """Record the active agy conversation ID for the current active project."""
         session = self.get_session(chat_id)
         if session.active_project and session.active_project in session.projects:
-            session.projects[session.active_project]["conversation_id"] = conversation_id
-            session.projects[session.active_project]["last_active_at"] = time.time()
+            proj = session.projects[session.active_project]
+            if proj.get("conversation_id") != conversation_id:
+                proj["conversation_id"] = conversation_id
+                if "stats" not in proj or not isinstance(proj["stats"], dict):
+                    proj["stats"] = {
+                        "total_turns": 0,
+                        "total_tokens": 0,
+                        "thinking_tokens": 0,
+                        "total_duration_seconds": 0.0,
+                        "session_started_at": time.time(),
+                    }
+            proj["last_active_at"] = time.time()
         session.last_active_at = time.time()
         self.save()
+
+    def record_turn_stats(
+        self,
+        chat_id: int,
+        turn_tokens: Optional[int] = None,
+        turn_thinking: Optional[int] = None,
+        turn_duration: Optional[float] = None,
+        session_total_tokens: Optional[int] = None,
+        session_total_thinking: Optional[int] = None,
+    ) -> None:
+        """Record per-turn metrics and update cumulative session stats."""
+        session = self.get_session(chat_id)
+        if not session.active_project or session.active_project not in session.projects:
+            return
+
+        proj = session.projects[session.active_project]
+        if "stats" not in proj or not isinstance(proj["stats"], dict):
+            proj["stats"] = {
+                "total_turns": 0,
+                "total_tokens": 0,
+                "thinking_tokens": 0,
+                "total_duration_seconds": 0.0,
+                "session_started_at": time.time(),
+            }
+
+        safe_duration = max(0.0, float(turn_duration)) if turn_duration is not None else 0.0
+        safe_turn_tokens = max(0, int(turn_tokens)) if turn_tokens is not None else 0
+        safe_turn_thinking = max(0, int(turn_thinking)) if turn_thinking is not None else 0
+
+        stats = proj["stats"]
+        stats["total_turns"] = stats.get("total_turns", 0) + 1
+        stats["total_duration_seconds"] = stats.get("total_duration_seconds", 0.0) + safe_duration
+
+        if session_total_tokens is not None and session_total_tokens > 0:
+            stats["total_tokens"] = session_total_tokens
+        else:
+            stats["total_tokens"] = stats.get("total_tokens", 0) + safe_turn_tokens
+
+        if session_total_thinking is not None and session_total_thinking > 0:
+            stats["thinking_tokens"] = session_total_thinking
+        else:
+            stats["thinking_tokens"] = stats.get("thinking_tokens", 0) + safe_turn_thinking
+
+        stats["last_turn_tokens"] = safe_turn_tokens
+        stats["last_turn_thinking"] = safe_turn_thinking
+        stats["last_turn_duration"] = safe_duration
+
+        session.last_active_at = time.time()
+        self.save()
+
+    def get_active_stats(self, chat_id: int) -> Dict[str, Any]:
+        """Get cumulative stats for current active project session."""
+        session = self.get_session(chat_id)
+        if session.active_project and session.active_project in session.projects:
+            proj = session.projects[session.active_project]
+            stats = proj.get("stats")
+            if isinstance(stats, dict):
+                return dict(stats)
+        return {
+            "total_turns": 0,
+            "total_tokens": 0,
+            "thinking_tokens": 0,
+            "total_duration_seconds": 0.0,
+            "session_started_at": session.created_at,
+        }
 
     def set_project_path(self, chat_id: int, name: str, path: str) -> None:
         """Update workspace path for a specific project."""

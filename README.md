@@ -216,9 +216,9 @@ tail -f -n 50 runtime/watchdog.log
 | :--- | :--- | :--- |
 | **直接发送文本** | 处于空闲时启动新轮次；处于运行中时**自动作为 Steering 注入当前会话** | `请帮我查看当前目录下的文件` |
 | `/help` | 查看帮助说明与命令列表 | `/help` |
-| `/status` | 查看当前活跃项目、会话 ID、模型、推理强度及运行状态 | `/status` |
+| `/status` | 查看当前活跃项目、会话累计统计（轮次、累计 Token、思考 Token、会话存活时长、总运行耗时）、模型及系统状态 | `/status` |
 | `/projects` | 列出所有项目、活跃标记、工作区路径与最后活跃时间 | `/projects` |
-| `/open <name>` | 打开并切换到已有项目，恢复其历史会话 | `/open myapp` |
+| `/open <name>` | 打开并切换到已有项目，恢复其历史会话与统计 | `/open myapp` |
 | `/new <name> <path>` | 创建新项目并设为当前活跃工作区（已存在则切换） | `/new myapp /Users/jim/myapp` |
 | `/model <name>` | 切换当前对话使用的模型（如 `/model gemini-3.7-flash` 或 `/model gemini-3.1-pro`） | `/model gemini-3.7-flash` |
 | `/effort <level>` | 调整推理强度：`low`、`medium`、`high` | `/effort high` |
@@ -227,7 +227,7 @@ tail -f -n 50 runtime/watchdog.log
 | `/export` | 将当前会话状态或最新输出导出为独立排版的 HTML 文件并发送 | `/export` |
 | `/steer <instruction>` | 显式向正在执行的任务注入引导指令（无需打断当前进程） | `/steer 请使用异步写法` |
 | `/stop` | 强制中断并杀死当前正在执行的 agy 进程 | `/stop` |
-| `/reset` | 清空当前活跃项目的 `conversation_id`（重置会话） | `/reset` |
+| `/reset` | 清空当前活跃项目的 `conversation_id` 并重置会话统计为零（开启全新会话） | `/reset` |
 | `/delete <name>` | 删除指定项目（如为活跃项目则重置活跃状态） | `/delete myapp` |
 
 ### 📄 文件多模板 HTML 动态渲染 (`/file -h`)

@@ -44,7 +44,11 @@ async def test_bot_help_and_status(mock_bot):
     # /status
     mock_bot.client.send_message.reset_mock()
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/status", "message_id": 2}})
-    assert "Status" in mock_bot.client.send_message.call_args[1]["text"]
+    status_text = mock_bot.client.send_message.call_args[1]["text"]
+    assert "Status:" in status_text
+    assert "Active Session Cumulative Stats:" in status_text
+    assert "Total Turns:" in status_text
+    assert "Total Tokens:" in status_text
 
 
 @pytest.mark.asyncio

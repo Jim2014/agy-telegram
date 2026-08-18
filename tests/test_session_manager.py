@@ -168,3 +168,54 @@ def test_legacy_migration(tmp_path):
     assert s200.active_project == "default"
     assert s200.conversation_id == "conv-legacy-2"
     assert "default" in s200.projects
+
+
+def test_turn_and_session_stats(tmp_path):
+    persist_file = tmp_path / "stats_sessions.json"
+    mgr = SessionManager(persistence_file=persist_file)
+
+    mgr.create_project(300, "proj_stats", "/tmp/stats")
+    mgr.set_conversation_id(300, "conv-stats-1")
+
+    # Initial stats
+    stats0 = mgr.get_active_stats(300)
+    assert stats0["total_turns"] == 0
+    assert stats0["total_tokens"] == 0
+
+    # Record turn 1
+    mgr.record_turn_stats(
+        chat_id=300,
+        turn_tokens=1500,
+        turn_thinking=200,
+        turn_duration=3.5,
+        session_total_tokens=1500,
+        session_total_thinking=200,
+    )
+    stats1 = mgr.get_active_stats(300)
+    assert stats1["total_turns"] == 1
+    assert stats1["total_tokens"] == 1500
+    assert stats1["thinking_tokens"] == 200
+    assert stats1["total_duration_seconds"] == 3.5
+
+    # Record turn 2
+    mgr.record_turn_stats(
+        chat_id=300,
+        turn_tokens=2500,
+        turn_thinking=300,
+        turn_duration=4.2,
+        session_total_tokens=4000,
+        session_total_thinking=500,
+    )
+    stats2 = mgr.get_active_stats(300)
+    assert stats2["total_turns"] == 2
+    assert stats2["total_tokens"] == 4000
+    assert stats2["thinking_tokens"] == 500
+    assert stats2["total_duration_seconds"] == 7.7
+
+    # Reset conversation zeroes stats
+    mgr.reset_conversation(300)
+    stats_reset = mgr.get_active_stats(300)
+    assert stats_reset["total_turns"] == 0
+    assert stats_reset["total_tokens"] == 0
+    assert stats_reset["thinking_tokens"] == 0
+    assert stats_reset["total_duration_seconds"] == 0.0
