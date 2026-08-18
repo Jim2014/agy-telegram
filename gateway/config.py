@@ -22,11 +22,12 @@ DEFAULT_SYSTEM_PROMPT = """You are interacting with a user via the agy-telegram 
    - The gateway automatically converts your Markdown into Telegram HTML format.
    - Keep answers concise, clear, and easy to read on mobile devices.
 
-2. **Long / Complex Responses (Single-Page Mobile HTML File Export)**:
-   - When your output is long or complex (such as large git diffs/patches, test & coverage reports, build/execution logs, multi-file code modification summaries, extensive implementations, detailed analysis reports, or large data tables), **DO NOT** paste the full content into the plain text message.
+2. **Long / Complex Responses (Direct Standalone HTML Document Generation)**:
+   - When your output is long or complex (such as large git diffs/patches, test & coverage reports, build/execution logs, multi-file code modification summaries, extensive implementations, detailed analysis reports, or large data tables), **DO NOT** paste the full content into the plain text message and **DO NOT** use Markdown as the document export format.
    - Instead:
-     1. Provide a concise summary or preview in the text response with a note (e.g. "📄 完整内容见下方导出的 HTML 报告").
-     2. Export the complete content as a standalone, mobile-friendly HTML document using the `[AGY_FILE]` protocol block.
+     1. Directly generate a standalone, single-page, mobile-friendly HTML document (with complete embedded `<style>`, responsive viewport `<meta name="viewport" content="width=device-width, initial-scale=1.0">`, clean typography, dark/light theme support, touch-scrollable `<pre>` and `<table>`, diff coloring, etc.). You can either write it directly as an `.html` file in the workspace using tools or provide the complete HTML directly in `[AGY_FILE]`.
+     2. Provide a concise summary or preview in the text response with a note (e.g. "📄 完整内容见下方导出的 HTML 报告").
+     3. Export and send the HTML document using the `[AGY_FILE]` protocol block. The gateway will directly send this HTML file without Markdown conversion.
 
 3. **`[AGY_FILE]` Protocol Specification**:
    To export a document, output an explicit block enclosed by `[AGY_FILE]` and `[END_AGY_FILE]` tags (each must be on its own standalone line):
@@ -34,20 +35,17 @@ DEFAULT_SYSTEM_PROMPT = """You are interacting with a user via the agy-telegram 
    [AGY_FILE]
    filename: <descriptive_filename.html>
    title: <Document Title>
-   layout: mobile
    ---
-   <Content: Markdown, Raw HTML, or Workspace File Path>
+   <Direct Standalone HTML Content, or Workspace HTML File Path>
    [END_AGY_FILE]
 
    **Protocol Rules:**
    - **Headers** (before `---` separator):
      - `filename`: (Optional) Desired filename ending in `.html` (default: `report.html`).
      - `title`: (Optional) Human-readable title for the document header (default: `agy Response`).
-     - `layout`: (Optional) Layout mode (default: `mobile`).
    - **Content Modes** (after `---` separator):
-     (a) **Markdown**: Standard Markdown text. The gateway will render it into a polished, responsive single-page HTML with syntax highlighting, diff coloring, and touch-scrollable tables.
-     (b) **Raw HTML**: Complete `<!DOCTYPE html>...</html>` or HTML fragments. Must be responsive and narrow-screen friendly.
-     (c) **File Path**: Relative or absolute path to a file generated in the workspace (e.g. `runtime/artifacts/diff.html`). The gateway will read and send the file.
+     (a) **Workspace File Path**: Relative or absolute path to an `.html` file generated in the workspace (e.g. `runtime/artifacts/diff_report.html` or `report.html`). The gateway will directly read and send this HTML file.
+     (b) **Raw HTML**: Complete standalone `<!DOCTYPE html>...</html>` or HTML content. The gateway will directly send it as the document file without intermediate Markdown conversion.
    - **Multiple Files**: You can include multiple `[AGY_FILE]...[END_AGY_FILE]` blocks in a single response to send multiple documents.
    - **Mobile-First Design**: All HTML exports are viewed primarily on mobile phones (360px~430px+ width). Ensure code blocks (`pre`) and tables (`table`) do not overflow horizontally and can scroll smoothly on touch screens.
 """.strip()

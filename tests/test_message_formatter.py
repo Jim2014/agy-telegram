@@ -185,51 +185,44 @@ def test_detect_content_mode():
     # Explicit hints
     assert detect_content_mode("foo", mode_hint="html") == "html"
     assert detect_content_mode("foo", mode_hint="path") == "path"
-    assert detect_content_mode("foo", mode_hint="md") == "markdown"
 
     # File path detection
     assert detect_content_mode("runtime/artifacts/diff.html") == "path"
     assert detect_content_mode("./out/report.html") == "path"
     assert detect_content_mode("/var/log/test.log") == "path"
-    assert detect_content_mode("report.md") == "path"
 
-    # Raw HTML detection
+    # Direct HTML detection
     assert detect_content_mode("<!DOCTYPE html><html><body>Test</body></html>") == "html"
     assert detect_content_mode("<html><head></head><body><h1>Hi</h1></body></html>") == "html"
     assert detect_content_mode("<div class='custom-report'><table><tr><td>Data</td></tr></table></div>") == "html"
-
-    # Markdown detection
-    assert detect_content_mode("# Heading\n- Item 1\n- Item 2\n```python\nprint(1)\n```") == "markdown"
-    assert detect_content_mode("Just some standard multi-line\nresponse commentary.") == "markdown"
+    assert detect_content_mode("<h1>Heading</h1><p>Direct HTML content</p>") == "html"
 
 
 def test_parse_agy_file_block():
-    # 1. Block with headers and separator
+    # 1. Block with headers and separator containing HTML
     block1 = """filename: diff_report.html
 title: Code Diff Report
 layout: mobile
 ---
-```diff
-+ added
-- removed
-```"""
+<div class="diff-report">
+  <pre class="diff">+ added line</pre>
+</div>"""
     b1 = parse_agy_file_block(block1)
     assert b1.filename == "diff_report.html"
     assert b1.title == "Code Diff Report"
     assert b1.layout == "mobile"
-    assert b1.mode == "markdown"
-    assert "```diff" in b1.content
+    assert b1.mode == "html"
+    assert "diff-report" in b1.content
 
     # 2. Block with headers without separator
     block2 = """filename: test.html
 title: Test Title
-# Header
-- Content bullet
+<div class="content"><h1>Header</h1></div>
 """
     b2 = parse_agy_file_block(block2)
     assert b2.filename == "test.html"
     assert b2.title == "Test Title"
-    assert b2.mode == "markdown"
+    assert b2.mode == "html"
 
     # 3. Block with file path
     block3 = """filename: artifact.html
@@ -284,18 +277,18 @@ Final conclusion."""
     assert "Final conclusion." in cleaned
 
 
-def test_render_agy_file_markdown():
+def test_render_agy_file_direct_html():
     block = AgyFileBlock(
         filename="report.html",
-        title="Markdown Report",
-        content="# Hello World\nThis is **bold** text.",
-        mode="markdown",
+        title="Direct HTML Report",
+        content="<!DOCTYPE html><html><head><title>Direct Report</title></head><body><h1>Hello World</h1><p>This is direct HTML.</p></body></html>",
+        mode="html",
     )
     html_out, err = render_agy_file(block)
     assert err is None
     assert "<!DOCTYPE html>" in html_out
-    assert "Markdown Report" in html_out
-    assert "<strong>bold</strong>" in html_out
+    assert "Hello World" in html_out
+    assert "This is direct HTML." in html_out
     assert '<meta name="viewport"' in html_out
 
 

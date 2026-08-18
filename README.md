@@ -227,25 +227,22 @@ tail -f -n 50 runtime/watchdog.log
   4. **灵活配置支持**：默认内置开箱即用的系统提示词规范；支持在 `.env` 中使用 `AGY_SYSTEM_PROMPT`（支持 `\n` 多行）或 `AGY_SYSTEM_PROMPT_FILE`（指向外部 Markdown/文本文件）进行自定义覆盖。
 
 - **Steering 引导**：当 agy 正在执行耗时任务时，用户直接输入新消息或发送 `/steer <指示>`，网关利用 `stream-json` 管道向 `stdin` 注入指令，Agent 将在完成当前步后无缝吸纳新指令继续作答。
-- **显式文件导出协议 (`[AGY_FILE]`)**：
-  agy 可在回复中输出结构化块，显式指示网关生成并发送移动端友好的单页 HTML 文件附件：
+- **直接生成与发送 HTML 文件 (`[AGY_FILE]`)**：
+  agy 直接生成自包含、移动友好的独立单页 HTML（或直接生成工作区 HTML 文件），通过 `[AGY_FILE]` 协议交由网关直接发送，无需以 Markdown 作为中间格式转换：
   ```text
   [AGY_FILE]
   filename: diff_report.html      # 可选，导出的文件名（默认 report.html）
   title: Code Diff Report         # 可选，HTML 页面标题（默认 agy Response）
-  layout: mobile                  # 可选，移动优先布局（默认 mobile）
   ---
-  <文件内容>
+  <直接独立 HTML 内容，或工作区生成的 HTML 文件路径>
   [END_AGY_FILE]
   ```
-  `<文件内容>` 支持三种模式：
-  1. **Markdown**：将 Markdown 文本通过网关渲染为移动优先的独立单页 HTML（带代码高亮与 Diff 增删染色）。
-  2. **原始 HTML (Raw HTML)**：直接提供完整 HTML 或片段，网关自动补充移动端 `viewport` 与响应式样式。
-  3. **文件路径 (File Path)**：提供工作区相对或绝对路径（如 `runtime/artifacts/report.html`），网关自动读取该文件并发送（文件不存在时友好提示错误且不崩溃）。
+  `---` 后的内容支持两种模式：
+  1. **工作区文件路径 (Workspace File Path)**：提供工作区相对或绝对路径（如 `runtime/artifacts/report.html` 或 `diff_report.html`），网关直接读取并发送该 HTML 文件。
+  2. **直接独立 HTML (Raw Standalone HTML)**：直接输出完整的 `<!DOCTYPE html><html>...</html>` 内容，网关直接作为 HTML 文件发送，不经过 Markdown 中转。
   - **正文清洁**：网关在发送前自动从可见正文中剔除 `[AGY_FILE]` 块，正文仅保留摘要预览与已发送提示。
   - **多文件支持**：单次回复支持多个 `[AGY_FILE]` 块，一次性导出多个文件。
-  - **移动优先**：内置 `<meta name="viewport" content="width=device-width, initial-scale=1.0">`、自适应容器（适配 360~430px 屏幕）、代码与表格水平横向滚动、深浅色模式自适应。
-- **启发式兜底导出**：无显式 `[AGY_FILE]` 标记时，若输出为大 Diff 或超长文本（> 2000 字），仍自动通过启发式规则导出为 HTML 文件。
+  - **移动优先**：自动确保移动端 `<meta name="viewport" content="width=device-width, initial-scale=1.0">`、代码与表格横向滚动自适应。
 - **直接提取工作区文件**：输入 `/file <路径>` 可直接调取并下载工作区内的任意代码或配置文件。
 
 ---

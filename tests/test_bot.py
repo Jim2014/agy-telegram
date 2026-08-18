@@ -236,20 +236,21 @@ index 1234..5678 100644
 
 
 @pytest.mark.asyncio
-async def test_bot_prompt_explicit_file_export_markdown(mock_bot, monkeypatch):
+async def test_bot_prompt_explicit_file_export_direct_html(mock_bot, monkeypatch):
     proto_response = """Here is the diff analysis for your review:
 
 [AGY_FILE]
 filename: feature_diff.html
 title: Feature Implementation Diff
-layout: mobile
 ---
-# Feature Diff
-```diff
-diff --git a/app.py b/app.py
-+ def new_feature():
-+     return True
-```
+<!DOCTYPE html>
+<html>
+<head><title>Feature Diff</title></head>
+<body>
+<h1>Feature Implementation Diff</h1>
+<pre class="diff"><span class="diff-add">+ def new_feature(): return True</span></pre>
+</body>
+</html>
 [END_AGY_FILE]
 
 Please review the attached HTML file."""
@@ -265,7 +266,7 @@ Please review the attached HTML file."""
     mock_bot.client.edit_message_text.reset_mock()
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "implement feature", "message_id": 80}})
 
-    # Verify document was uploaded with exact filename and rendered markdown
+    # Verify document was uploaded with exact filename and direct HTML
     mock_bot.client.send_document.assert_called_once()
     doc_args = mock_bot.client.send_document.call_args[1]
     assert doc_args["filename"] == "feature_diff.html"
@@ -373,19 +374,14 @@ async def test_bot_prompt_multiple_file_export_blocks(mock_bot, monkeypatch):
 filename: diff_report.html
 title: Diff Report
 ---
-# Diff Section
-```diff
-+ new code line
-```
+<!DOCTYPE html><html><body><h1>Diff Section</h1><code>+ new code line</code></body></html>
 [END_AGY_FILE]
 
 [AGY_FILE]
 filename: test_results.html
 title: Test Results
 ---
-# Test Suite
-- Test A: PASS
-- Test B: PASS
+<!DOCTYPE html><html><body><h1>Test Suite</h1><p>Test A: PASS</p></body></html>
 [END_AGY_FILE]
 
 Summary: 2 files exported."""
