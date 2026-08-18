@@ -116,3 +116,33 @@ async def test_telegram_client_send_document(monkeypatch):
     assert "document" in captured_data["files"]
     assert captured_data["files"]["document"][0] == "report.html"
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_telegram_client_set_my_commands(monkeypatch):
+    client = TelegramClient("12345:TESTTOKEN")
+    captured_payload = {}
+
+    async def mock_post(url, **kwargs):
+        req = httpx.Request("POST", url)
+        captured_payload.update(kwargs.get("json", {}))
+        return httpx.Response(
+            200,
+            json={"ok": True, "result": True},
+            request=req,
+        )
+
+    mock_client = httpx.AsyncClient()
+    monkeypatch.setattr(mock_client, "post", mock_post)
+    client._client = mock_client
+
+    commands = [{"command": "help", "description": "Show help"}]
+    res = await client.set_my_commands(commands)
+    assert res is True
+    assert captured_payload["commands"] == commands
+
+    menu_res = await client.set_chat_menu_button()
+    assert menu_res is True
+
+    await client.close()
+

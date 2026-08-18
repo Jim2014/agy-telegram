@@ -195,6 +195,12 @@ tail -f -n 50 runtime/watchdog.log
 
 ## Telegram 命令与交互指南
 
+### 🤖 底部菜单与斜杠命令补全 (Bot Command Menu)
+
+网关启动时会自动调用 Telegram Bot API 的 `setMyCommands` 与 `setChatMenuButton`：
+- **聊天框左下角「Menu / 菜单」按钮**：点击即可呼出所有支持的斜杠命令与说明弹窗。
+- **输入框 `/` 快捷联想**：在输入框键入 `/` 即可实时查看命令列表与自动补全。
+
 ### 支持的命令列表
 
 在 Telegram 中与你的 Bot 对话：
@@ -202,20 +208,20 @@ tail -f -n 50 runtime/watchdog.log
 | 命令 | 说明 | 示例 |
 | :--- | :--- | :--- |
 | **直接发送文本** | 处于空闲时启动新轮次；处于运行中时**自动作为 Steering 注入当前会话** | `请帮我查看当前目录下的文件` |
-| `/steer <instruction>` | 显式向正在执行的任务注入引导指令（无需打断当前进程） | `/steer 请使用异步写法` |
-| `/stop` | 强制中断并杀死当前正在执行的 agy 进程 | `/stop` |
-| `/file <path>` | 发送当前项目工作区中的指定文件至 Telegram 客户端 | `/file README.md` |
-| `/export` | 将当前会话状态或最新输出导出为独立排版的 HTML 文件并发送 | `/export` |
-| `/new <name> <path>` | 创建新项目并设为当前活跃工作区（已存在则切换） | `/new myapp /Users/jim/myapp` |
-| `/open <name>` | 打开并切换到已有项目，恢复其历史会话 | `/open myapp` |
-| `/projects` | 列出所有项目、活跃标记、工作区路径与最后活跃时间 | `/projects` |
-| `/delete <name>` | 删除指定项目（如为活跃项目则重置活跃状态） | `/delete myapp` |
-| `/reset` | 清空当前活跃项目的 `conversation_id`（重置会话） | `/reset` |
-| `/dir <path>` | 修改当前活跃项目的工作目录路径 | `/dir /Users/jim/my-project` |
+| `/help` | 查看帮助说明与命令列表 | `/help` |
 | `/status` | 查看当前活跃项目、会话 ID、模型、推理强度及运行状态 | `/status` |
+| `/projects` | 列出所有项目、活跃标记、工作区路径与最后活跃时间 | `/projects` |
+| `/open <name>` | 打开并切换到已有项目，恢复其历史会话 | `/open myapp` |
+| `/new <name> <path>` | 创建新项目并设为当前活跃工作区（已存在则切换） | `/new myapp /Users/jim/myapp` |
 | `/model <name>` | 切换当前对话使用的模型（或 `/model reset` 恢复默认） | `/model gemini-2.5-pro` |
 | `/effort <level>` | 调整推理强度：`low`、`medium`、`high` | `/effort high` |
-| `/help` | 查看帮助说明与命令列表 | `/help` |
+| `/dir <path>` | 修改当前活跃项目的工作目录路径 | `/dir /Users/jim/my-project` |
+| `/file <path>` | 发送当前项目工作区中的指定文件至 Telegram 客户端 | `/file README.md` |
+| `/export` | 将当前会话状态或最新输出导出为独立排版的 HTML 文件并发送 | `/export` |
+| `/steer <instruction>` | 显式向正在执行的任务注入引导指令（无需打断当前进程） | `/steer 请使用异步写法` |
+| `/stop` | 强制中断并杀死当前正在执行的 agy 进程 | `/stop` |
+| `/reset` | 清空当前活跃项目的 `conversation_id`（重置会话） | `/reset` |
+| `/delete <name>` | 删除指定项目（如为活跃项目则重置活跃状态） | `/delete myapp` |
 
 ### 中途引导 (Steering) 与系统提示词注入机制
 

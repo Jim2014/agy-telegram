@@ -104,6 +104,8 @@ async def test_bot_open_and_projects_command(mock_bot, tmp_path):
     projects_text = mock_bot.client.send_message.call_args[1]["text"]
     assert "app_a" in projects_text
     assert "app_b" in projects_text
+    assert "/open app_a" in projects_text
+    assert "/open app_b" in projects_text
 
     # /open app_a
     mock_bot.client.send_message.reset_mock()
@@ -580,5 +582,17 @@ async def test_bot_system_prompt_passed_to_bridge(mock_bot, monkeypatch):
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "Second message", "message_id": 102}})
     assert captured_kwargs["conversation_id"] == "conv-first-turn-888"
     assert captured_kwargs["system_prompt"] == mock_bot.config.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_bot_setup_bot_commands(mock_bot):
+    mock_bot.client.set_my_commands = AsyncMock(return_value=True)
+    mock_bot.client.set_chat_menu_button = AsyncMock(return_value=True)
+
+    success = await mock_bot.setup_bot_commands()
+    assert success is True
+    mock_bot.client.set_my_commands.assert_called_once()
+    mock_bot.client.set_chat_menu_button.assert_called_once_with(menu_button={"type": "commands"})
+
 
 

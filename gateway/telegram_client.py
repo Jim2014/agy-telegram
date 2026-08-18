@@ -237,6 +237,81 @@ class TelegramClient:
         except Exception:
             return False
 
+    async def set_my_commands(
+        self,
+        commands: List[Dict[str, str]],
+        scope: Optional[Dict[str, Any]] = None,
+        language_code: Optional[str] = None,
+    ) -> bool:
+        """Register the list of bot commands in Telegram to display the command menu."""
+        payload: Dict[str, Any] = {"commands": commands}
+        if scope:
+            payload["scope"] = scope
+        if language_code:
+            payload["language_code"] = language_code
+        try:
+            res = await self._post("setMyCommands", payload)
+            return bool(res)
+        except Exception as e:
+            logger.warning("Failed to set bot commands: %s", e)
+            return False
+
+    async def get_my_commands(
+        self,
+        scope: Optional[Dict[str, Any]] = None,
+        language_code: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get the current list of registered bot commands."""
+        payload: Dict[str, Any] = {}
+        if scope:
+            payload["scope"] = scope
+        if language_code:
+            payload["language_code"] = language_code
+        try:
+            res = await self._post("getMyCommands", payload)
+            return res if isinstance(res, list) else []
+        except Exception as e:
+            logger.warning("Failed to get bot commands: %s", e)
+            return []
+
+    async def delete_my_commands(
+        self,
+        scope: Optional[Dict[str, Any]] = None,
+        language_code: Optional[str] = None,
+    ) -> bool:
+        """Delete registered bot commands."""
+        payload: Dict[str, Any] = {}
+        if scope:
+            payload["scope"] = scope
+        if language_code:
+            payload["language_code"] = language_code
+        try:
+            res = await self._post("deleteMyCommands", payload)
+            return bool(res)
+        except Exception as e:
+            logger.warning("Failed to delete bot commands: %s", e)
+            return False
+
+    async def set_chat_menu_button(
+        self,
+        chat_id: Optional[int] = None,
+        menu_button: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Change the bot's menu button in Telegram chats."""
+        payload: Dict[str, Any] = {}
+        if chat_id is not None:
+            payload["chat_id"] = chat_id
+        if menu_button:
+            payload["menu_button"] = menu_button
+        else:
+            payload["menu_button"] = {"type": "commands"}
+        try:
+            res = await self._post("setChatMenuButton", payload)
+            return bool(res)
+        except Exception as e:
+            logger.warning("Failed to set chat menu button: %s", e)
+            return False
+
 
 if __name__ == "__main__":
     async def main() -> None:

@@ -31,6 +31,24 @@ from gateway.telegram_client import TelegramClient
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_BOT_COMMANDS: List[Dict[str, str]] = [
+    {"command": "help", "description": "📖 显示帮助指南与指令列表"},
+    {"command": "status", "description": "📊 查看当前项目、模型与状态"},
+    {"command": "projects", "description": "📁 列出所有项目与工作区"},
+    {"command": "open", "description": "📂 打开/切换到指定项目 (/open <name>)"},
+    {"command": "new", "description": "✨ 创建新项目工作区 (/new <name> <path>)"},
+    {"command": "model", "description": "🧠 切换或重置模型 (/model <name> | reset)"},
+    {"command": "effort", "description": "⚡ 设置推理深度 (low | medium | high)"},
+    {"command": "export", "description": "📄 导出当前会话为独立 HTML 报告"},
+    {"command": "file", "description": "📎 发送项目工作区文件 (/file <path>)"},
+    {"command": "dir", "description": "📍 设定项目工作区目录 (/dir <path>)"},
+    {"command": "steer", "description": "🎯 实时引导运行中的任务 (/steer <text>)"},
+    {"command": "stop", "description": "🛑 终止当前正在运行的任务"},
+    {"command": "reset", "description": "🔄 重置当前项目对话上下文"},
+    {"command": "delete", "description": "🗑️ 删除指定项目 (/delete <name>)"},
+]
+
+
 class AgyTelegramBot:
     """Core bot runner managing Telegram communication, agy executions, and document exports."""
 
@@ -42,6 +60,21 @@ class AgyTelegramBot:
         self.running = False
         self.bot_info: Dict[str, Any] = {}
         self.started_at = time.time()
+
+    async def setup_bot_commands(self) -> bool:
+        """Register slash commands with Telegram Bot API so users see the command menu in chat."""
+        try:
+            success = await self.client.set_my_commands(DEFAULT_BOT_COMMANDS)
+            if success:
+                logger.info("Successfully registered %d slash commands with Telegram menu.", len(DEFAULT_BOT_COMMANDS))
+            else:
+                logger.warning("Telegram setMyCommands returned False.")
+            # Ensure menu button is configured to show commands
+            await self.client.set_chat_menu_button(menu_button={"type": "commands"})
+            return success
+        except Exception as e:
+            logger.warning("Error registering bot commands: %s", e)
+            return False
 
     async def _safe_send_message(
         self,
@@ -154,6 +187,8 @@ class AgyTelegramBot:
             username = self.bot_info.get("username", "UnknownBot")
             print(f"🤖 Connected to Telegram as @{username} (ID: {self.bot_info.get('id')})")
             logger.info("Bot authenticated as @%s (ID: %s)", username, self.bot_info.get("id"))
+            # Auto-register slash commands for Telegram chat menu
+            await self.setup_bot_commands()
         except Exception as e:
             logger.error("Failed to connect to Telegram: %s", e)
             print(f"\n❌ Error connecting to Telegram API: {e}")
@@ -444,11 +479,12 @@ class AgyTelegramBot:
             path_str = proj.get("path", "")
             lines.append(
                 f"{active_marker}<b>{escape_html(name)}</b>\n"
+                f"   Switch: <code>/open {escape_html(name)}</code>\n"
                 f"   Path: <code>{escape_html(path_str)}</code>\n"
                 f"   Session: {conv_str}\n"
             )
 
-        lines.append("💡 Use <code>/open &lt;name&gt;</code> to switch or <code>/new &lt;name&gt; &lt;path&gt;</code> to add.")
+        lines.append("💡 Tap <code>/open &lt;name&gt;</code> above to quickly copy or switch projects.")
         await self._safe_send_message(chat_id=chat_id, text="\n".join(lines))
 
     async def handle_cmd_delete(self, chat_id: int, arg: str) -> None:
