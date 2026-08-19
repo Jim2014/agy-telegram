@@ -107,7 +107,7 @@ class AgyBridge:
                 return False
 
             try:
-                payload = json.dumps({"type": "user", "message": {"content": msg_str}}) + "\n"
+                payload = json.dumps({"event": "user", "message": {"content": msg_str}}) + "\n"
                 proc.stdin.write(payload.encode("utf-8"))
                 await proc.stdin.drain()
                 self._pending_turns += 1
@@ -182,7 +182,7 @@ class AgyBridge:
         # Send initial user prompt turn
         async with self._lock:
             self._pending_turns = 1
-            init_payload = json.dumps({"type": "user", "message": {"content": initial_content}}) + "\n"
+            init_payload = json.dumps({"event": "user", "message": {"content": initial_content}}) + "\n"
             process.stdin.write(init_payload.encode("utf-8"))
             await process.stdin.drain()
 

@@ -600,7 +600,7 @@ class AgyTelegramBot:
             )
 
             # Check for [AGY_FILE] protocol blocks in final output
-            final_raw = accumulated_text or (final_event.content if final_event else "")
+            final_raw = accumulated_text or (getattr(final_event, "response", "") or getattr(final_event, "content", "") or "" if final_event else "")
             clean_text, agy_files = extract_agy_file_blocks(final_raw)
 
             # Auto-export long responses as standalone HTML document

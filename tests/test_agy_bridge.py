@@ -223,7 +223,7 @@ async def test_steer_method(monkeypatch):
     assert bridge._pending_turns == 1
     assert len(proc.stdin.written) == 1
     payload = json.loads(proc.stdin.written[0].decode())
-    assert payload == {"type": "user", "message": {"content": "Please focus on Python"}}
+    assert payload == {"event": "user", "message": {"content": "Please focus on Python"}}
 
 
 @pytest.mark.asyncio
@@ -286,7 +286,7 @@ async def test_system_prompt_injection_first_turn(monkeypatch):
     assert len(proc.stdin.written) == 1
     payload = json.loads(proc.stdin.written[0].decode())
     expected_content = "[SYSTEM] Follow markdown conventions.\n\n---\n\nPlease write a summary"
-    assert payload == {"type": "user", "message": {"content": expected_content}}
+    assert payload == {"event": "user", "message": {"content": expected_content}}
 
 
 @pytest.mark.asyncio
@@ -348,7 +348,7 @@ async def test_system_prompt_subsequent_turn_not_injected(monkeypatch):
     assert len(proc.stdin.written) == 1
     payload = json.loads(proc.stdin.written[0].decode())
     # Should only contain user prompt, no system prompt prepended
-    assert payload == {"type": "user", "message": {"content": "Next turn question"}}
+    assert payload == {"event": "user", "message": {"content": "Next turn question"}}
 
 
 @pytest.mark.asyncio
@@ -408,7 +408,7 @@ async def test_system_prompt_empty_or_none(monkeypatch):
 
     assert len(proc.stdin.written) == 1
     payload = json.loads(proc.stdin.written[0].decode())
-    assert payload == {"type": "user", "message": {"content": "Raw prompt"}}
+    assert payload == {"event": "user", "message": {"content": "Raw prompt"}}
 
 
 def test_is_running():
