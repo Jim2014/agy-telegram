@@ -279,6 +279,10 @@ class AgyTelegramBot:
         self.active_bridges.clear()
         await self.client.close()
 
+    async def shutdown(self) -> None:
+        """Gracefully shutdown the bot (alias for stop)."""
+        await self.stop()
+
     async def process_update(self, update: Dict[str, Any]) -> None:
         """Process a single Telegram update dict."""
         try:

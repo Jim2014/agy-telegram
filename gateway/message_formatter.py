@@ -232,14 +232,17 @@ def format_tool_summary(tool_name: str, state: str, tool_info: Dict[str, Any]) -
 
 def format_streaming_message(
     tool_events: List[str],
-    current_text: str,
+    current_text: str = "",
     cursor: bool = True,
     max_len: int = MAX_TELEGRAM_MESSAGE_LEN,
+    **kwargs: Any,
 ) -> str:
     """
     Build a live streaming preview message combining recent tool activities
     and formatted generated text.
     """
+    if not current_text and "accumulated_text" in kwargs:
+        current_text = kwargs["accumulated_text"]
     sections: List[str] = []
 
     # Include recent tool events (keep up to last 4 to keep message concise)
