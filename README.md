@@ -29,8 +29,8 @@
 3. **中途引导 (Steering) 支持**: 当 agy 正在思考或执行多步工具时，无需中断或 `/stop` 整个会话，系统可直接将补充指引与追加要求 **Steer（注入）** 进当前运行会话，平滑接续执行。
 4. **项目化会话持久化与隔离**: 支持多项目工作区管理（`/new`, `/open`, `/delete`, `/reset`, `/projects`），每个项目独立保存 `path` 与 `conversation_id`，跨项目持久化无缝切换。
 5. **灵活参数调整**: 通过 `/model` 切换模型，通过 `/effort` 调整推理强度 (low/medium/high)，通过 `/dir` 调整当前项目工作区。
-6. **网关原生语音识别 (Voice ASR & Whisper Support)**: 集成 `faster-whisper` 语音识别模块。当用户在 Telegram 发送语音条或音频文件时，网关自动下载并即时转录为文本，直接将转录指令交由 `agy` 高效执行；若任务处于运行中则自动转录并作为 Steering 注入；转录异常时自动优雅降级为音频路径模式。
-7. **文件与图片附件交互 (Document & Photo Attachments)**: 支持在 Telegram 中直接发送文档、代码文件、数据表格或图片，网关自动接收下载至 `runtime/documents/` 并将文件路径与元数据传给 `agy` 深度分析与处理；支持中途 Steering 注入。
+6. **语音消息与音频交互 (Voice Messages Support)**: 支持直接在 Telegram 中发送语音条或音频文件，网关自动接收并下载至 `runtime/voice/` 目录，将绝对路径与音频元数据构造为语音任务提示词交由 `agy` 自主解析与执行；在任务运行中发送语音亦可实时 Steering 注入当前会话。
+7. **文件与图片附件交互 (Document & Photo Attachments)**: 支持在 Telegram 中直接发送文档、代码文件、数据表格或图片，网关自动接收下载至 `runtime/documents/` 并将文件绝对路径与元数据传给 `agy` 深度分析与处理；支持中途 Steering 注入。
 8. **运行时隔离与 Git 保护**: 所有运行时日志（`runtime/gateway.log`）、进程 PID（`runtime/gateway.pid`）、会话持久化（`runtime/sessions.json`）、语音缓存（`runtime/voice/`）与文件附件（`runtime/documents/`）均自动归档在 `runtime/` 目录，已加入 `.gitignore` 彻底杜绝误提交。
 9. **安全与健壮性 (Harden & Auto-Heal)**:
    - 支持 `ALLOWED_CHAT_IDS` 白名单鉴权。
@@ -217,7 +217,7 @@ tail -f -n 50 runtime/watchdog.log
 | 命令 / 交互 | 说明 | 示例 |
 | :--- | :--- | :--- |
 | **直接发送文本** | 处于空闲时启动新轮次；处于运行中时**自动作为 Steering 注入当前会话** | `请帮我查看当前目录下的文件` |
-| **🎙️ 发送语音 / 音频** | 网关使用 `faster-whisper` **自动转录为文本**并发送给 agy 执行；运行中发送则自动转录并 Steering | 🎙️ 发送一段语音指令 |
+| **🎙️ 发送语音 / 音频** | 自动下载至本地 `runtime/voice/`，将路径与音频信息传给 agy 解析并执行；运行中发送则自动 Steering | 🎙️ 发送一段语音指令 |
 | **📎 发送文件 / 图片** | 自动下载至本地 `runtime/documents/`，将路径与文件元数据传给 agy 检查与处理；支持中途 Steering | 📎 发送代码/文档/图片附件 |
 | `/help` | 查看帮助说明与命令列表 | `/help` |
 | `/status` | 查看当前活跃项目、会话累计统计（轮次、累计 Token、思考 Token、会话存活时长、总运行耗时）、模型及系统状态 | `/status` |

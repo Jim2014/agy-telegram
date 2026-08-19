@@ -67,9 +67,6 @@ class Config:
     log_file: str = "runtime/gateway.log"
     sessions_file: str = "runtime/sessions.json"
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
-    whisper_model: str = "base"
-    whisper_device: str = "cpu"
-    whisper_compute_type: str = "int8"
 
     @classmethod
     def load(cls, env_path: str | Path | None = None) -> Config:
@@ -128,10 +125,6 @@ class Config:
         log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
         log_file = os.getenv("LOG_FILE", "runtime/gateway.log").strip()
         sessions_file = os.getenv("SESSIONS_FILE", "runtime/sessions.json").strip()
-        whisper_model = os.getenv("WHISPER_MODEL", "base").strip()
-        whisper_device = os.getenv("WHISPER_DEVICE", "cpu").strip()
-        whisper_compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8").strip()
-
         # System prompt loading (Priority: AGY_SYSTEM_PROMPT_FILE > AGY_SYSTEM_PROMPT > DEFAULT_SYSTEM_PROMPT)
         system_prompt = ""
         prompt_file_val = os.getenv("AGY_SYSTEM_PROMPT_FILE", "").strip()
@@ -166,9 +159,6 @@ class Config:
             log_file=log_file,
             sessions_file=sessions_file,
             system_prompt=system_prompt,
-            whisper_model=whisper_model,
-            whisper_device=whisper_device,
-            whisper_compute_type=whisper_compute_type,
         )
 
     def is_token_valid(self) -> bool:

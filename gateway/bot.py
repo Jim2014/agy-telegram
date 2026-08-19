@@ -34,7 +34,6 @@ from gateway.message_formatter import (
 )
 from gateway.session_manager import ChatSession, SessionManager
 from gateway.telegram_client import TelegramClient
-from gateway.transcriber import VoiceTranscriber
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +63,6 @@ class AgyTelegramBot:
         self.config = config
         self.client = TelegramClient(bot_token=config.bot_token)
         self.session_manager = SessionManager(persistence_file=config.sessions_file)
-        self.transcriber = VoiceTranscriber(
-            model_size=config.whisper_model,
-            device=config.whisper_device,
-            compute_type=config.whisper_compute_type,
-        )
         self.active_bridges: Dict[int, AgyBridge] = {}
         self.running = False
         self.bot_info: Dict[str, Any] = {}
@@ -1173,71 +1167,40 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
 
         abs_path = str(saved_path.resolve())
 
-        # Transcribe audio using faster-whisper
-        transcribed_text: Optional[str] = None
-        try:
-            transcribed_text = await self.transcriber.transcribe(saved_path)
-        except Exception as e:
-            logger.warning("Voice transcription failed for audio %s: %s", abs_path, e)
+        # Construct prompt for agy
+        prompt_lines = [
+            "🎙️ [User Voice Command]",
+            "The user sent a voice instruction in Telegram.",
+            f"• Local Audio File Path: {abs_path}",
+            f"• Duration: {duration}s",
+            f"• MIME Type: {mime_type}",
+        ]
+        if caption:
+            prompt_lines.append(f"• Accompanying Caption: {caption}")
+        prompt_lines.append("")
+        prompt_lines.append(
+            "Please inspect and transcribe/listen to this audio file to understand the user's instructions, and then execute the requested task."
+        )
+        prompt_text = "\n".join(prompt_lines)
 
-        if transcribed_text:
-            logger.info("Transcribed voice message for chat %s: '%s'", chat_id, transcribed_text[:80])
-            user_instruction = transcribed_text
-            if caption:
-                user_instruction = f"{transcribed_text}\n\n[Caption: {caption}]"
+        # Check if session is currently busy -> steer into active session
+        session = self.session_manager.get_session(chat_id)
+        if session.is_busy and chat_id in self.active_bridges:
+            steered = await self.active_bridges[chat_id].steer(prompt_text)
+            if steered:
+                dur_text = f" ({duration}s)" if duration else ""
+                await self._safe_send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"🎯 <b>Steered voice instruction{dur_text} into active session!</b>\n"
+                        f"• <b>Audio File:</b> <code>{escape_html(abs_path)}</code>"
+                    ),
+                    reply_to_message_id=message_id,
+                )
+                return
 
-            # Check if session is currently busy -> steer into active session
-            session = self.session_manager.get_session(chat_id)
-            if session.is_busy and chat_id in self.active_bridges:
-                steer_msg = f"🎙️ [Voice Steering]: {user_instruction}"
-                steered = await self.active_bridges[chat_id].steer(steer_msg)
-                if steered:
-                    dur_text = f" ({duration}s)" if duration else ""
-                    await self._safe_send_message(
-                        chat_id=chat_id,
-                        text=(
-                            f"🎯 <b>Steered voice instruction{dur_text}:</b>\n"
-                            f"<i>\"{escape_html(user_instruction)}\"</i>"
-                        ),
-                        reply_to_message_id=message_id,
-                    )
-                    return
-
-            # Execute transcribed prompt directly through agy
-            await self.handle_prompt(chat_id, user_instruction, message_id)
-        else:
-            # Fallback if transcription is unavailable or failed
-            prompt_lines = [
-                "🎙️ [User Voice Command]",
-                "The user sent a voice instruction in Telegram.",
-                f"• Local Audio File Path: {abs_path}",
-                f"• Duration: {duration}s",
-                f"• MIME Type: {mime_type}",
-            ]
-            if caption:
-                prompt_lines.append(f"• Accompanying Caption: {caption}")
-            prompt_lines.append("")
-            prompt_lines.append(
-                "Please inspect and transcribe/listen to this audio file to understand the user's instructions, and then execute the requested task."
-            )
-            prompt_text = "\n".join(prompt_lines)
-
-            session = self.session_manager.get_session(chat_id)
-            if session.is_busy and chat_id in self.active_bridges:
-                steered = await self.active_bridges[chat_id].steer(prompt_text)
-                if steered:
-                    dur_text = f" ({duration}s)" if duration else ""
-                    await self._safe_send_message(
-                        chat_id=chat_id,
-                        text=(
-                            f"🎯 <b>Steered voice instruction{dur_text} into active session!</b>\n"
-                            f"• <b>Audio File:</b> <code>{escape_html(abs_path)}</code>"
-                        ),
-                        reply_to_message_id=message_id,
-                    )
-                    return
-
-            await self.handle_prompt(chat_id, prompt_text, message_id)
+        # Execute prompt through agy
+        await self.handle_prompt(chat_id, prompt_text, message_id)
 
     async def handle_document_message(
         self,

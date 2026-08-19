@@ -18,9 +18,13 @@ PIDFILE="runtime/gateway.pid"
 LEGACY_PIDFILE="gateway.pid"
 WATCHDOG_PIDFILE="runtime/watchdog.pid"
 
-# Determine python command (venv, conda, or system python)
-if [ -x "./venv/bin/python" ]; then
+# Determine python command (prioritize agy-telegram conda env, venv, or system python)
+if [ -x "/opt/homebrew/Caskroom/miniconda/base/envs/agy-telegram/bin/python" ]; then
+    PY_BIN="/opt/homebrew/Caskroom/miniconda/base/envs/agy-telegram/bin/python"
+elif [ -x "./venv/bin/python" ]; then
     PY_BIN="./venv/bin/python"
+elif command -v conda >/dev/null 2>&1 && conda env list 2>/dev/null | grep -q "agy-telegram"; then
+    PY_BIN="$(conda info --base 2>/dev/null)/envs/agy-telegram/bin/python"
 elif command -v python3 >/dev/null 2>&1; then
     PY_BIN="python3"
 else
