@@ -212,11 +212,19 @@ class SessionManager:
         turn_duration: Optional[float] = None,
         session_total_tokens: Optional[int] = None,
         session_total_thinking: Optional[int] = None,
+        **kwargs: Any,
     ) -> None:
         """Record per-turn metrics and update cumulative session stats."""
         session = self.get_session(chat_id)
         if not session.active_project or session.active_project not in session.projects:
             return
+
+        if turn_tokens is None and "total_tokens" in kwargs:
+            turn_tokens = kwargs["total_tokens"]
+        if turn_thinking is None and "thinking_tokens" in kwargs:
+            turn_thinking = kwargs["thinking_tokens"]
+        if turn_duration is None and "duration_seconds" in kwargs:
+            turn_duration = kwargs["duration_seconds"]
 
         proj = session.projects[session.active_project]
         if "stats" not in proj or not isinstance(proj["stats"], dict):

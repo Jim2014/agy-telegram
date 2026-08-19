@@ -300,8 +300,10 @@ def format_final_result(
     return balance_telegram_html(formatted_body.strip() + footer)
 
 
-def split_text_chunks(text: str, chunk_size: int = MAX_TELEGRAM_MESSAGE_LEN) -> List[str]:
+def split_text_chunks(text: str, chunk_size: int = MAX_TELEGRAM_MESSAGE_LEN, **kwargs: Any) -> List[str]:
     """Split long message text into safe chunks under chunk_size with balanced tags."""
+    if "max_chunk_size" in kwargs:
+        chunk_size = kwargs["max_chunk_size"]
     if len(text) <= chunk_size:
         return [balance_telegram_html(text)]
 

@@ -276,14 +276,19 @@ tail -f -n 50 runtime/watchdog.log
 
 ## 架构与模块说明
 
-每个 Python 模块均设计为高内聚、低耦合，且均支持独立命令行测试（规则 6）：
+每个 Python 模块均设计为高内聚、单一职责，且均支持独立命令行测试（规则 6）：
 
 - `gateway/config.py` (`python -m gateway.config`): 配置加载与校验，包含 `DEFAULT_SYSTEM_PROMPT` 定义与 `AGY_SYSTEM_PROMPT` / `AGY_SYSTEM_PROMPT_FILE` 覆盖解析。
-- `gateway/session_manager.py` (`python -m gateway.session_manager`): 会话状态管理与持久化 (`runtime/sessions.json`)。
-- `gateway/message_formatter.py` (`python -m gateway.message_formatter`): Markdown 到 Telegram 原生富文本 HTML 转换、`[AGY_FILE]` 显式协议解析与提取、移动优先独立 HTML 报告生成（Diff 染色高亮、深浅色自适应）与分块截断。
+- `gateway/session_manager.py` (`python -m gateway.session_manager`): 会话状态管理与多项目持久化 (`runtime/sessions.json`)。
+- `gateway/ui_keyboards.py` (`python -m gateway.ui_keyboards`): 交互式内联键盘构建器（多项目切换面板、模型切换、推理强度调节）。
+- `gateway/media_handlers.py` (`python -m gateway.media_handlers`): 语音消息与文件附件本地下载与转发调度（自动保存至 `runtime/voice/` 与 `runtime/documents/` 并转发路径给 agy，支持中途 Steering）。
+- `gateway/commands.py` (`python -m gateway.commands`): 全部 14 个斜杠命令的业务逻辑与交互式 Callback 回调分发。
+- `gateway/dir_tree.py` (`python -m gateway.dir_tree`): 工作区目录树递归扫描与独立交互式 HTML 文件导航器生成。
+- `gateway/file_renderers.py` (`python -m gateway.file_renderers`): 代码、Markdown、Diff、CSV 表格等多类型文件的 HTML 渲染。
+- `gateway/message_formatter.py` (`python -m gateway.message_formatter`): Markdown 到 Telegram 原生富文本 HTML 转换、`[AGY_FILE]` 显式协议解析与提取、移动优先独立 HTML 报告生成与分块截断。
 - `gateway/agy_bridge.py` (`python -m gateway.agy_bridge "<prompt>"`): `agy` 子进程异步双向通信、`stream-json` 双向流解析、首轮系统提示词精准注入、Steering 注入与进程生命周期管理。
 - `gateway/telegram_client.py` (`python -m gateway.telegram_client`): 异步 Telegram Bot API 客户端（Long polling、流式编辑、`sendDocument` 文件多部件上传、429 限流退避）。
-- `gateway/bot.py` (`python -m gateway.bot`): 调度中心、斜杠命令路由、系统提示词注入调度、Steering 路由、`[AGY_FILE]` 显式多文件导出与启发式兜底导出调度。
+- `gateway/bot.py` (`python -m gateway.bot`): 调度核心引擎、Telegram 长轮询事件分发、流式桥接生命周期与异常保护。
 - `main.py` (`python main.py`): 启动入口与 CLI 参数控制。
 
 ---
@@ -298,13 +303,16 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-测试覆盖范围（66 项全部通过）：
+测试覆盖范围（97 项全部通过）：
 - `test_config.py`: 配置解析、Token 格式验证、白名单过滤、默认 runtime 路径、默认系统提示词内容校验、环境变量及文件覆盖测试
-- `test_session_manager.py`: 会话 CRUD、持久化与恢复、并发状态保护、Legacy 迁移
+- `test_session_manager.py`: 会话 CRUD、持久化与恢复、并发状态保护、Legacy 迁移、累计 Token 与耗时统计
+- `test_ui_keyboards.py`: 多项目内联键盘、模型选择菜单、推理强度切换菜单渲染
 - `test_message_formatter.py`: HTML 实体转义、Markdown 转 Telegram HTML、代码高亮、标签自闭合、表格转换、独立移动 HTML 文档导出、文件导出条件判断、`sanitize_filename`、`detect_content_mode`、`parse_agy_file_block`、`extract_agy_file_blocks`、`render_agy_file` 三种模式（Markdown / Raw HTML / File Path）、移动端视口与响应式元素验证
+- `test_dir_tree.py`: 目录树扫描、文件大小格式化与独立 HTML 导航器生成
+- `test_file_renderers.py`: 代码高亮转换、Markdown 渲染、Diff 补丁视图、CSV 响应式表格渲染与二进制回退
 - `test_agy_bridge.py`: 命令构建、stream-json 协议解析、Mock 管道流、首轮系统提示词精准注入、次轮跳过注入、`steer()` 注入与 `is_running()` 状态判断
-- `test_telegram_client.py`: API 调用、HTML 实体解析失败自动降级、304 抑制、`send_document` 多部件上传
-- `test_bot.py`: 所有斜杠命令路由、未授权拦截、流式处理管线、首轮系统提示词注入与次轮多轮会话传递、`/steer` 引导、`/file` 文件发送、`/export` 导出、代码 Diff 启发式自动生成 HTML 附件、`[AGY_FILE]` 显式协议导出（Markdown / Raw HTML / File Path / Missing File / 多文件）、`/stop` 中断、Telegram 网络异常抗逆与自动降级保护
+- `test_telegram_client.py`: API 调用、HTML 实体解析失败自动降级、304 抑制、`send_document` 多部件上传、语音文件下载
+- `test_bot.py`: 所有斜杠命令路由、未授权拦截、流式处理管线、语音笔记/音频接收、文件附件处理、中途 Steering 注入、`/dir` 目录浏览、`/file` 文件发送、`/export` 导出、代码 Diff 启发式自动生成 HTML 附件、`[AGY_FILE]` 显式协议导出（Markdown / Raw HTML / File Path / Missing File / 多文件）、`/stop` 中断、Telegram 网络异常抗逆与自动降级保护
 - `test_smoke_agy.py`: 真实的 `agy` CLI 联调冒烟测试
 
 
