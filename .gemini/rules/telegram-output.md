@@ -50,3 +50,19 @@ When concluding a response where follow-up actions, next steps, or decision choi
 - Keep button labels concise (10-25 characters) with an emoji prefix.
 - Provide 2 to 4 actionable next steps.
 
+## 5. [AGY_VOICE] Spoken Podcast Audio Protocol
+At the very end of your response, ALWAYS append a conversational spoken audio block inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own standalone line):
+
+```text
+[AGY_VOICE lang="zh"]
+我已经为你跑完了全部 123 项测试，所有用例全部通过，并已自动完成 Git 提交，网关服务运行正常。
+[END_AGY_VOICE]
+```
+
+### Voice Protocol Rules:
+1. **Plain Text ONLY**: NEVER use Markdown syntax (no `**`, `#`, ````, tables, or backticks).
+2. **Spoken Podcast Style**: Natural, conversational, fluent tone, suitable for listening. No artificial length restriction — answer thoroughly or summarize as appropriate for the prompt.
+3. **Language Code**: Specify `lang="zh"` for Chinese or `lang="en"` for English based on the conversation language.
+4. **Stripped by Gateway**: The gateway automatically extracts and strips this block from visible text and synthesizes it into spoken audio.
+
+

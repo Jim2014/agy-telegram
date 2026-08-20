@@ -154,5 +154,24 @@ def test_build_pinned_banner_keyboard():
     assert rows[1][1]["text"] == "📖 Help"
 
 
+def test_build_voice_keyboard_and_play_button():
+    from gateway.ui_keyboards import build_voice_keyboard, build_voice_play_button
+
+    # 1. Voice keyboard with autogen active
+    text, kb = build_voice_keyboard("autogen")
+    assert "语音播报设置" in text
+    assert "inline_keyboard" in kb
+    rows = kb["inline_keyboard"]
+    assert len(rows) == 4
+    assert "🔘" in rows[1][0]["text"]  # autogen has active radio
+    assert "⚪" in rows[0][0]["text"]  # disable is inactive
+
+    # 2. Voice play button
+    btn = build_voice_play_button("v_123_456")
+    assert btn["text"] == "🔊 播放语音"
+    assert btn["callback_data"] == "voice:v_123_456"
+
+
+
 
 

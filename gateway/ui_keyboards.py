@@ -225,6 +225,9 @@ def build_help_keyboard() -> Dict[str, Any]:
                 {"text": "📁 File Tree", "callback_data": "dir:show"},
                 {"text": "📄 Export Report", "callback_data": "export:show"},
             ],
+            [
+                {"text": "🎙️ Voice Settings", "callback_data": "voice:show"},
+            ],
         ]
     }
 
@@ -384,6 +387,43 @@ def build_webapp_viewer_button(
     if url.startswith("https://"):
         return {"text": title, "web_app": {"url": url}}
     return {"text": title, "url": url}
+
+
+def build_voice_keyboard(current_mode: str) -> Tuple[str, Dict[str, Any]]:
+    """
+    Build interactive inline keyboard for selecting TTS Voice Broadcast mode.
+    Options: disable, autogen (button on-demand), autoplay (auto send voice note).
+    """
+    mode = current_mode.lower() if current_mode else "autogen"
+    modes = [
+        ("disable", "🔴 禁用 (Disable)"),
+        ("autogen", "🔊 按需播放 (Autogen)"),
+        ("autoplay", "⚡ 自动播放 (Autoplay)"),
+    ]
+    buttons = []
+    for m_id, label in modes:
+        prefix = "🔘 " if m_id == mode else "⚪ "
+        buttons.append([{"text": f"{prefix}{label}", "callback_data": f"tts:{m_id}"}])
+
+    buttons.append([{"text": "📖 返回帮助", "callback_data": "help:show"}])
+
+    text = (
+        "🎙️ <b>语音播报设置 (Voice Broadcast Settings)</b>\n\n"
+        f"• <b>当前模式:</b> <code>{mode}</code>\n"
+        "• <b>引擎:</b> Edge-TTS (微软神经网络音色) + macOS 离线双保底\n"
+        "• <b>语言自适应:</b> 自动识别中英文 (中文晓晓 / 英文 Jenny)\n\n"
+        "<b>可用模式说明:</b>\n"
+        "• <b>禁用 (Disable):</b> 完全关闭语音摘要生成\n"
+        "• <b>按需播放 (Autogen):</b> 回答末尾添加 <code>[ 🔊 播放语音 ]</code> 按钮，点击即听\n"
+        "• <b>自动播放 (Autoplay):</b> 每次生成文本回答后，立即自动发送原生语音条\n\n"
+        "💡 <i>点击下方按钮切换配置，或在聊天中发送 <code>/voice &lt;disable|autogen|autoplay&gt;</code></i>"
+    )
+    return text, {"inline_keyboard": buttons}
+
+
+def build_voice_play_button(voice_id: str) -> Dict[str, Any]:
+    """Build an inline button to play/send the voice summary."""
+    return {"text": "🔊 播放语音", "callback_data": f"voice:{voice_id}"}
 
 
 if __name__ == "__main__":

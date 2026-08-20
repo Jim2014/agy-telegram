@@ -331,6 +331,43 @@ async def test_telegram_client_pin_and_unpin_chat_message(monkeypatch):
     await client.close()
 
 
+@pytest.mark.asyncio
+async def test_telegram_client_send_voice(monkeypatch):
+    client = TelegramClient("12345:TESTTOKEN")
+    captured_data = {}
+
+    async def mock_post(url, **kwargs):
+        req = httpx.Request("POST", url)
+        captured_data["url"] = url
+        captured_data["data"] = kwargs.get("data")
+        captured_data["files"] = kwargs.get("files")
+        return httpx.Response(
+            200,
+            json={"ok": True, "result": {"message_id": 888, "voice": {"duration": 5}}},
+            request=req,
+        )
+
+    mock_client = httpx.AsyncClient()
+    monkeypatch.setattr(mock_client, "post", mock_post)
+    client._client = mock_client
+
+    res = await client.send_voice(
+        chat_id=123,
+        voice=b"OGG_OPUS_BYTES",
+        filename="custom_voice.ogg",
+        caption="🎙️ Voice note",
+        reply_to_message_id=456,
+    )
+    assert res["message_id"] == 888
+    assert captured_data["data"]["chat_id"] == "123"
+    assert captured_data["data"]["caption"] == "🎙️ Voice note"
+    assert captured_data["data"]["reply_to_message_id"] == "456"
+    assert "voice" in captured_data["files"]
+    assert captured_data["files"]["voice"][0] == "custom_voice.ogg"
+    await client.close()
+
+
+
 
 
 

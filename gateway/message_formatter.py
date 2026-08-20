@@ -1061,6 +1061,47 @@ def extract_agy_action_blocks(text: str) -> Tuple[str, List[AgyActionItem]]:
     return cleaned, actions
 
 
+@dataclass
+class AgyVoiceBlock:
+    """Spoken voice summary payload from [AGY_VOICE] protocol."""
+
+    text: str
+    lang: str = "zh"  # "zh" | "en"
+
+
+AGY_VOICE_PATTERN = re.compile(
+    r"\[AGY_VOICE(?:\s+lang=[\"']?([a-zA-Z_-]+)[\"']?)?\](.*?)\[END_AGY_VOICE\]",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def extract_agy_voice_block(text: str) -> Tuple[str, Optional[AgyVoiceBlock]]:
+    """
+    Extract explicit [AGY_VOICE lang="zh|en"]...[END_AGY_VOICE] block from text.
+    The block is completely removed from the visible text so it does not affect formatting.
+    Returns:
+      (cleaned_text, voice_block_or_None)
+    """
+    if not text or "[AGY_VOICE" not in text:
+        return text, None
+
+    voice_block: Optional[AgyVoiceBlock] = None
+
+    def repl_voice(m: re.Match) -> str:
+        nonlocal voice_block
+        lang = m.group(1) or "zh"
+        body = m.group(2).strip()
+        if body:
+            # Strip any accidental markdown backticks or bold/italic markers
+            clean_body = re.sub(r"[`*_#~]", "", body)
+            voice_block = AgyVoiceBlock(text=clean_body.strip(), lang=lang.lower()[:2])
+        return ""
+
+    cleaned = AGY_VOICE_PATTERN.sub(repl_voice, text)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned, voice_block
+
+
 def wrap_raw_html_for_mobile(
     title: str,
     raw_html_content: str,

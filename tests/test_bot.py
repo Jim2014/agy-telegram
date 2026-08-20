@@ -28,6 +28,7 @@ def mock_bot(tmp_path):
     bot.client.pin_chat_message = AsyncMock(return_value=True)
     bot.client.unpin_chat_message = AsyncMock(return_value=True)
     bot.client.set_message_reaction = AsyncMock(return_value=True)
+    bot.client.send_voice = AsyncMock(return_value={"message_id": 1005, "voice": {"duration": 5}})
     return bot
 
 
@@ -1157,6 +1158,51 @@ async def test_bot_update_pinned_banner_and_pin_command(mock_bot):
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/pin", "message_id": 88}})
     assert mock_bot.client.send_message.called
     assert "Pinned workspace banner updated" in mock_bot.client.send_message.call_args[1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_bot_voice_command_and_voice_summary_flow(mock_bot, monkeypatch):
+    session = mock_bot.session_manager.get_session(100)
+
+    # 1. Test /voice command display
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/voice", "message_id": 101}})
+    assert mock_bot.client.send_message.called
+    assert "语音播报设置" in mock_bot.client.send_message.call_args[1]["text"]
+
+    # 2. Test /voice autoplay setting
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/voice autoplay", "message_id": 102}})
+    assert session.tts_mode == "autoplay"
+
+    # 3. Test prompt response with [AGY_VOICE] block in autogen mode (button generation)
+    session.tts_mode = "autogen"
+    voice_resp = """Here is the written report.
+
+[AGY_VOICE lang="zh"]
+我已经为你完成了所有的代码修改。
+[END_AGY_VOICE]
+"""
+    async def mock_stream(self, prompt, **kwargs):
+        yield AgyEvent(type="init", conversation_id="conv-v-1")
+        yield AgyEvent(type="result", response=voice_resp, duration_seconds=1.0, usage={"total_tokens": 100})
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream)
+    mock_bot.client.edit_message_text.reset_mock()
+
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "explain architecture", "message_id": 103}})
+
+    # Verify [AGY_VOICE] is stripped from visible text
+    edit_call = mock_bot.client.edit_message_text.call_args[1]
+    assert "[AGY_VOICE" not in edit_call["text"]
+    assert "Here is the written report" in edit_call["text"]
+
+    # Verify play button is attached
+    markup = edit_call.get("reply_markup")
+    assert markup is not None
+    buttons = markup["inline_keyboard"]
+    assert any("🔊 播放语音" in btn["text"] for row in buttons for btn in row)
+
 
 
 

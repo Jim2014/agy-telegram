@@ -494,4 +494,49 @@ def test_format_pinned_banner():
     assert "⚡ <b>Running...</b>" in banner_busy
 
 
+def test_extract_agy_voice_block():
+    from gateway.message_formatter import extract_agy_voice_block
+
+    # 1. Text with Chinese voice block
+    raw_zh = """
+Here is the detailed technical report.
+```python
+def foo():
+    pass
+```
+
+[AGY_VOICE lang="zh"]
+我已经为你跑完了全部 116 项单元测试，所有用例全部通过，并已自动完成 Git 提交。
+[END_AGY_VOICE]
+"""
+    cleaned_zh, voice_zh = extract_agy_voice_block(raw_zh)
+    assert "[AGY_VOICE" not in cleaned_zh
+    assert "[END_AGY_VOICE]" not in cleaned_zh
+    assert "Here is the detailed technical report" in cleaned_zh
+    assert voice_zh is not None
+    assert voice_zh.lang == "zh"
+    assert "116 项单元测试" in voice_zh.text
+
+    # 2. Text with English voice block
+    raw_en = """
+Analysis completed.
+
+[AGY_VOICE lang="en"]
+All tests passed successfully and changes have been committed.
+[END_AGY_VOICE]
+"""
+    cleaned_en, voice_en = extract_agy_voice_block(raw_en)
+    assert "[AGY_VOICE" not in cleaned_en
+    assert voice_en is not None
+    assert voice_en.lang == "en"
+    assert "All tests passed" in voice_en.text
+
+    # 3. Text without voice block
+    raw_none = "Just a regular plain text reply without any voice block."
+    cleaned_none, voice_none = extract_agy_voice_block(raw_none)
+    assert cleaned_none == raw_none
+    assert voice_none is None
+
+
+
 

@@ -44,8 +44,17 @@ This document outlines the milestones and roadmap for integrating new Google Ant
 ### 📋 Milestone 6: Telegram Mini App (Web App) Viewer & Advanced UI Extensions
 - [x] **6.1 Telegram Mini App (Web App) In-Chat Popup Viewer**: Integrated a lightweight zero-dependency embedded WebApp server with `WebAppInfo(url=...)` enabling instant slide-up viewing of HTML reports, Git diffs, and directory navigators directly inside Telegram without file downloading.
 - [x] **6.2 Dynamic Input Field Placeholder State Machine**: Persistent reply keyboard with dynamic `input_field_placeholder` and quick navigation shortcuts.
-- [ ] **6.3 Pinned Project & Session Header Banner (`pinChatMessage`)**: Maintain a persistent pinned banner at the top of the chat showing the active project workspace, current model, reasoning effort, and quick navigation shortcuts.
+- [x] **6.3 Pinned Project & Session Header Banner (`pinChatMessage`)**: Maintain a persistent pinned banner at the top of the chat showing the active project workspace, current model, reasoning effort, and quick navigation shortcuts.
 - [ ] **6.4 Supergroup Forum Topics Multi-Project Mapping**: Automatically bind separate projects to distinct Telegram Forum Topics/threads (`message_thread_id`) when used in group workspaces.
+
+---
+
+### 📋 Milestone 7: Voice Broadcast & Spoken Audio Subsystem (Edge-TTS + Fallback)
+- [x] **7.1 `[AGY_VOICE]` Spoken Audio Protocol**: Added system prompt guidance and protocol parser for clean separation of spoken podcast narration from technical text/HTML formatting without length restrictions.
+- [x] **7.2 Edge-TTS & Local Fallback Engine**: High-fidelity neural voice synthesis (`zh-CN-XiaoxiaoNeural` / `en-US-JennyNeural`) generating native OGG Opus audio for Telegram `sendVoice` with graceful macOS `say` + `ffmpeg` offline fallback.
+- [x] **7.3 Interactive `/voice` Mode Switcher & On-Demand Playback**: Support `/voice disable`, `/voice autogen` (with `[ 🔊 播放语音 ]` button), and `/voice autoplay` modes with session persistence.
+- [x] **7.4 Complete Test Coverage**: 123/123 unit and integration tests passing.
+
 
 ---
 

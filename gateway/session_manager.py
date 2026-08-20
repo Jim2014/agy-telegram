@@ -29,6 +29,8 @@ class ChatSession:
     pending_decisions: List[str] = field(default_factory=list)
     pending_actions: List[Dict[str, str]] = field(default_factory=list)
     pinned_message_id: Optional[int] = None
+    tts_mode: str = "autogen"  # "disable" | "autogen" | "autoplay"
+    pending_voice_data: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     @property
     def conversation_id(self) -> Optional[str]:
@@ -61,6 +63,7 @@ class ChatSession:
             "command_stats": self.command_stats,
             "command_last_used": self.command_last_used,
             "pinned_message_id": self.pinned_message_id,
+            "tts_mode": self.tts_mode,
         }
 
     @classmethod
@@ -96,6 +99,7 @@ class ChatSession:
             command_stats=data.get("command_stats", {}),
             command_last_used=data.get("command_last_used", {}),
             pinned_message_id=data.get("pinned_message_id"),
+            tts_mode=data.get("tts_mode", "autogen"),
         )
 
 
@@ -335,6 +339,16 @@ class SessionManager:
                 session.effort = eff
         else:
             session.effort = None
+        session.last_active_at = time.time()
+        self.save()
+
+    def set_tts_mode(self, chat_id: int, mode: str) -> None:
+        """Set TTS voice broadcast mode ('disable', 'autogen', 'autoplay')."""
+        session = self.get_session(chat_id)
+        if mode in ("disable", "autogen", "autoplay"):
+            session.tts_mode = mode
+        else:
+            session.tts_mode = "autogen"
         session.last_active_at = time.time()
         self.save()
 

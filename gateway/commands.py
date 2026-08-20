@@ -27,6 +27,7 @@ from gateway.ui_keyboards import (
     build_projects_keyboard,
     build_skills_keyboard,
     build_usage_keyboard,
+    build_voice_keyboard,
     build_webapp_viewer_button,
 )
 
@@ -368,6 +369,30 @@ async def handle_cmd_pin(bot: Any, chat_id: int, reply_to_id: Optional[int] = No
             text="⚠️ Failed to pin banner. Please check bot permissions in chat.",
             reply_to_message_id=reply_to_id,
         )
+
+
+async def handle_cmd_voice(bot: Any, chat_id: int, arg: str = "", edit_message_id: Optional[int] = None) -> None:
+    """Configure voice podcast summary mode (/voice disable | autogen | autoplay)."""
+    session = bot.session_manager.get_session(chat_id)
+    if arg and arg.lower() != "show":
+        val = arg.strip().lower()
+        if val in ("disable", "autogen", "autoplay", "off", "on"):
+            mode = "disable" if val in ("disable", "off") else ("autoplay" if val == "autoplay" else "autogen")
+            bot.session_manager.set_tts_mode(chat_id, mode)
+        else:
+            await bot._safe_send_message(
+                chat_id=chat_id,
+                text="⚠️ Usage: <code>/voice disable</code> | <code>/voice autogen</code> | <code>/voice autoplay</code>",
+            )
+            return
+
+    cur_mode = session.tts_mode or getattr(bot.config, "tts_mode", "autogen")
+    text, reply_markup = build_voice_keyboard(cur_mode)
+
+    if edit_message_id:
+        await bot._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
+    else:
+        await bot._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
 
 
 async def handle_cmd_dir(bot: Any, chat_id: int, arg: str = "", reply_to_id: Optional[int] = None) -> None:
@@ -985,6 +1010,32 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
     elif data == "help:show":
         await bot._safe_answer_callback_query(cq_id)
         await handle_cmd_help(bot, chat_id, edit_message_id=message_id)
+
+    elif data == "voice:show":
+        await bot._safe_answer_callback_query(cq_id)
+        await handle_cmd_voice(bot, chat_id, edit_message_id=message_id)
+
+    elif data.startswith("tts:"):
+        tts_mode_val = data[4:].strip()
+        await handle_cmd_voice(bot, chat_id, arg=tts_mode_val, edit_message_id=message_id)
+        await bot._safe_answer_callback_query(cq_id, text=f"Voice mode: {tts_mode_val}")
+
+    elif data.startswith("voice:"):
+        voice_id = data[6:].strip()
+        voice_info = session.pending_voice_data.get(voice_id)
+        if voice_info:
+            await bot._safe_answer_callback_query(cq_id, text="🔊 正在生成并发送语音...")
+            if hasattr(bot, "_generate_and_send_voice"):
+                asyncio.create_task(
+                    bot._generate_and_send_voice(
+                        chat_id,
+                        voice_info["text"],
+                        voice_info.get("lang", "zh"),
+                        reply_to_id=message_id,
+                    )
+                )
+        else:
+            await bot._safe_answer_callback_query(cq_id, text="⚠️ 语音已过期或不可用", show_alert=True)
 
     elif data == "dir:show":
         await bot._safe_answer_callback_query(cq_id)

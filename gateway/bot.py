@@ -36,6 +36,7 @@ from gateway.commands import (
     handle_cmd_steer as cmd_handle_steer,
     handle_cmd_stop as cmd_handle_stop,
     handle_cmd_usage as cmd_handle_usage,
+    handle_cmd_voice as cmd_handle_voice,
 )
 from gateway.config import Config
 from gateway.media_handlers import (
@@ -45,9 +46,11 @@ from gateway.media_handlers import (
 from gateway.message_formatter import (
     AgyActionItem,
     AgyFileBlock,
+    AgyVoiceBlock,
     escape_html,
     extract_agy_action_blocks,
     extract_agy_file_blocks,
+    extract_agy_voice_block,
     format_final_result,
     format_pinned_banner,
     format_streaming_message,
@@ -65,8 +68,11 @@ from gateway.ui_keyboards import (
     build_decision_keyboard,
     build_pinned_banner_keyboard,
     build_reply_keyboard,
+    build_voice_keyboard,
+    build_voice_play_button,
     build_webapp_viewer_button,
 )
+from gateway.voice_tts import synthesize_voice_ogg
 from gateway.webapp_server import WebAppServer
 
 logger = logging.getLogger(__name__)
@@ -230,6 +236,47 @@ class AgyTelegramBot:
         except Exception as e:
             logger.warning("Telegram send_document failed for chat %s: %s", chat_id, e)
             return None
+
+    async def _safe_send_voice(
+        self,
+        chat_id: int,
+        voice: bytes | str | Path,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Send native voice note safely, catching all Telegram / network errors."""
+        try:
+            return await self.client.send_voice(
+                chat_id=chat_id,
+                voice=voice,
+                **kwargs,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("Telegram send_voice failed for chat %s: %s", chat_id, e)
+            return None
+
+    async def _generate_and_send_voice(
+        self,
+        chat_id: int,
+        text: str,
+        lang: str = "zh",
+        reply_to_id: Optional[int] = None,
+    ) -> bool:
+        """Synthesize text into speech and send native Telegram voice note."""
+        try:
+            await self._safe_send_chat_action(chat_id, "record_voice")
+            voice_path = await synthesize_voice_ogg(text=text, lang=lang)
+            if voice_path and voice_path.is_file():
+                res = await self._safe_send_voice(
+                    chat_id=chat_id,
+                    voice=voice_path,
+                    reply_to_message_id=reply_to_id,
+                )
+                return bool(res)
+        except Exception as e:
+            logger.warning("Failed to generate and send voice note for chat %s: %s", chat_id, e)
+        return False
 
     async def _safe_send_chat_action(
         self,
@@ -504,6 +551,8 @@ class AgyTelegramBot:
                 text="📌 <b>Pinned workspace banner updated and pinned to top of chat.</b>",
                 reply_to_message_id=message_id,
             )
+        elif clean_cmd in ("/voice", "/tts", "/audio"):
+            await self.handle_cmd_voice(chat_id, arg, message_id=message_id)
         elif clean_cmd == "/stop":
             await self.handle_cmd_stop(chat_id)
         else:
@@ -513,6 +562,9 @@ class AgyTelegramBot:
             )
 
     # Backward-compatible command and media delegation wrappers
+    async def handle_cmd_voice(self, chat_id: int, arg: str = "", message_id: Optional[int] = None, edit_message_id: Optional[int] = None) -> None:
+        await cmd_handle_voice(self, chat_id, arg, edit_message_id=edit_message_id)
+
     async def handle_cmd_help(self, chat_id: int) -> None:
         await cmd_handle_help(self, chat_id)
 
@@ -834,6 +886,29 @@ class AgyTelegramBot:
                 err_block = "\n".join([f"⚠️ <i>{escape_html(e)}</i>" for e in export_errors])
                 clean_text = f"{clean_text}\n\n{err_block}".strip() if clean_text else err_block
 
+            # Extract [AGY_VOICE] spoken summary from clean_text
+            clean_text, voice_block = extract_agy_voice_block(clean_text)
+            effective_tts_mode = getattr(session, "tts_mode", None) or getattr(self.config, "tts_mode", "autogen")
+
+            voice_btn: Optional[Dict[str, Any]] = None
+            if voice_block and getattr(self.config, "tts_enabled", True) and effective_tts_mode != "disable":
+                voice_id = f"v_{chat_id}_{int(time.time())}_{len(session.pending_voice_data)}"
+                session.pending_voice_data[voice_id] = {
+                    "text": voice_block.text,
+                    "lang": voice_block.lang,
+                }
+                if effective_tts_mode == "autoplay":
+                    asyncio.create_task(
+                        self._generate_and_send_voice(
+                            chat_id=chat_id,
+                            text=voice_block.text,
+                            lang=voice_block.lang,
+                            reply_to_id=reply_to_id,
+                        )
+                    )
+                elif effective_tts_mode == "autogen":
+                    voice_btn = build_voice_play_button(voice_id)
+
             # Extract [AGY_ACTIONS] suggested next steps from clean_text
             clean_text, action_items = extract_agy_action_blocks(clean_text)
             actions_markup: Optional[Dict[str, Any]] = None
@@ -842,6 +917,12 @@ class AgyTelegramBot:
                 actions_markup = build_actions_keyboard(action_items)
             elif session.pending_decisions:
                 actions_markup = build_decision_keyboard(session.pending_decisions)
+
+            # Prepend voice play button if available
+            if voice_btn:
+                if actions_markup is None:
+                    actions_markup = {"inline_keyboard": []}
+                actions_markup["inline_keyboard"].insert(0, [voice_btn])
 
             final_formatted = format_final_result(
                 response_text=clean_text,

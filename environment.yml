@@ -11,4 +11,4 @@ dependencies:
       - pytest>=7.0.0
       - pytest-asyncio>=0.21.0
       - Pygments>=2.14.0
-
+      - edge-tts>=7.0.0

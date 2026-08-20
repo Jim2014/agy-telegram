@@ -325,6 +325,64 @@ class TelegramClient:
 
         return res_json.get("result", {})
 
+    async def send_voice(
+        self,
+        chat_id: int,
+        voice: bytes | str | Path,
+        filename: str = "voice.ogg",
+        caption: Optional[str] = None,
+        parse_mode: Optional[str] = "HTML",
+        duration: Optional[int] = None,
+        reply_to_message_id: Optional[int] = None,
+        reply_markup: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Send native Telegram voice note (.ogg opus format) via multipart/form-data upload."""
+        import json
+
+        client = await self.get_client()
+        url = f"{self.base_url}/sendVoice"
+
+        if isinstance(voice, Path):
+            with open(voice, "rb") as f:
+                content_bytes = f.read()
+        elif isinstance(voice, str):
+            if os.path.isfile(voice):
+                with open(voice, "rb") as f:
+                    content_bytes = f.read()
+            else:
+                content_bytes = voice.encode("utf-8")
+        else:
+            content_bytes = voice
+
+        data: Dict[str, Any] = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption
+            if parse_mode:
+                data["parse_mode"] = parse_mode
+        if duration is not None:
+            data["duration"] = str(duration)
+        if reply_to_message_id is not None:
+            data["reply_to_message_id"] = str(reply_to_message_id)
+        if reply_markup is not None:
+            data["reply_markup"] = json.dumps(reply_markup)
+
+        files = {"voice": (filename, content_bytes, "audio/ogg")}
+
+        try:
+            resp = await client.post(url, data=data, files=files, timeout=60.0)
+            res_json = resp.json()
+        except Exception as e:
+            logger.error("HTTP error calling sendVoice: %s", e)
+            raise
+
+        if not res_json.get("ok"):
+            err_code = res_json.get("error_code", 500)
+            desc = res_json.get("description", "Unknown error")
+            logger.error("Telegram sendVoice failed: %d - %s", err_code, desc)
+            raise TelegramAPIError(err_code, desc)
+
+        return res_json.get("result", {})
+
     async def send_chat_action(self, chat_id: int, action: str = "typing") -> bool:
         """Send chat action (e.g. typing, upload_document)."""
         try:

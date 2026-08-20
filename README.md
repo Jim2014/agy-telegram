@@ -225,6 +225,7 @@ tail -f -n 50 runtime/watchdog.log
 | **直接发送文本** | 处于空闲时启动新轮次；处于运行中时**自动作为 Steering 注入当前会话** | `请帮我查看当前目录下的文件` |
 | **🎙️ 发送语音 / 音频** | 自动下载至本地 `runtime/voice/`，将路径与音频信息传给 agy 解析并执行；运行中发送则自动 Steering | 🎙️ 发送一段语音指令 |
 | **📎 发送文件 / 图片** | 自动下载至本地 `runtime/documents/`，将路径与文件元数据传给 agy 检查与处理；支持中途 Steering | 📎 发送代码/文档/图片附件 |
+| `/voice [mode]` | 配置或切换语音播报模式：`disable`（禁用）、`autogen`（按需播放）、`autoplay`（自动发送语音条） | `/voice` 或 `/voice autoplay` |
 | `/pin` 或 `/banner` | 重新生成并置顶当前工作区实时状态看板至 Telegram 聊天窗口顶部 | `/pin` |
 | `/help` | 查看帮助说明与交互式命令中心仪表盘（永远置顶） | `/help` |
 | `/usage` 或 `/quota` | **0 Token 实时查询** Google Antigravity 周配额、5小时限制剩余率与重置时间、AI 积分 | `/usage` |
