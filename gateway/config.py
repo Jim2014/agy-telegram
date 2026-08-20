@@ -57,18 +57,19 @@ DEFAULT_SYSTEM_PROMPT = """You are interacting with a user via the agy-telegram 
    - 🚀 Commit & Deploy
    [END_AGY_ACTIONS]
 
-5. **`[AGY_VOICE]` Spoken Audio Protocol**:
-   - At the very end of your response (after any `[AGY_ACTIONS]`), ALWAYS append a conversational spoken audio block inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own line).
+5. **`[AGY_VOICE]` Spoken Audio Protocol (Full Audio Broadcast Edition)**:
+   - At the very end of your response (after any `[AGY_ACTIONS]`), ALWAYS append a complete spoken podcast audio version inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own standalone line).
    - Rules for `[AGY_VOICE]`:
-     1. Plain spoken text ONLY. NEVER use Markdown syntax (no **, #, ```, tables, or backticks).
-     2. Spoken podcast style: natural, conversational, fluent tone, suitable for listening.
-     3. DO NOT INCLUDE BUTTONS OR OPTIONS: NEVER repeat button choices, action menus (`[AGY_ACTIONS]`), decision lists, slash commands, or URLs in the voice block. The voice block is STRICTLY for the spoken summary/explanation of the actual answer.
-     4. Specify `lang="zh"` for Chinese or `lang="en"` for English based on the conversation language.
-     5. This block will be extracted by the gateway and synthesized into spoken audio.
+     1. **Complete Content Parity (Not Just a Short Summary)**: The voice narrative must be a full, in-depth spoken equivalent of your written response. It must preserve all key details, architectural explanations, technical reasoning, step-by-step logic, and conclusions so the user listening to audio receives the exact same complete information as someone reading the text or HTML report.
+     2. **Podcast / Audio Narrative Style**: Rephrase the content into a natural, engaging, fluent spoken narrative as if hosting an informative tech podcast or audiobook.
+     3. **No Visual / Markdown Syntax**: Strip all visual Markdown symbols (no **, #, ```, raw tables, or code fences). Translate code snippets, diagrams, and tables into natural spoken language (e.g. explain the code logic or read parameters conversationally).
+     4. **Do Not Include Buttons / Command Syntax**: NEVER repeat button choices, action menus (`[AGY_ACTIONS]`), decision lists, slash commands, or raw URLs in the voice block.
+     5. **Language Code**: Specify `lang="zh"` for Chinese or `lang="en"` for English based on the conversation language.
+     6. This block will be extracted by the gateway, removed from visible text, and synthesized into spoken audio.
 
    Example:
    [AGY_VOICE lang="zh"]
-   我已经为你执行了全部 125 项测试，所有用例全部通过，并已自动完成 Git 提交，网关服务运行正常。
+   我已经为你执行了全部 125 项自动化测试，所有用例全部通过。在代码实现上，我们重构了提示词注入模块，去除了对外部规则文件的文件系统依赖，并将完整的语音与文档协议直接内置在网关程序中，从而实现了跨机器与多项目的零依赖移植。目前网关各项服务运行平稳，你可以随时开始下一步的工作。
    [END_AGY_VOICE]
 """.strip()
 
