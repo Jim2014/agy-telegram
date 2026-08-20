@@ -76,6 +76,7 @@ from gateway.ui_keyboards import (
     build_actions_keyboard,
     build_adaptive_bot_commands,
     build_decision_keyboard,
+    build_ipc_accordion_keyboard,
     build_pinned_banner_keyboard,
     build_reply_keyboard,
     build_voice_keyboard,
@@ -357,6 +358,10 @@ class AgyTelegramBot:
         """Send a short 'gateway (re)started' notice to every known chat with a session."""
         started_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.started_at))
         sessions = getattr(self.session_manager, "_sessions", {})
+        for chat_id, session in sessions.items():
+            session.pinned_ipc_message_ids.clear()
+        self.session_manager.save()
+
         for chat_id, session in sessions.items():
             if not self.config.is_chat_allowed(chat_id):
                 continue
@@ -705,7 +710,7 @@ class AgyTelegramBot:
             target_proj_info = session.projects[target]
             target_path = target_proj_info.get("path") or self.config.agy_working_dir or os.getcwd()
 
-            # 1. Send or edit fixed single pinned accordion card for this target project
+            # 1. Unpin old card if present, send fresh card with inline unpin button and pin it
             log_ipc_event(active_proj, target, "DISPATCH", f"Task: {call.content[:100]} | hop={call.hop_count}")
             card_text = format_pinned_accordion_card(
                 target_project=target,
@@ -714,30 +719,27 @@ class AgyTelegramBot:
                 tools_log=[],
                 status_text="Starting background worker in workspace...",
             )
-            pin_msg_id = session.pinned_ipc_message_ids.get(target)
+            old_pin_id = session.pinned_ipc_message_ids.get(target)
+            if old_pin_id:
+                try:
+                    await self.client.unpin_chat_message(chat_id=chat_id, message_id=old_pin_id)
+                except Exception:
+                    pass
+
+            card_markup = build_ipc_accordion_keyboard(target)
+            pin_msg = await self._safe_send_message(
+                chat_id=chat_id,
+                text=card_text,
+                reply_markup=card_markup,
+            )
+            pin_msg_id = pin_msg.get("message_id") if pin_msg else None
+            session.pinned_ipc_message_ids[target] = pin_msg_id
+            self.session_manager.save()
             if pin_msg_id:
-                edited = await self._safe_edit_message_text(chat_id=chat_id, message_id=pin_msg_id, text=card_text)
-                if edited is not None:
-                    # Successfully edited existing card -> Repin to ensure it remains at the top even if user unpinned it
-                    try:
-                        await self.client.pin_chat_message(chat_id=chat_id, message_id=pin_msg_id, disable_notification=True)
-                    except Exception:
-                        pass
-                else:
-                    # Previous pin message for target was deleted; recreate and repin
-                    pin_msg = await self._safe_send_message(chat_id=chat_id, text=card_text)
-                    pin_msg_id = pin_msg.get("message_id") if pin_msg else None
-                    session.pinned_ipc_message_ids[target] = pin_msg_id
-                    self.session_manager.save()
-                    if pin_msg_id:
-                        await self.client.pin_chat_message(chat_id=chat_id, message_id=pin_msg_id, disable_notification=True)
-            else:
-                pin_msg = await self._safe_send_message(chat_id=chat_id, text=card_text)
-                pin_msg_id = pin_msg.get("message_id") if pin_msg else None
-                session.pinned_ipc_message_ids[target] = pin_msg_id
-                self.session_manager.save()
-                if pin_msg_id:
+                try:
                     await self.client.pin_chat_message(chat_id=chat_id, message_id=pin_msg_id, disable_notification=True)
+                except Exception:
+                    pass
 
             # 2. Run ephemeral worker in target workspace with clean isolated conversation
             envelope_prompt = format_incoming_envelope(
@@ -814,6 +816,7 @@ class AgyTelegramBot:
                             chat_id=chat_id,
                             message_id=pin_msg_id,
                             text=prog_card,
+                            reply_markup=card_markup,
                         )
                         last_card_edit = now
 
@@ -852,6 +855,7 @@ class AgyTelegramBot:
                     chat_id=chat_id,
                     message_id=pin_msg_id,
                     text=final_card,
+                    reply_markup=card_markup,
                 )
 
             res = IPCResult(

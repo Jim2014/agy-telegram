@@ -1062,8 +1062,21 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
                         reply_to_id=message_id,
                     )
                 )
-        else:
-            await bot._safe_answer_callback_query(cq_id, text="⚠️ Audio note expired or unavailable", show_alert=True)
+    elif data.startswith("unpin_ipc:"):
+        target_proj = data[10:].strip()
+        if message_id:
+            try:
+                await bot.client.unpin_chat_message(chat_id=chat_id, message_id=message_id)
+            except Exception as e:
+                logger.debug("Failed to unpin chat message %s: %s", message_id, e)
+        if target_proj in session.pinned_ipc_message_ids:
+            session.pinned_ipc_message_ids.pop(target_proj, None)
+            bot.session_manager.save()
+        await bot._safe_answer_callback_query(cq_id, text=f"📌 已取消置顶 [{target_proj}] 卡片")
+        try:
+            await bot.client.edit_message_reply_markup(chat_id=chat_id, message_id=message_id, reply_markup={"inline_keyboard": []})
+        except Exception:
+            pass
 
     elif data == "dir:show":
         await bot._safe_answer_callback_query(cq_id)

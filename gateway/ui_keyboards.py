@@ -469,6 +469,17 @@ def build_voice_play_button(voice_id: str) -> Dict[str, Any]:
     return {"text": "🔊 Send Audio", "callback_data": f"voice:{voice_id}"}
 
 
+def build_ipc_accordion_keyboard(target_project: str) -> Dict[str, Any]:
+    """Build an inline keyboard with an unpin button for background IPC cards."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": f"📌 取消置顶 [{target_project}]", "callback_data": f"unpin_ipc:{target_project}"}
+            ]
+        ]
+    }
+
+
 if __name__ == "__main__":
     msg, kb = build_model_keyboard("gemini-3.7-flash", "high")
     print("build_model_keyboard output preview:\n", msg)
