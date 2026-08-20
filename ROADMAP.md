@@ -41,6 +41,12 @@ This document outlines the milestones and roadmap for integrating new Google Ant
 - [x] **5.4 Dynamic Slash Command Dispatcher & LRU Integration**: Centralized slash command routing with persistent statistics and instant execution.
 - [x] **5.5 Unit & Integration Testing**: 109 automated tests passing with complete coverage across interactive buttons, expandable blocks, reactions, and callbacks.
 
+### 📋 Milestone 6: Telegram Mini App (Web App) Viewer & Advanced UI Extensions
+- [ ] **6.1 Telegram Mini App (Web App) In-Chat Popup Viewer**: Integrate a lightweight embedded WebApp server with `WebAppInfo(url=...)` enabling instant slide-up viewing of HTML reports, Git diffs, and directory navigators directly inside Telegram without file downloading.
+- [ ] **6.2 Dynamic Input Field Placeholder State Machine**: Automatically switch the text input placeholder (`input_field_placeholder`) across states (Steering hints while busy, choice hints during questions, command hints when idle).
+- [ ] **6.3 Pinned Project & Session Header Banner (`pinChatMessage`)**: Maintain a persistent pinned banner at the top of the chat showing the active project workspace, current model, reasoning effort, and quick navigation shortcuts.
+- [ ] **6.4 Supergroup Forum Topics Multi-Project Mapping**: Automatically bind separate projects to distinct Telegram Forum Topics/threads (`message_thread_id`) when used in group workspaces.
+
 ---
 
 ## Status Log
@@ -52,3 +58,4 @@ This document outlines the milestones and roadmap for integrating new Google Ant
 | **Milestone 3** | Long-Lived Session Process Pool | ✅ Completed | 2026-08-19 |
 | **Milestone 4** | Quota, Skills, Artifacts & Adaptive LRU Menu | ✅ Completed | 2026-08-19 |
 | **Milestone 5** | Interactive UI (Buttons, Expandable, Reactions) | ✅ Completed | 2026-08-19 |
+| **Milestone 6** | Mini App Viewer, Placeholders & Pinned Banner | ⏳ Planned | - |
