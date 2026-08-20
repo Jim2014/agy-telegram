@@ -298,6 +298,11 @@ tail -f -n 50 runtime/watchdog.log
 - `gateway/file_renderers.py` (`python -m gateway.file_renderers`): 代码、Markdown、Diff、CSV 表格等多类型文件的 HTML 渲染。
 - `gateway/message_formatter.py` (`python -m gateway.message_formatter`): Markdown 到 Telegram 原生富文本 HTML 转换、`[AGY_FILE]` 显式协议解析与提取、移动优先独立 HTML 报告生成与分块截断。
 - `gateway/agy_bridge.py` (`python -m gateway.agy_bridge "<prompt>"`): `agy` 子进程异步双向通信、`stream-json` 双向流解析、首轮系统提示词精准注入、Steering 注入与进程生命周期管理。
+
+### 📚 架构设计与协议文档 (Design Documents)
+
+- [docs/cross_project_mesh_design.md](docs/cross_project_mesh_design.md): 跨项目去中心化多智能体通信协议与 Telegram 原生折叠置顶卡片设计方案 (`AGY_IPC` Protocol)。
+- [ROADMAP.md](ROADMAP.md): 网关演进规划与后续里程碑。
 - `gateway/telegram_client.py` (`python -m gateway.telegram_client`): 异步 Telegram Bot API 客户端（Long polling、流式编辑、`sendDocument` 文件多部件上传、429 限流退避）。
 - `gateway/bot.py` (`python -m gateway.bot`): 调度核心引擎、Telegram 长轮询事件分发、流式桥接生命周期与异常保护。
 - `main.py` (`python main.py`): 启动入口与 CLI 参数控制。
