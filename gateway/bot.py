@@ -705,6 +705,9 @@ class AgyTelegramBot:
             target_proj_info = session.projects[target]
             target_path = target_proj_info.get("path") or self.config.agy_working_dir or os.getcwd()
             target_conv_id = target_proj_info.get("conversation_id")
+            active_conv_id = session.projects.get(active_proj, {}).get("conversation_id")
+            if target_conv_id and target_conv_id == active_conv_id:
+                target_conv_id = None
 
             # 1. Send initial pinned accordion card
             log_ipc_event(active_proj, target, "DISPATCH", f"Task: {call.content[:100]} | hop={call.hop_count}")
