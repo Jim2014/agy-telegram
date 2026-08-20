@@ -493,7 +493,6 @@ class AgyBridge:
             model=model,
             effort=effort,
             working_dir=working_dir,
-            system_prompt=self.system_prompt,
         )
         Path(working_dir).mkdir(parents=True, exist_ok=True)
         logger.info("Spawning ephemeral agy worker in %s: %s", working_dir, " ".join(cmd[:6]))
