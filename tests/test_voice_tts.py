@@ -50,6 +50,10 @@ async def test_synthesize_voice_edge_tts(tmp_path):
             assert result == out_file
             assert out_file.is_file()
             assert out_file.read_bytes() == b"MOCK_OGG_OPUS_DATA"
+            # Verify companion script file
+            script_file = out_file.with_suffix(".txt")
+            assert script_file.is_file()
+            assert script_file.read_text(encoding="utf-8") == "你好，这是测试语音摘要。"
 
 
 @pytest.mark.asyncio
@@ -86,10 +90,14 @@ def test_cleanup_old_voice_files(tmp_path):
     from gateway.voice_tts import cleanup_old_voice_files
     import time
 
-    # Create old and new files (ogg and oga)
+    # Create old and new files (ogg, oga, and txt)
     old_ogg = tmp_path / "voice_20260101_120000_v1.ogg"
     old_ogg.write_bytes(b"OLD_OGG")
     os.utime(old_ogg, (time.time() - (2 * 86400), time.time() - (2 * 86400)))
+
+    old_txt = tmp_path / "voice_20260101_120000_v1.txt"
+    old_txt.write_bytes(b"OLD_TXT")
+    os.utime(old_txt, (time.time() - (2 * 86400), time.time() - (2 * 86400)))
 
     old_oga = tmp_path / "voice_123_456_789.oga"
     old_oga.write_bytes(b"OLD_OGA")
@@ -99,8 +107,9 @@ def test_cleanup_old_voice_files(tmp_path):
     new_file.write_bytes(b"NEW_OGG")
 
     pruned = cleanup_old_voice_files(cache_dir=tmp_path, max_age_days=1)
-    assert pruned == 2
+    assert pruned == 3
     assert not old_ogg.exists()
+    assert not old_txt.exists()
     assert not old_oga.exists()
     assert new_file.exists()
 

@@ -49,6 +49,13 @@ async def synthesize_voice_ogg(
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Save companion script text file with identical timestamp name for 1:1 inspection
+    try:
+        script_path = output_path.with_suffix(".txt")
+        script_path.write_text(clean_text, encoding="utf-8")
+    except Exception as e:
+        logger.warning("Failed to save companion script file: %s", e)
+
     is_en = lang.lower().startswith("en")
     voice_name = voice or (DEFAULT_VOICE_EN if is_en else DEFAULT_VOICE_ZH)
 
@@ -165,7 +172,7 @@ def cleanup_old_voice_files(cache_dir: Optional[Path] = None, max_age_days: int 
     cutoff = now - (max_age_days * 86400)
     deleted_count = 0
 
-    for ext in ("voice_*.ogg", "voice_*.oga"):
+    for ext in ("voice_*.ogg", "voice_*.oga", "voice_*.txt"):
         for file_path in target_dir.glob(ext):
             try:
                 if file_path.stat().st_mtime < cutoff:
