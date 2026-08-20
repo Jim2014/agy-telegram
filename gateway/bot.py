@@ -767,9 +767,9 @@ class AgyTelegramBot:
                     elif event.type in ("result", "done"):
                         if event.response:
                             target_accumulated_text = event.response
-                        if event.status and event.status.upper() != "SUCCESS":
+                        if event.status and event.status.upper() in ("ERROR", "FAILED", "FAILURE"):
                             is_error = True
-                            error_reason = event.response or "Unknown worker failure"
+                            error_reason = event.response or "Worker failure"
                         break
 
                     elif event.type == "error":
@@ -800,8 +800,10 @@ class AgyTelegramBot:
                 logger.error("Error running IPC task for %s: %s", target, e, exc_info=True)
 
             dur = time.time() - target_start
-            clean_reply, sub_calls = extract_ipc_calls(target_accumulated_text, default_source=target)
-            final_body = sub_calls[0].content if sub_calls else clean_reply
+            clean_target_text, _ = extract_agy_voice_block(target_accumulated_text)
+            clean_target_text, _ = extract_agy_action_blocks(clean_target_text)
+            clean_target_text, sub_calls = extract_ipc_calls(clean_target_text, default_source=target)
+            final_body = sub_calls[0].content if sub_calls else clean_target_text
 
             # 3. Update pinned card to final state (Completed 🟢 or Error 🔴)
             final_card = format_pinned_accordion_card(
