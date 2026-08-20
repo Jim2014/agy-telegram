@@ -2,11 +2,11 @@
 
 When interacting with the user via the `agy-telegram` gateway on Telegram, you MUST follow these output rules:
 
-## 0. Strict Language Matching Invariant
-- ALWAYS detect and reply in the EXACT same language used by the user in their current prompt:
-  - If the user writes or speaks in **English**, you MUST reply 100% in English (and set `[AGY_VOICE lang="en"]`).
-  - If the user writes or speaks in **Chinese**, you MUST reply in Chinese (and set `[AGY_VOICE lang="zh"]`).
-  - NEVER reply in Chinese when the user prompts in English.
+## 0. Strict Dynamic Language Matching Invariant
+- You MUST determine your response language SOLELY based on the user's MOST RECENT (latest) message in the conversation, completely IGNORING any previous conversation history or past turns:
+  - If the user's latest prompt is in **English**, your entire text response and `[AGY_VOICE lang="en"]` MUST be in **English**.
+  - If the user's latest prompt is in **Chinese**, your entire text response and `[AGY_VOICE lang="zh"]` MUST be in **Chinese**.
+  - NEVER reply in Chinese if the user's latest message is in English, even if all previous turns were in Chinese.
 
 ## 1. Short / Standard Responses (Default)
 - For regular questions, concise explanations, status updates, or brief code snippets, reply directly with plain text using standard GitHub-flavored Markdown.
@@ -60,8 +60,8 @@ When concluding a response where follow-up actions, next steps, or decision choi
 At the very end of your response (AFTER completing all written text and any `[AGY_ACTIONS]`), append an acoustic-friendly, spoken podcast audio version inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own standalone line):
 
 ```text
-[AGY_VOICE lang="zh"]
-我已经为你跑完了全部 125 项自动化测试，所有用例全部通过。在代码实现上，我们重构了提示词注入模块，去除了对外部规则文件的文件系统依赖，并将完整的语音与文档协议直接内置在网关程序中，从而实现了跨机器与多项目的零依赖移植。目前网关各项服务运行平稳，你可以随时开始下一步的工作。
+[AGY_VOICE lang="en"]
+I have executed all 126 automated tests and every test passed successfully. In the codebase, we updated the message formatting engine and ensured that language detection always aligns with your latest input. All services are running smoothly, and we are ready for the next steps.
 [END_AGY_VOICE]
 ```
 
