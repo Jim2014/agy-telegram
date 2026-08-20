@@ -1204,6 +1204,42 @@ async def test_bot_voice_command_and_voice_summary_flow(mock_bot, monkeypatch):
     assert any("🔊 Play Audio" in btn["text"] for row in buttons for btn in row)
 
 
+@pytest.mark.asyncio
+async def test_bot_voice_with_long_auto_export(mock_bot, monkeypatch):
+    session = mock_bot.session_manager.get_session(100)
+    session.tts_mode = "autoplay"
+
+    # Simulate a long response (>2000 chars) that triggers auto HTML file export
+    long_body = "This is a detailed technical section.\n\n" * 80
+    raw_with_voice = f"{long_body}\n\n[AGY_VOICE lang=\"zh\"]\n全部功能总结已生成完毕。\n[END_AGY_VOICE]"
+
+    async def mock_stream(self, prompt, **kwargs):
+        yield AgyEvent(type="init", conversation_id="conv-v-2")
+        yield AgyEvent(type="result", response=raw_with_voice, duration_seconds=2.0, usage={"total_tokens": 500})
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream)
+    mock_bot.client.send_document.reset_mock()
+
+    with patch.object(mock_bot, "_generate_and_send_voice", new_callable=AsyncMock) as mock_gen_voice:
+        await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "总结一下功能", "message_id": 104}})
+
+        # Verify HTML file export was sent
+        assert mock_bot.client.send_document.called
+        doc_call = mock_bot.client.send_document.call_args[1]
+        exported_html = doc_call["document_content"]
+
+        # CRITICAL: [AGY_VOICE] must NOT be inside the exported HTML document
+        assert "[AGY_VOICE" not in exported_html
+        assert "[END_AGY_VOICE]" not in exported_html
+
+        # CRITICAL: _generate_and_send_voice MUST have been called with the voice text!
+        assert mock_gen_voice.called
+        gen_args = mock_gen_voice.call_args[1]
+        assert gen_args["text"] == "全部功能总结已生成完毕。"
+        assert gen_args["lang"] == "zh"
+
+
+
 
 
 

@@ -365,6 +365,11 @@ def format_streaming_message(
     """
     if not current_text and "accumulated_text" in kwargs:
         current_text = kwargs["accumulated_text"]
+
+    # Strip any in-flight [AGY_VOICE] blocks from streaming preview
+    if current_text and "[AGY_VOICE" in current_text:
+        current_text = re.sub(r"\[AGY_VOICE.*?(?:\[END_AGY_VOICE\]|$)", "", current_text, flags=re.DOTALL | re.IGNORECASE).strip()
+
     sections: List[str] = []
 
     # Include recent tool events in an expanded blockquote (default open, up to 8 recent steps)

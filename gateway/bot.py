@@ -838,11 +838,14 @@ class AgyTelegramBot:
                 turn_duration=total_duration,
             )
 
-            # Check for [AGY_FILE] protocol blocks in final output
+            # 1. First extract [AGY_VOICE] spoken summary from final output so it NEVER leaks into HTML files or visible text
             final_raw = accumulated_text or (getattr(final_event, "response", "") or getattr(final_event, "content", "") or "" if final_event else "")
+            final_raw, voice_block = extract_agy_voice_block(final_raw)
+
+            # 2. Check for [AGY_FILE] protocol blocks in final output
             clean_text, agy_files = extract_agy_file_blocks(final_raw)
 
-            # Auto-export long responses as standalone HTML document
+            # 3. Auto-export long responses as standalone HTML document
             auto_export_content: Optional[str] = None
             auto_export_name = ""
             auto_export_title = ""
@@ -896,8 +899,7 @@ class AgyTelegramBot:
                 err_block = "\n".join([f"⚠️ <i>{escape_html(e)}</i>" for e in export_errors])
                 clean_text = f"{clean_text}\n\n{err_block}".strip() if clean_text else err_block
 
-            # Extract [AGY_VOICE] spoken summary from clean_text
-            clean_text, voice_block = extract_agy_voice_block(clean_text)
+            # 4. Process voice summary (autoplay or button)
             effective_tts_mode = getattr(session, "tts_mode", None) or getattr(self.config, "tts_mode", "autogen")
 
             voice_btn: Optional[Dict[str, Any]] = None
@@ -922,7 +924,7 @@ class AgyTelegramBot:
                 elif effective_tts_mode == "autogen":
                     voice_btn = build_voice_play_button(voice_id)
 
-            # Extract [AGY_ACTIONS] suggested next steps from clean_text
+            # 5. Extract [AGY_ACTIONS] suggested next steps from clean_text
             clean_text, action_items = extract_agy_action_blocks(clean_text)
             actions_markup: Optional[Dict[str, Any]] = None
             if action_items:
