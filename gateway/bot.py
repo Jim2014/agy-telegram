@@ -718,24 +718,25 @@ class AgyTelegramBot:
                 tools_log=[],
                 status_text="Starting background worker in workspace...",
             )
-            pin_msg_id = session.pinned_ipc_message_id
+            pin_msg_id = session.pinned_ipc_message_ids.get(target)
             if pin_msg_id:
                 edited = await self._safe_edit_message_text(chat_id=chat_id, message_id=pin_msg_id, text=card_text)
                 if edited is None:
-                    # Previous pin message was deleted or invalid; recreate and repin
+                    # Previous pin message for target was deleted or invalid; recreate and repin
                     pin_msg = await self._safe_send_message(chat_id=chat_id, text=card_text)
                     pin_msg_id = pin_msg.get("message_id") if pin_msg else None
-                    session.pinned_ipc_message_id = pin_msg_id
+                    session.pinned_ipc_message_ids[target] = pin_msg_id
                     self.session_manager.save()
                     if pin_msg_id:
                         await self.client.pin_chat_message(chat_id=chat_id, message_id=pin_msg_id, disable_notification=True)
             else:
                 pin_msg = await self._safe_send_message(chat_id=chat_id, text=card_text)
                 pin_msg_id = pin_msg.get("message_id") if pin_msg else None
-                session.pinned_ipc_message_id = pin_msg_id
+                session.pinned_ipc_message_ids[target] = pin_msg_id
                 self.session_manager.save()
                 if pin_msg_id:
                     await self.client.pin_chat_message(chat_id=chat_id, message_id=pin_msg_id, disable_notification=True)
+
 
 
             # 2. Run ephemeral worker in target workspace

@@ -29,7 +29,7 @@ class ChatSession:
     pending_decisions: List[str] = field(default_factory=list)
     pending_actions: List[Dict[str, str]] = field(default_factory=list)
     pinned_message_id: Optional[int] = None
-    pinned_ipc_message_id: Optional[int] = None
+    pinned_ipc_message_ids: Dict[str, int] = field(default_factory=dict)
     tts_mode: str = "autogen"  # "disable" | "autogen" | "autoplay"
     pending_voice_data: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
@@ -64,7 +64,7 @@ class ChatSession:
             "command_stats": self.command_stats,
             "command_last_used": self.command_last_used,
             "pinned_message_id": self.pinned_message_id,
-            "pinned_ipc_message_id": self.pinned_ipc_message_id,
+            "pinned_ipc_message_ids": self.pinned_ipc_message_ids,
             "tts_mode": self.tts_mode,
             "pending_voice_data": dict(list(self.pending_voice_data.items())[-100:]),
         }
@@ -91,6 +91,14 @@ class ChatSession:
                 }
                 active_project = name
 
+        # Migration logic for legacy single pinned_ipc_message_id
+        pinned_ipc_ids = data.get("pinned_ipc_message_ids")
+        if pinned_ipc_ids is None:
+            pinned_ipc_ids = {}
+            legacy_ipc_id = data.get("pinned_ipc_message_id")
+            if legacy_ipc_id and active_project:
+                pinned_ipc_ids[active_project] = legacy_ipc_id
+
         return cls(
             chat_id=int(data["chat_id"]),
             active_project=active_project,
@@ -102,7 +110,7 @@ class ChatSession:
             command_stats=data.get("command_stats", {}),
             command_last_used=data.get("command_last_used", {}),
             pinned_message_id=data.get("pinned_message_id"),
-            pinned_ipc_message_id=data.get("pinned_ipc_message_id"),
+            pinned_ipc_message_ids=pinned_ipc_ids,
             tts_mode=data.get("tts_mode", "autogen"),
             pending_voice_data=data.get("pending_voice_data", {}),
         )
