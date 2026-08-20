@@ -1170,13 +1170,13 @@ async def test_bot_voice_command_and_voice_summary_flow(mock_bot, monkeypatch):
     assert mock_bot.client.send_message.called
     assert "Voice Broadcast Settings" in mock_bot.client.send_message.call_args[1]["text"]
 
-    # 2. Test /voice autoplay setting
+    # 2. Test /voice autosend / autoplay setting
     mock_bot.client.send_message.reset_mock()
-    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/voice autoplay", "message_id": 102}})
-    assert session.tts_mode == "autoplay"
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/voice autosend", "message_id": 102}})
+    assert session.tts_mode == "autosend"
 
-    # 3. Test prompt response with [AGY_VOICE] block in autogen mode (button generation)
-    session.tts_mode = "autogen"
+    # 3. Test prompt response with [AGY_VOICE] block in ondemand mode (button generation)
+    session.tts_mode = "ondemand"
     voice_resp = """Here is the written report.
 
 [AGY_VOICE lang="zh"]

@@ -372,21 +372,27 @@ async def handle_cmd_pin(bot: Any, chat_id: int, reply_to_id: Optional[int] = No
 
 
 async def handle_cmd_voice(bot: Any, chat_id: int, arg: str = "", edit_message_id: Optional[int] = None) -> None:
-    """Configure voice podcast summary mode (/voice disable | autogen | autoplay)."""
+    """Configure voice podcast summary mode (/voice disable | ondemand | autosend)."""
     session = bot.session_manager.get_session(chat_id)
     if arg and arg.lower() != "show":
         val = arg.strip().lower()
-        if val in ("disable", "autogen", "autoplay", "off", "on"):
-            mode = "disable" if val in ("disable", "off") else ("autoplay" if val == "autoplay" else "autogen")
+        if val in ("disable", "off"):
+            mode = "disable"
+            bot.session_manager.set_tts_mode(chat_id, mode)
+        elif val in ("ondemand", "autogen", "script", "manual"):
+            mode = "ondemand"
+            bot.session_manager.set_tts_mode(chat_id, mode)
+        elif val in ("autosend", "autoplay", "direct", "auto", "on"):
+            mode = "autosend"
             bot.session_manager.set_tts_mode(chat_id, mode)
         else:
             await bot._safe_send_message(
                 chat_id=chat_id,
-                text="⚠️ Usage: <code>/voice disable</code> | <code>/voice autogen</code> | <code>/voice autoplay</code>",
+                text="⚠️ Usage: <code>/voice disable</code> | <code>/voice ondemand</code> | <code>/voice autosend</code>",
             )
             return
 
-    cur_mode = session.tts_mode or getattr(bot.config, "tts_mode", "autogen")
+    cur_mode = session.tts_mode or getattr(bot.config, "tts_mode", "ondemand")
     text, reply_markup = build_voice_keyboard(cur_mode)
 
     if edit_message_id:

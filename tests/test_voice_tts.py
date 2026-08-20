@@ -86,17 +86,23 @@ def test_cleanup_old_voice_files(tmp_path):
     from gateway.voice_tts import cleanup_old_voice_files
     import time
 
-    # Create old and new files
-    old_file = tmp_path / "voice_20260101_120000_v1.ogg"
-    old_file.write_bytes(b"OLD_OGG")
-    os.utime(old_file, (time.time() - (10 * 86400), time.time() - (10 * 86400)))
+    # Create old and new files (ogg and oga)
+    old_ogg = tmp_path / "voice_20260101_120000_v1.ogg"
+    old_ogg.write_bytes(b"OLD_OGG")
+    os.utime(old_ogg, (time.time() - (2 * 86400), time.time() - (2 * 86400)))
+
+    old_oga = tmp_path / "voice_123_456_789.oga"
+    old_oga.write_bytes(b"OLD_OGA")
+    os.utime(old_oga, (time.time() - (2 * 86400), time.time() - (2 * 86400)))
 
     new_file = tmp_path / "voice_20260819_120000_v2.ogg"
     new_file.write_bytes(b"NEW_OGG")
 
-    pruned = cleanup_old_voice_files(cache_dir=tmp_path, max_age_days=7)
-    assert pruned == 1
-    assert not old_file.exists()
+    pruned = cleanup_old_voice_files(cache_dir=tmp_path, max_age_days=1)
+    assert pruned == 2
+    assert not old_ogg.exists()
+    assert not old_oga.exists()
     assert new_file.exists()
+
 
 

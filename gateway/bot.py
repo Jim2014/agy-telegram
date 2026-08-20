@@ -899,11 +899,11 @@ class AgyTelegramBot:
                 err_block = "\n".join([f"⚠️ <i>{escape_html(e)}</i>" for e in export_errors])
                 clean_text = f"{clean_text}\n\n{err_block}".strip() if clean_text else err_block
 
-            # 4. Process voice summary (autoplay or button)
-            effective_tts_mode = getattr(session, "tts_mode", None) or getattr(self.config, "tts_mode", "autogen")
+            # 4. Process voice summary (autosend or ondemand button)
+            effective_tts_mode = getattr(session, "tts_mode", None) or getattr(self.config, "tts_mode", "ondemand")
 
             voice_btn: Optional[Dict[str, Any]] = None
-            if voice_block and getattr(self.config, "tts_enabled", True) and effective_tts_mode != "disable":
+            if voice_block and getattr(self.config, "tts_enabled", True) and effective_tts_mode not in ("disable", "off"):
                 voice_id = f"v_{chat_id}_{int(time.time())}_{len(session.pending_voice_data)}"
                 self.session_manager.record_voice_summary(
                     chat_id=chat_id,
@@ -911,7 +911,7 @@ class AgyTelegramBot:
                     text=voice_block.text,
                     lang=voice_block.lang,
                 )
-                if effective_tts_mode == "autoplay":
+                if effective_tts_mode in ("autosend", "autoplay", "direct", "auto"):
                     asyncio.create_task(
                         self._generate_and_send_voice(
                             chat_id=chat_id,
@@ -921,7 +921,7 @@ class AgyTelegramBot:
                             reply_to_id=reply_to_id,
                         )
                     )
-                elif effective_tts_mode == "autogen":
+                elif effective_tts_mode in ("ondemand", "autogen", "script", "manual"):
                     voice_btn = build_voice_play_button(voice_id)
 
             # 5. Extract [AGY_ACTIONS] suggested next steps from clean_text

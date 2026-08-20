@@ -392,13 +392,25 @@ def build_webapp_viewer_button(
 def build_voice_keyboard(current_mode: str) -> Tuple[str, Dict[str, Any]]:
     """
     Build interactive inline keyboard for selecting TTS Voice Broadcast mode.
-    Options: disable, autogen (button on-demand), autoplay (auto send voice note).
+    Options:
+      - disable: Disable voice feature completely (no script, no audio).
+      - ondemand: Extract voice script, synthesize & send audio only upon clicking [ 🔊 Play Audio ].
+      - autosend: Automatically synthesize and send native voice note directly with reply.
     """
-    mode = current_mode.lower() if current_mode else "autogen"
+    raw_mode = (current_mode.lower() if current_mode else "ondemand").strip()
+    if raw_mode in ("autogen", "script", "manual"):
+        mode = "ondemand"
+    elif raw_mode in ("autoplay", "direct", "auto"):
+        mode = "autosend"
+    elif raw_mode in ("disable", "off"):
+        mode = "disable"
+    else:
+        mode = "ondemand"
+
     modes = [
-        ("disable", "🔴 Disable", "Disable audio generation entirely"),
-        ("autogen", "🔊 On-Demand (Autogen)", "Append [🔊 Play Audio] button below reply"),
-        ("autoplay", "⚡ Auto-Play (Autoplay)", "Automatically send native voice note after reply"),
+        ("disable", "🔴 Disabled (No Voice)", "Disable voice script and audio generation entirely"),
+        ("ondemand", "📝 On-Demand (Synthesize on Click)", "Extract voice script; synthesize audio only upon clicking button"),
+        ("autosend", "⚡ Auto-Send (Send Voice Directly)", "Automatically synthesize and send native voice note with reply"),
     ]
     buttons = []
     for m_id, label, _ in modes:
@@ -413,10 +425,10 @@ def build_voice_keyboard(current_mode: str) -> Tuple[str, Dict[str, Any]]:
         "• <b>Synthesizer:</b> Edge-TTS (Neural Voices) + macOS Offline Fallback\n"
         "• <b>Language Adaptation:</b> Automatic (Xiaoxiao for Chinese / Jenny for English)\n\n"
         "<b>Available Modes:</b>\n"
-        "• <b>Disable:</b> Turn off voice audio generation completely.\n"
-        "• <b>Autogen (On-Demand):</b> Append a <code>[ 🔊 Play Audio ]</code> button below replies to listen on demand.\n"
-        "• <b>Autoplay (Auto-Send):</b> Automatically synthesize and send a native Telegram voice note after each text reply.\n\n"
-        "💡 <i>Tap an option below or run <code>/voice &lt;disable|autogen|autoplay&gt;</code> in chat.</i>"
+        "• <b>🔴 Disabled:</b> Turn off voice scripts and audio synthesis completely.\n"
+        "• <b>📝 On-Demand:</b> Extract voice script without synthesizing upfront; audio is generated and sent only when you click <code>[ 🔊 Play Audio ]</code>.\n"
+        "• <b>⚡ Auto-Send:</b> Automatically synthesize and send a native Telegram voice note directly with each reply.\n\n"
+        "💡 <i>Tap an option below or run <code>/voice &lt;disable|ondemand|autosend&gt;</code> in chat.</i>"
     )
     return text, {"inline_keyboard": buttons}
 

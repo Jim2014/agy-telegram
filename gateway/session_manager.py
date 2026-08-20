@@ -345,12 +345,15 @@ class SessionManager:
         self.save()
 
     def set_tts_mode(self, chat_id: int, mode: str) -> None:
-        """Set TTS voice broadcast mode ('disable', 'autogen', 'autoplay')."""
+        """Set TTS voice broadcast mode ('disable', 'ondemand', 'autosend')."""
         session = self.get_session(chat_id)
-        if mode in ("disable", "autogen", "autoplay"):
-            session.tts_mode = mode
+        val = (mode or "").strip().lower()
+        if val in ("autosend", "autoplay", "direct", "auto"):
+            session.tts_mode = "autosend"
+        elif val in ("disable", "off"):
+            session.tts_mode = "disable"
         else:
-            session.tts_mode = "autogen"
+            session.tts_mode = "ondemand"
         session.last_active_at = time.time()
         self.save()
 

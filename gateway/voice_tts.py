@@ -152,7 +152,7 @@ async def synthesize_voice_ogg(
     return None
 
 
-def cleanup_old_voice_files(cache_dir: Optional[Path] = None, max_age_days: int = 7) -> int:
+def cleanup_old_voice_files(cache_dir: Optional[Path] = None, max_age_days: int = 1) -> int:
     """
     Remove synthesized voice notes older than max_age_days from runtime/voice.
     Returns number of pruned files.
@@ -165,13 +165,14 @@ def cleanup_old_voice_files(cache_dir: Optional[Path] = None, max_age_days: int 
     cutoff = now - (max_age_days * 86400)
     deleted_count = 0
 
-    for file_path in target_dir.glob("voice_*.ogg"):
-        try:
-            if file_path.stat().st_mtime < cutoff:
-                file_path.unlink(missing_ok=True)
-                deleted_count += 1
-        except Exception as e:
-            logger.warning("Failed to delete old voice file %s: %s", file_path, e)
+    for ext in ("voice_*.ogg", "voice_*.oga"):
+        for file_path in target_dir.glob(ext):
+            try:
+                if file_path.stat().st_mtime < cutoff:
+                    file_path.unlink(missing_ok=True)
+                    deleted_count += 1
+            except Exception as e:
+                logger.warning("Failed to delete old voice file %s: %s", file_path, e)
 
     if deleted_count > 0:
         logger.info("Cleaned up %d old voice audio files (>%d days old)", deleted_count, max_age_days)

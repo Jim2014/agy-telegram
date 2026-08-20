@@ -157,13 +157,13 @@ def test_build_pinned_banner_keyboard():
 def test_build_voice_keyboard_and_play_button():
     from gateway.ui_keyboards import build_voice_keyboard, build_voice_play_button
 
-    # 1. Voice keyboard with autogen active
-    text, kb = build_voice_keyboard("autogen")
+    # 1. Voice keyboard with ondemand active
+    text, kb = build_voice_keyboard("ondemand")
     assert "Voice Broadcast Settings" in text
     assert "inline_keyboard" in kb
     rows = kb["inline_keyboard"]
     assert len(rows) == 4
-    assert "🔘" in rows[1][0]["text"]  # autogen has active radio
+    assert "🔘" in rows[1][0]["text"]  # ondemand has active radio
     assert "⚪" in rows[0][0]["text"]  # disable is inactive
 
     # 2. Voice play button
