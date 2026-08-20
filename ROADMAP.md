@@ -14,11 +14,11 @@ This document outlines the milestones and roadmap for integrating new Google Ant
 
 ---
 
-### 📋 Milestone 2: Declarative Agent Rules Integration
-- [x] **2.1 Output Protocol Rule Definition**: Create `.gemini/rules/telegram-output.md` containing the mobile-first HTML output standards and `[AGY_FILE]` protocol specification.
-- [x] **2.2 Clean Prompt Architecture**: Decouple the ~50 line system prompt from user prompt text; load formatting rules cleanly via AGY rule discovery and agent configurations.
-- [x] **2.3 Fallback Compatibility**: Ensure full backward compatibility when running in standalone mode or custom environments without local rule files.
-- [x] **2.4 Testing & Validation**: Validate prompt generation and rule enforcement with automated tests.
+### 📋 Milestone 2: Self-Contained Built-in Prompt Architecture & Protocol
+- [x] **2.1 Output Protocol Definition**: Embedded `DEFAULT_SYSTEM_PROMPT` in `gateway/config.py` containing mobile-first HTML output standards, `[AGY_FILE]`, `[AGY_ACTIONS]`, and `[AGY_VOICE]` protocols.
+- [x] **2.2 Zero-Dependency Portability**: Eliminated external workspace `.gemini/rules/` filesystem dependencies; prompt rules are injected dynamically by the gateway so the system works across any directory on any machine.
+- [x] **2.3 Fallback Compatibility**: Full backward compatibility when running in standalone mode or custom environments without local rule files.
+- [x] **2.4 Testing & Validation**: Validate prompt generation, protocol extraction, and rule enforcement with automated tests.
 
 ---
 

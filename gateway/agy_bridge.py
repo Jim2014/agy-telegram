@@ -228,19 +228,11 @@ class AgyBridge:
             assert process.stderr is not None
             assert process.stdin is not None
 
-            # Determine effective prompt for the turn (inject system prompt only on first turn if no rules)
+            # Determine effective prompt for the turn (always inject embedded system prompt on first turn)
             eff_sys_prompt = system_prompt if system_prompt is not None else self.system_prompt
             is_first_turn = not bool(conversation_id)
 
-            has_workspace_rules = False
-            if effective_dir:
-                try:
-                    rule_file = Path(effective_dir) / ".gemini" / "rules" / "telegram-output.md"
-                    has_workspace_rules = rule_file.is_file()
-                except Exception:
-                    has_workspace_rules = False
-
-            if is_first_turn and eff_sys_prompt and eff_sys_prompt.strip() and not has_workspace_rules:
+            if is_first_turn and eff_sys_prompt and eff_sys_prompt.strip():
                 initial_content = f"{eff_sys_prompt.strip()}\n\n---\n\n{prompt}"
             else:
                 initial_content = prompt

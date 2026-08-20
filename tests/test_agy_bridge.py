@@ -482,14 +482,14 @@ async def test_declarative_rules_clean_prompt(monkeypatch, tmp_path):
         return proc
     monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
 
-    # First turn with workspace containing rules
+    # First turn should prepend embedded system prompt cleanly
     async for _ in bridge.run_streaming(prompt="Clean question", conversation_id=None, working_dir=str(tmp_path)):
         pass
 
     assert len(proc.stdin.written) == 1
     payload = json.loads(proc.stdin.written[0].decode())
-    # Should NOT have prepended system prompt
-    assert payload == {"event": "user", "message": {"content": "Clean question"}}
+    assert payload == {"event": "user", "message": {"content": "[SYSTEM] Long system prompt text.\n\n---\n\nClean question"}}
+
 
 
 @pytest.mark.asyncio
