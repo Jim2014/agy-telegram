@@ -56,6 +56,7 @@ class AgyBridge:
         self._is_stopped = False
         self._pending_turns = 0
         self._lock = asyncio.Lock()
+        self._turn_lock = asyncio.Lock()
         self._steer_history: List[str] = []
         self._idle_task: Optional[asyncio.Task] = None
         self._current_conv_id: Optional[str] = None
@@ -162,11 +163,12 @@ class AgyBridge:
         system_prompt: Optional[str] = None,
     ) -> AsyncIterator[AgyEvent]:
         """Run agy CLI with stream-json input/output and yield streaming AgyEvent instances."""
-        self._is_stopped = False
-        self._steer_history.clear()
-        self._cancel_idle_timer()
+        async with self._turn_lock:
+            self._is_stopped = False
+            self._steer_history.clear()
+            self._cancel_idle_timer()
 
-        effective_dir = working_dir or self.default_working_dir
+            effective_dir = working_dir or self.default_working_dir
         can_reuse = (
             self.is_running()
             and self._current_process is not None

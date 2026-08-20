@@ -783,7 +783,15 @@ class AgyTelegramBot:
                     delta = event.text_delta or getattr(event, "content", "") or ""
                     accumulated_text += delta
 
-                elif event.type in ("result", "turn_complete", "done"):
+                elif event.type == "turn_complete":
+                    # Intermediate completion of a turn when follow-up steered turns are queued
+                    if event.response:
+                        accumulated_text = event.response
+                    elif getattr(event, "content", None):
+                        accumulated_text = event.content
+                    continue
+
+                elif event.type in ("result", "done"):
                     final_event = event
                     if event.response:
                         accumulated_text = event.response
