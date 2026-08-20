@@ -81,3 +81,22 @@ async def test_synthesize_voice_fallback_macos(tmp_path):
                 assert out_file.is_file()
                 assert out_file.read_bytes() == b"MOCK_MACOS_OGG_DATA"
 
+
+def test_cleanup_old_voice_files(tmp_path):
+    from gateway.voice_tts import cleanup_old_voice_files
+    import time
+
+    # Create old and new files
+    old_file = tmp_path / "voice_20260101_120000_v1.ogg"
+    old_file.write_bytes(b"OLD_OGG")
+    os.utime(old_file, (time.time() - (10 * 86400), time.time() - (10 * 86400)))
+
+    new_file = tmp_path / "voice_20260819_120000_v2.ogg"
+    new_file.write_bytes(b"NEW_OGG")
+
+    pruned = cleanup_old_voice_files(cache_dir=tmp_path, max_age_days=7)
+    assert pruned == 1
+    assert not old_file.exists()
+    assert new_file.exists()
+
+

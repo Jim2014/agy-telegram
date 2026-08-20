@@ -27,10 +27,12 @@ async def synthesize_voice_ogg(
     lang: str = "zh",
     output_path: Optional[Path] = None,
     voice: Optional[str] = None,
+    voice_id: Optional[str] = None,
 ) -> Optional[Path]:
     """
     Synthesize text into a Telegram-compliant OGG Opus audio file.
     Uses Edge-TTS with graceful offline fallback to macOS 'say' + ffmpeg.
+    Stored in runtime/voice/ with timestamped filenames for easy lifecycle cleanup.
     """
     clean_text = text.strip()
     if not clean_text:
@@ -39,7 +41,9 @@ async def synthesize_voice_ogg(
     if output_path is None:
         cache_dir = Path("runtime/voice")
         cache_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"reply_{int(time.time())}_{os.getpid()}_{hash(clean_text) % 10000}.ogg"
+        ts_str = time.strftime("%Y%m%d_%H%M%S")
+        v_tag = voice_id or f"{os.getpid()}_{hash(clean_text) % 10000}"
+        filename = f"voice_{ts_str}_{v_tag}.ogg"
         output_path = cache_dir / filename
     else:
         output_path = Path(output_path)
@@ -146,3 +150,29 @@ async def synthesize_voice_ogg(
 
     logger.error("Failed to synthesize voice summary audio.")
     return None
+
+
+def cleanup_old_voice_files(cache_dir: Optional[Path] = None, max_age_days: int = 7) -> int:
+    """
+    Remove synthesized voice notes older than max_age_days from runtime/voice.
+    Returns number of pruned files.
+    """
+    target_dir = cache_dir or Path("runtime/voice")
+    if not target_dir.is_dir():
+        return 0
+
+    now = time.time()
+    cutoff = now - (max_age_days * 86400)
+    deleted_count = 0
+
+    for file_path in target_dir.glob("voice_*.ogg"):
+        try:
+            if file_path.stat().st_mtime < cutoff:
+                file_path.unlink(missing_ok=True)
+                deleted_count += 1
+        except Exception as e:
+            logger.warning("Failed to delete old voice file %s: %s", file_path, e)
+
+    if deleted_count > 0:
+        logger.info("Cleaned up %d old voice audio files (>%d days old)", deleted_count, max_age_days)
+    return deleted_count

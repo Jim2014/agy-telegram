@@ -1024,13 +1024,14 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
         voice_id = data[6:].strip()
         voice_info = session.pending_voice_data.get(voice_id)
         if voice_info:
-            await bot._safe_answer_callback_query(cq_id, text="🔊 正在生成并发送语音...")
+            await bot._safe_answer_callback_query(cq_id, text="🔊 正在发送语音...")
             if hasattr(bot, "_generate_and_send_voice"):
                 asyncio.create_task(
                     bot._generate_and_send_voice(
-                        chat_id,
-                        voice_info["text"],
-                        voice_info.get("lang", "zh"),
+                        chat_id=chat_id,
+                        text=voice_info["text"],
+                        lang=voice_info.get("lang", "zh"),
+                        voice_id=voice_id,
                         reply_to_id=message_id,
                     )
                 )

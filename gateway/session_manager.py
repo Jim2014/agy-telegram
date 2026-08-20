@@ -64,6 +64,7 @@ class ChatSession:
             "command_last_used": self.command_last_used,
             "pinned_message_id": self.pinned_message_id,
             "tts_mode": self.tts_mode,
+            "pending_voice_data": dict(list(self.pending_voice_data.items())[-100:]),
         }
 
     @classmethod
@@ -100,6 +101,7 @@ class ChatSession:
             command_last_used=data.get("command_last_used", {}),
             pinned_message_id=data.get("pinned_message_id"),
             tts_mode=data.get("tts_mode", "autogen"),
+            pending_voice_data=data.get("pending_voice_data", {}),
         )
 
 
@@ -351,6 +353,37 @@ class SessionManager:
             session.tts_mode = "autogen"
         session.last_active_at = time.time()
         self.save()
+
+    def record_voice_summary(
+        self,
+        chat_id: int,
+        voice_id: str,
+        text: str,
+        lang: str = "zh",
+        audio_path: Optional[str] = None,
+    ) -> None:
+        """Record generated voice summary with persistent LRU caching."""
+        session = self.get_session(chat_id)
+        session.pending_voice_data[voice_id] = {
+            "text": text,
+            "lang": lang,
+            "audio_path": audio_path or "",
+            "created_at": time.time(),
+        }
+        # Keep up to 100 entries
+        if len(session.pending_voice_data) > 100:
+            keys = list(session.pending_voice_data.keys())
+            for old_key in keys[:-100]:
+                session.pending_voice_data.pop(old_key, None)
+        session.last_active_at = time.time()
+        self.save()
+
+    def update_voice_audio_path(self, chat_id: int, voice_id: str, audio_path: str) -> None:
+        """Update cached audio file path for a voice entry."""
+        session = self.get_session(chat_id)
+        if voice_id in session.pending_voice_data:
+            session.pending_voice_data[voice_id]["audio_path"] = audio_path
+            self.save()
 
     def set_busy(self, chat_id: int, is_busy: bool) -> None:
         """Set whether chat currently has a running task."""

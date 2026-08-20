@@ -261,12 +261,22 @@ class AgyTelegramBot:
         chat_id: int,
         text: str,
         lang: str = "zh",
+        voice_id: Optional[str] = None,
         reply_to_id: Optional[int] = None,
     ) -> bool:
-        """Synthesize text into speech and send native Telegram voice note."""
+        """Synthesize text into speech and send native Telegram voice note with cache check."""
         try:
-            await self._safe_send_chat_action(chat_id, "record_voice")
-            voice_path = await synthesize_voice_ogg(text=text, lang=lang)
+            session = self.session_manager.get_session(chat_id)
+            cached_path = session.pending_voice_data.get(voice_id, {}).get("audio_path") if voice_id else None
+
+            if cached_path and os.path.isfile(cached_path):
+                voice_path = Path(cached_path)
+            else:
+                await self._safe_send_chat_action(chat_id, "record_voice")
+                voice_path = await synthesize_voice_ogg(text=text, lang=lang, voice_id=voice_id)
+                if voice_path and voice_id:
+                    self.session_manager.update_voice_audio_path(chat_id, voice_id, str(voice_path))
+
             if voice_path and voice_path.is_file():
                 res = await self._safe_send_voice(
                     chat_id=chat_id,
@@ -893,16 +903,19 @@ class AgyTelegramBot:
             voice_btn: Optional[Dict[str, Any]] = None
             if voice_block and getattr(self.config, "tts_enabled", True) and effective_tts_mode != "disable":
                 voice_id = f"v_{chat_id}_{int(time.time())}_{len(session.pending_voice_data)}"
-                session.pending_voice_data[voice_id] = {
-                    "text": voice_block.text,
-                    "lang": voice_block.lang,
-                }
+                self.session_manager.record_voice_summary(
+                    chat_id=chat_id,
+                    voice_id=voice_id,
+                    text=voice_block.text,
+                    lang=voice_block.lang,
+                )
                 if effective_tts_mode == "autoplay":
                     asyncio.create_task(
                         self._generate_and_send_voice(
                             chat_id=chat_id,
                             text=voice_block.text,
                             lang=voice_block.lang,
+                            voice_id=voice_id,
                             reply_to_id=reply_to_id,
                         )
                     )
