@@ -259,4 +259,39 @@ async def test_telegram_client_download_file_by_id(monkeypatch, tmp_path):
     await client.close()
 
 
+@pytest.mark.asyncio
+async def test_telegram_client_set_message_reaction(monkeypatch):
+    client = TelegramClient("12345:TESTTOKEN")
+    captured_payload = {}
+
+    async def mock_post(url, **kwargs):
+        req = httpx.Request("POST", url)
+        captured_payload.update(kwargs.get("json", {}))
+        return httpx.Response(
+            200,
+            json={"ok": True, "result": True},
+            request=req,
+        )
+
+    mock_client = httpx.AsyncClient()
+    monkeypatch.setattr(mock_client, "post", mock_post)
+    client._client = mock_client
+
+    # Add emoji reaction
+    res = await client.set_message_reaction(chat_id=123, message_id=456, reaction="👀")
+    assert res is True
+    assert captured_payload["chat_id"] == 123
+    assert captured_payload["message_id"] == 456
+    assert captured_payload["reaction"] == [{"type": "emoji", "emoji": "👀"}]
+
+    # Clear reaction
+    captured_payload.clear()
+    res_clear = await client.set_message_reaction(chat_id=123, message_id=456, reaction=None)
+    assert res_clear is True
+    assert captured_payload["reaction"] == []
+
+    await client.close()
+
+
+
 

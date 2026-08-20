@@ -93,3 +93,29 @@ def test_build_adaptive_bot_commands():
     ak = build_artifacts_keyboard([{"name": "test_report.html"}])
     assert any(any(b["callback_data"] == "artifact:dl:0" for b in row) for row in ak["inline_keyboard"])
 
+
+def test_build_decision_and_action_keyboards():
+    from gateway.message_formatter import AgyActionItem
+    from gateway.ui_keyboards import build_actions_keyboard, build_decision_keyboard
+
+    # Test decision keyboard
+    options = ["FastAPI (Recommended)", "Flask", "Django"]
+    dk = build_decision_keyboard(options)
+    buttons = dk["inline_keyboard"]
+    assert len(buttons) >= 2
+    assert buttons[0][0]["callback_data"] == "dec:0"
+    assert "FastAPI" in buttons[0][0]["text"]
+    assert buttons[1][0]["callback_data"] == "dec:1" or (len(buttons[0]) > 1 and buttons[0][1]["callback_data"] == "dec:1")
+
+    # Test actions keyboard
+    actions = [
+        AgyActionItem(label="🧪 Run Tests", action="pytest -v"),
+        AgyActionItem(label="📝 View Diff", action="/diff"),
+    ]
+    ak = build_actions_keyboard(actions)
+    abuttons = ak["inline_keyboard"]
+    assert len(abuttons) >= 1
+    assert abuttons[0][0]["callback_data"] == "act:0"
+    assert "Run Tests" in abuttons[0][0]["text"]
+
+

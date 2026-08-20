@@ -33,3 +33,20 @@ title: <Document Title>
 - **Content Modes** (after `---` separator):
   - **Workspace File Path**: Relative or absolute path to an `.html` file in the workspace (e.g. `runtime/artifacts/report.html`).
   - **Raw HTML**: Complete standalone `<!DOCTYPE html>...</html>` or HTML fragment.
+
+## 4. [AGY_ACTIONS] Interactive Quick Action Buttons Protocol
+When concluding a response where follow-up actions, next steps, or decision choices are recommended, you can output an `[AGY_ACTIONS]` block at the very end of your response. The gateway will automatically convert these into interactive clickable Telegram buttons:
+
+```text
+[AGY_ACTIONS]
+- 🧪 Run Tests: pytest -v
+- 📝 View Git Diff: /diff
+- 🚀 Commit & Deploy
+[END_AGY_ACTIONS]
+```
+
+### Action Protocol Rules:
+- Format: `- <Button Label>: <Prompt or Command>` (if no colon is present, the label is used as prompt).
+- Keep button labels concise (10-25 characters) with an emoji prefix.
+- Provide 2 to 4 actionable next steps.
+

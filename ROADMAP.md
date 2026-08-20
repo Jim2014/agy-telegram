@@ -34,6 +34,13 @@ This document outlines the milestones and roadmap for integrating new Google Ant
 - [x] **4.3 Conversation Artifacts Manager (`/artifacts`, `/scratch`)**: Browse and download reports, code diffs, and scratch scripts with 1-tap buttons.
 - [x] **4.4 Adaptive LRU Command Menu & Interactive Center**: Keep `/help` pinned at top, dynamically bubble frequently used commands up, and limit mobile popup menu to top 8 items.
 
+### 📋 Milestone 5: Telegram Interactive UI & Rich Display Evolution
+- [x] **5.1 Dynamic Decision Option Buttons & `ask_question` Integration**: Automatically convert AGY `ask_question` tool options and `[AGY_ACTIONS]` suggested next steps into clickable Telegram Inline Keyboards; trigger follow-ups on tap without typing.
+- [x] **5.2 Collapsible Logs & Expandable Blockquotes (`<blockquote expandable>`)**: Support Telegram Bot API 7.3+ `<blockquote expandable>` for long command outputs and progress traces to eliminate mobile screen clutter.
+- [x] **5.3 Instant Message Reaction Feedback (`setMessageReaction`)**: Provide millisecond-level emoji feedback (`👀` on prompt received, `⚡` on tool execution, `✅` on success, `⚠️` on error).
+- [x] **5.4 Dynamic Slash Command Dispatcher & LRU Integration**: Centralized slash command routing with persistent statistics and instant execution.
+- [x] **5.5 Unit & Integration Testing**: 109 automated tests passing with complete coverage across interactive buttons, expandable blocks, reactions, and callbacks.
+
 ---
 
 ## Status Log
@@ -44,3 +51,4 @@ This document outlines the milestones and roadmap for integrating new Google Ant
 | **Milestone 2** | Declarative Agent Rules Integration | ✅ Completed | 2026-08-19 |
 | **Milestone 3** | Long-Lived Session Process Pool | ✅ Completed | 2026-08-19 |
 | **Milestone 4** | Quota, Skills, Artifacts & Adaptive LRU Menu | ✅ Completed | 2026-08-19 |
+| **Milestone 5** | Interactive UI (Buttons, Expandable, Reactions) | ✅ Completed | 2026-08-19 |

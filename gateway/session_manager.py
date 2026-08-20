@@ -26,6 +26,8 @@ class ChatSession:
     last_active_at: float = field(default_factory=time.time)
     command_stats: Dict[str, int] = field(default_factory=dict)
     command_last_used: Dict[str, float] = field(default_factory=dict)
+    pending_decisions: List[str] = field(default_factory=list)
+    pending_actions: List[Dict[str, str]] = field(default_factory=list)
 
     @property
     def conversation_id(self) -> Optional[str]:

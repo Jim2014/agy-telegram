@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from gateway.agy_bridge import AgyBridge, AgyEvent
 from gateway.bot import AgyTelegramBot
@@ -1041,6 +1041,91 @@ async def test_bot_usage_skills_artifacts_commands(mock_bot, monkeypatch, tmp_pa
         }
     })
     mock_bot.client.edit_message_text.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_bot_decision_and_action_buttons_flow(mock_bot):
+    session = mock_bot.session_manager.get_session(100)
+    session.pending_decisions = ["FastAPI (Recommended)", "Flask"]
+    session.pending_actions = [
+        {"label": "🧪 Run Tests", "action": "pytest -v"},
+        {"label": "📊 Check Status", "action": "/status"},
+    ]
+
+    dispatched_prompts = []
+
+    async def mock_handle_prompt(chat_id, prompt, reply_to_id=None):
+        dispatched_prompts.append((chat_id, prompt))
+
+    mock_bot.handle_prompt = mock_handle_prompt
+
+    dispatched_commands = []
+
+    async def mock_dispatch_cmd(chat_id, cmd, arg="", message_id=None):
+        dispatched_commands.append((chat_id, cmd, arg))
+
+    mock_bot.dispatch_slash_command = mock_dispatch_cmd
+
+    # 1. Test clicking a decision button 'dec:0'
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_dec_0",
+            "message": {"chat": {"id": 100}, "message_id": 500},
+            "data": "dec:0",
+        }
+    })
+    assert len(dispatched_prompts) == 1
+    assert dispatched_prompts[0][1] == "FastAPI (Recommended)"
+
+    # 2. Test clicking a prompt action button 'act:0' (pytest -v)
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_act_0",
+            "message": {"chat": {"id": 100}, "message_id": 501},
+            "data": "act:0",
+        }
+    })
+    assert len(dispatched_prompts) == 2
+    assert dispatched_prompts[1][1] == "pytest -v"
+
+    # 3. Test clicking a slash command action button 'act:1' (/status)
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_act_1",
+            "message": {"chat": {"id": 100}, "message_id": 502},
+            "data": "act:1",
+        }
+    })
+    assert len(dispatched_commands) == 1
+    assert dispatched_commands[0][1] == "/status"
+
+
+@pytest.mark.asyncio
+async def test_bot_prompt_generates_action_keyboard(mock_bot):
+    async def mock_stream(*args, **kwargs):
+        yield AgyEvent(type="init", conversation_id="c12345")
+        yield AgyEvent(
+            type="result",
+            response="Task completed.\n\n[AGY_ACTIONS]\n- 🧪 Run Tests: pytest\n- 📝 View Diff: /diff\n[END_AGY_ACTIONS]",
+            usage={"total_tokens": 500},
+            duration_seconds=1.5,
+        )
+
+    mock_bot.active_bridges[100] = MagicMock()
+    mock_bot.active_bridges[100].run_streaming = mock_stream
+
+    update = {"message": {"chat": {"id": 100}, "text": "build project", "message_id": 777}}
+    await mock_bot.process_update(update)
+
+    # Verify that reply_markup was attached to the final message edit
+    call_args = mock_bot.client.edit_message_text.call_args[1]
+    reply_markup = call_args.get("reply_markup")
+    assert reply_markup is not None
+    assert "inline_keyboard" in reply_markup
+    buttons = reply_markup["inline_keyboard"]
+    assert len(buttons) >= 1
+    assert buttons[0][0]["callback_data"] == "act:0"
+
 
 
 

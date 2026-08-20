@@ -43,8 +43,10 @@ from gateway.media_handlers import (
     handle_voice_message as mh_handle_voice_message,
 )
 from gateway.message_formatter import (
+    AgyActionItem,
     AgyFileBlock,
     escape_html,
+    extract_agy_action_blocks,
     extract_agy_file_blocks,
     format_final_result,
     format_streaming_message,
@@ -56,7 +58,11 @@ from gateway.message_formatter import (
 )
 from gateway.session_manager import ChatSession, SessionManager
 from gateway.telegram_client import TelegramClient
-from gateway.ui_keyboards import build_adaptive_bot_commands
+from gateway.ui_keyboards import (
+    build_actions_keyboard,
+    build_adaptive_bot_commands,
+    build_decision_keyboard,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +183,27 @@ class AgyTelegramBot:
             raise
         except Exception as e:
             logger.warning("Telegram send_chat_action failed for chat %s: %s", chat_id, e)
+            return False
+
+    async def _safe_set_message_reaction(
+        self,
+        chat_id: int,
+        message_id: Optional[int],
+        reaction: str = "👀",
+    ) -> bool:
+        """Add emoji reaction safely, catching all Telegram / network errors."""
+        if not message_id:
+            return False
+        try:
+            return await self.client.set_message_reaction(
+                chat_id=chat_id,
+                message_id=message_id,
+                reaction=reaction,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug("Telegram set_message_reaction failed for chat %s, msg %s: %s", chat_id, message_id, e)
             return False
 
     async def _safe_answer_callback_query(
@@ -327,52 +354,9 @@ class AgyTelegramBot:
             # Slash command routing
             if text.startswith("/"):
                 parts = text.split(maxsplit=1)
-                cmd = parts[0].lower().split("@")[0]
+                cmd = parts[0]
                 arg = parts[1].strip() if len(parts) > 1 else ""
-
-                # Record command usage for adaptive LRU menu and update in background
-                self.session_manager.record_command_usage(chat_id, cmd)
-                asyncio.create_task(self.update_chat_command_menu(chat_id))
-
-                if cmd in ("/start", "/help"):
-                    await self.handle_cmd_help(chat_id)
-                elif cmd in ("/usage", "/quota"):
-                    await self.handle_cmd_usage(chat_id, reply_to_id=message_id)
-                elif cmd in ("/skills", "/plugins"):
-                    await self.handle_cmd_skills(chat_id, reply_to_id=message_id)
-                elif cmd in ("/artifacts", "/scratch"):
-                    await self.handle_cmd_artifacts(chat_id, arg, reply_to_id=message_id)
-                elif cmd == "/new":
-                    await self.handle_cmd_new(chat_id, arg)
-                elif cmd == "/open":
-                    await self.handle_cmd_open(chat_id, arg)
-                elif cmd == "/projects":
-                    await self.handle_cmd_projects(chat_id)
-                elif cmd == "/delete":
-                    await self.handle_cmd_delete(chat_id, arg)
-                elif cmd == "/reset":
-                    await self.handle_cmd_reset(chat_id)
-                elif cmd == "/status":
-                    await self.handle_cmd_status(chat_id)
-                elif cmd == "/model":
-                    await self.handle_cmd_model(chat_id, arg)
-                elif cmd == "/effort":
-                    await self.handle_cmd_effort(chat_id, arg)
-                elif cmd in ("/dir", "/ls"):
-                    await self.handle_cmd_dir(chat_id, arg, message_id)
-                elif cmd == "/file":
-                    await self.handle_cmd_file(chat_id, arg, message_id)
-                elif cmd == "/export":
-                    await self.handle_cmd_export(chat_id, message_id)
-                elif cmd == "/steer":
-                    await self.handle_cmd_steer(chat_id, arg, message_id)
-                elif cmd == "/stop":
-                    await self.handle_cmd_stop(chat_id)
-                else:
-                    await self._safe_send_message(
-                        chat_id=chat_id,
-                        text=f"❓ Unknown command <code>{escape_html(cmd)}</code>. Use /help for instructions.",
-                    )
+                await self.dispatch_slash_command(chat_id, cmd, arg, message_id)
                 return
 
             # If a prompt is running and user sends a new message -> steer into active session!
@@ -392,7 +376,59 @@ class AgyTelegramBot:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error("Unhandled error processing update %s: %s", update, e, exc_info=True)
+            logger.error("Error processing update: %s", e, exc_info=True)
+
+    async def dispatch_slash_command(
+        self,
+        chat_id: int,
+        cmd: str,
+        arg: str = "",
+        message_id: Optional[int] = None,
+    ) -> None:
+        """Route and execute slash command with usage tracking."""
+        clean_cmd = cmd.lower().split("@")[0]
+        self.session_manager.record_command_usage(chat_id, clean_cmd)
+        asyncio.create_task(self.update_chat_command_menu(chat_id))
+
+        if clean_cmd in ("/start", "/help"):
+            await self.handle_cmd_help(chat_id)
+        elif clean_cmd in ("/usage", "/quota"):
+            await self.handle_cmd_usage(chat_id, reply_to_id=message_id)
+        elif clean_cmd in ("/skills", "/plugins"):
+            await self.handle_cmd_skills(chat_id, reply_to_id=message_id)
+        elif clean_cmd in ("/artifacts", "/scratch"):
+            await self.handle_cmd_artifacts(chat_id, arg, reply_to_id=message_id)
+        elif clean_cmd == "/new":
+            await self.handle_cmd_new(chat_id, arg)
+        elif clean_cmd == "/open":
+            await self.handle_cmd_open(chat_id, arg)
+        elif clean_cmd == "/projects":
+            await self.handle_cmd_projects(chat_id)
+        elif clean_cmd == "/delete":
+            await self.handle_cmd_delete(chat_id, arg)
+        elif clean_cmd == "/reset":
+            await self.handle_cmd_reset(chat_id)
+        elif clean_cmd == "/status":
+            await self.handle_cmd_status(chat_id)
+        elif clean_cmd == "/model":
+            await self.handle_cmd_model(chat_id, arg)
+        elif clean_cmd == "/effort":
+            await self.handle_cmd_effort(chat_id, arg)
+        elif clean_cmd in ("/dir", "/ls"):
+            await self.handle_cmd_dir(chat_id, arg, message_id)
+        elif clean_cmd == "/file":
+            await self.handle_cmd_file(chat_id, arg, message_id)
+        elif clean_cmd == "/export":
+            await self.handle_cmd_export(chat_id, message_id)
+        elif clean_cmd == "/steer":
+            await self.handle_cmd_steer(chat_id, arg, message_id)
+        elif clean_cmd == "/stop":
+            await self.handle_cmd_stop(chat_id)
+        else:
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=f"❓ Unknown command <code>{escape_html(clean_cmd)}</code>. Use /help for instructions.",
+            )
 
     # Backward-compatible command and media delegation wrappers
     async def handle_cmd_help(self, chat_id: int) -> None:
@@ -507,7 +543,11 @@ class AgyTelegramBot:
                 self.session_manager.create_project(chat_id, "default", default_dir)
                 session = self.session_manager.get_session(chat_id)
 
-        self.session_manager.set_busy(chat_id, True)
+        session.pending_decisions = []
+        session.pending_actions = []
+
+        if reply_to_id:
+            await self._safe_set_message_reaction(chat_id, reply_to_id, "👀")
 
         init_msg = await self._safe_send_message(
             chat_id=chat_id,
@@ -560,6 +600,9 @@ class AgyTelegramBot:
                         self.session_manager.set_conversation_id(chat_id, conv_id)
 
                 elif event.type == "tool":
+                    if reply_to_id:
+                        await self._safe_set_message_reaction(chat_id, reply_to_id, "⚡")
+
                     t_summary = format_tool_summary(
                         tool_name=event.tool_name or "",
                         state=event.tool_state or "ACTIVE",
@@ -571,6 +614,14 @@ class AgyTelegramBot:
                             tool_events[-1] = t_summary
                         else:
                             tool_events.append(t_summary)
+
+                    if event.tool_name == "ask_question":
+                        params = event.tool_info.get("parameters", {}) if isinstance(event.tool_info, dict) else {}
+                        qs = params.get("questions", [])
+                        if qs and isinstance(qs, list) and isinstance(qs[0], dict):
+                            opts = qs[0].get("options", [])
+                            if opts:
+                                session.pending_decisions = [str(o) for o in opts]
 
                     if event.tool_name in ("write_to_file", "replace_file_content"):
                         params = event.tool_info.get("parameters", {}) if isinstance(event.tool_info, dict) else {}
@@ -689,16 +740,25 @@ class AgyTelegramBot:
                 elif err_msg:
                     export_errors.append(f"Failed to export file {af.filename}: {err_msg}")
 
-            if agy_files:
-                if len(agy_files) == 1:
+            if valid_exports:
+                if len(valid_exports) == 1:
                     notice = "📄 <i>Full report generated and attached below.</i>"
                 else:
-                    notice = f"📄 <i>{len(agy_files)} report file(s) generated and attached below.</i>"
+                    notice = f"📄 <i>{len(valid_exports)} report file(s) generated and attached below.</i>"
                 clean_text = f"{clean_text}\n\n{notice}".strip() if clean_text else notice
 
             if export_errors:
                 err_block = "\n".join([f"⚠️ <i>{escape_html(e)}</i>" for e in export_errors])
                 clean_text = f"{clean_text}\n\n{err_block}".strip() if clean_text else err_block
+
+            # Extract [AGY_ACTIONS] suggested next steps from clean_text
+            clean_text, action_items = extract_agy_action_blocks(clean_text)
+            actions_markup: Optional[Dict[str, Any]] = None
+            if action_items:
+                session.pending_actions = [{"label": a.label, "action": a.action} for a in action_items]
+                actions_markup = build_actions_keyboard(action_items)
+            elif session.pending_decisions:
+                actions_markup = build_decision_keyboard(session.pending_decisions)
 
             final_formatted = format_final_result(
                 response_text=clean_text,
@@ -712,31 +772,62 @@ class AgyTelegramBot:
             chunks = split_text_chunks(final_formatted, chunk_size=4000)
 
             if chunks:
+                if len(chunks) == 1:
+                    if msg_id:
+                        await self._safe_edit_message_text(
+                            chat_id=chat_id,
+                            message_id=msg_id,
+                            text=chunks[0],
+                            reply_markup=actions_markup,
+                        )
+                    else:
+                        await self._safe_send_message(
+                            chat_id=chat_id,
+                            text=chunks[0],
+                            reply_markup=actions_markup,
+                            reply_to_message_id=reply_to_id,
+                        )
+                else:
+                    if msg_id:
+                        await self._safe_edit_message_text(
+                            chat_id=chat_id,
+                            message_id=msg_id,
+                            text=chunks[0],
+                        )
+                    else:
+                        await self._safe_send_message(
+                            chat_id=chat_id,
+                            text=chunks[0],
+                            reply_to_message_id=reply_to_id,
+                        )
+
+                    for idx, chunk in enumerate(chunks[1:], 1):
+                        is_last = (idx == len(chunks) - 1)
+                        await self._safe_send_message(
+                            chat_id=chat_id,
+                            text=chunk,
+                            reply_markup=actions_markup if is_last else None,
+                            reply_to_message_id=reply_to_id,
+                        )
+            else:
+                fallback = f"✅ <b>Done</b> <i>({total_duration:.1f}s)</i>"
                 if msg_id:
                     await self._safe_edit_message_text(
                         chat_id=chat_id,
                         message_id=msg_id,
-                        text=chunks[0],
+                        text=fallback,
+                        reply_markup=actions_markup,
                     )
                 else:
                     await self._safe_send_message(
                         chat_id=chat_id,
-                        text=chunks[0],
+                        text=fallback,
+                        reply_markup=actions_markup,
                         reply_to_message_id=reply_to_id,
                     )
 
-                for chunk in chunks[1:]:
-                    await self._safe_send_message(
-                        chat_id=chat_id,
-                        text=chunk,
-                        reply_to_message_id=reply_to_id,
-                    )
-            else:
-                fallback = f"✅ <b>Done</b> <i>({total_duration:.1f}s)</i>"
-                if msg_id:
-                    await self._safe_edit_message_text(chat_id=chat_id, message_id=msg_id, text=fallback)
-                else:
-                    await self._safe_send_message(chat_id=chat_id, text=fallback, reply_to_message_id=reply_to_id)
+            if reply_to_id:
+                await self._safe_set_message_reaction(chat_id, reply_to_id, "✅")
 
             # Send explicit [AGY_FILE] protocol exported documents
             for af, html_data in valid_exports:
@@ -768,9 +859,13 @@ class AgyTelegramBot:
                     message_id=msg_id,
                     text="🛑 <i>Task stopped.</i>",
                 )
+            if reply_to_id:
+                await self._safe_set_message_reaction(chat_id, reply_to_id, "⚠️")
             raise
         except Exception as e:
             logger.error("Error executing prompt for chat %s: %s", chat_id, e, exc_info=True)
+            if reply_to_id:
+                await self._safe_set_message_reaction(chat_id, reply_to_id, "⚠️")
             err_text = f"❌ <b>Execution Error:</b>\n<code>{escape_html(str(e))}</code>"
             if msg_id:
                 await self._safe_edit_message_text(chat_id=chat_id, message_id=msg_id, text=err_text)

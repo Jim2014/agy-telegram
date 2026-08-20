@@ -367,11 +367,11 @@ def format_streaming_message(
         current_text = kwargs["accumulated_text"]
     sections: List[str] = []
 
-    # Include recent tool events (keep up to last 4 to keep message concise)
+    # Include recent tool events in an expandable blockquote for compact mobile display
     if tool_events:
-        recent_tools = tool_events[-4:]
+        recent_tools = tool_events[-5:]
         tools_block = "\n".join(recent_tools)
-        sections.append(f"<b>[Progress]</b>\n{tools_block}")
+        sections.append(f"<blockquote expandable><b>[Progress]</b>\n{tools_block}</blockquote>")
 
     # Convert ongoing markdown text to Telegram HTML
     formatted_body = markdown_to_telegram_html(current_text) if current_text else "<i>(thinking...)</i>"
@@ -385,7 +385,7 @@ def format_streaming_message(
     # If exceeding max_len, trim the body text from top
     header = ""
     if tool_events:
-        header = f"<b>[Progress]</b>\n" + "\n".join(tool_events[-3:]) + "\n\n[...earlier text omitted...]\n"
+        header = f"<blockquote expandable><b>[Progress]</b>\n" + "\n".join(tool_events[-3:]) + "</blockquote>\n\n[...earlier text omitted...]\n"
 
     available_space = max_len - len(header) - len(cursor_char) - 20
     if available_space < 100:
@@ -967,6 +967,55 @@ def extract_agy_file_blocks(text: str) -> Tuple[str, List[AgyFileBlock]]:
     cleaned = AGY_FILE_PATTERN.sub(repl, text)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned, blocks
+
+
+@dataclass
+class AgyActionItem:
+    """Action button item from [AGY_ACTIONS] protocol."""
+
+    label: str
+    action: str
+    description: str = ""
+
+
+AGY_ACTIONS_PATTERN = re.compile(r"\[AGY_ACTIONS\](.*?)\[END_AGY_ACTIONS\]", re.DOTALL | re.IGNORECASE)
+
+
+def extract_agy_action_blocks(text: str) -> Tuple[str, List[AgyActionItem]]:
+    """
+    Extract explicit [AGY_ACTIONS]...[END_AGY_ACTIONS] blocks from text.
+    Format inside the block:
+      - 🚀 Run Tests: pytest -v
+      - 📝 View Diff: /diff
+      - 💡 Explain Architecture
+    Returns:
+      (cleaned_text, list_of_actions)
+    """
+    if not text or "[AGY_ACTIONS]" not in text:
+        return text, []
+
+    actions: List[AgyActionItem] = []
+
+    def repl_action(m: re.Match) -> str:
+        body = m.group(1)
+        for line in body.splitlines():
+            line_str = line.strip()
+            if not line_str or line_str.startswith("#"):
+                continue
+            # Remove leading bullet characters
+            line_clean = re.sub(r"^[\*\-\+•]\s*", "", line_str).strip()
+            if not line_clean:
+                continue
+            if ":" in line_clean:
+                lbl, act = line_clean.split(":", 1)
+                actions.append(AgyActionItem(label=lbl.strip(), action=act.strip()))
+            else:
+                actions.append(AgyActionItem(label=line_clean, action=line_clean))
+        return ""
+
+    cleaned = AGY_ACTIONS_PATTERN.sub(repl_action, text)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned, actions
 
 
 def wrap_raw_html_for_mobile(

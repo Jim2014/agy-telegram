@@ -422,3 +422,38 @@ def test_mobile_html_responsive_elements():
     assert "@media (max-width: 480px)" in html_out
     assert "@media (prefers-color-scheme: light)" in html_out
 
+
+def test_extract_agy_action_blocks():
+    from gateway.message_formatter import extract_agy_action_blocks
+
+    text = """
+Here is the implementation of the strategy.
+
+[AGY_ACTIONS]
+- 🧪 Run Tests: pytest -v
+- 📝 View Diff: /diff
+- 🚀 Commit & Push
+[END_AGY_ACTIONS]
+"""
+    cleaned, actions = extract_agy_action_blocks(text)
+    assert "[AGY_ACTIONS]" not in cleaned
+    assert "Here is the implementation" in cleaned
+    assert len(actions) == 3
+    assert actions[0].label == "🧪 Run Tests"
+    assert actions[0].action == "pytest -v"
+    assert actions[1].label == "📝 View Diff"
+    assert actions[1].action == "/diff"
+    assert actions[2].label == "🚀 Commit & Push"
+    assert actions[2].action == "🚀 Commit & Push"
+
+
+def test_expandable_blockquotes_in_streaming():
+    from gateway.message_formatter import format_streaming_message
+
+    tools = ["⚙️ run_command: pytest...", "✅ run_command (1.2s)"]
+    msg = format_streaming_message(tool_events=tools, current_text="Building...")
+    assert "<blockquote expandable>" in msg
+    assert "</blockquote>" in msg
+    assert "<b>[Progress]</b>" in msg
+
+

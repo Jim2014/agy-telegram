@@ -207,6 +207,10 @@ tail -f -n 50 runtime/watchdog.log
 
 为了提高移动端操作效率，网关全面支持交互式按钮点击：
 - **/help 命令中心**：展示所有快捷功能入口（`[ 📊 Status ]`、`[ 🪙 Quota & Usage ]`、`[ 📁 Projects ]`、`[ 🧠 Model & Effort ]`、`[ 🧩 Skills & Tools ]`、`[ 📦 Artifacts ]`、`[ 📁 File Tree ]`、`[ 📄 Export ]`）。
+- **🔘 对话决策与后续操作选项 (Decision Flow & Action Buttons)**：
+  - 当 agy 调用 `ask_question` 工具或在末尾返回建议操作时，直接在消息下方渲染交互式行内按钮（如 `[ 🧪 运行单元测试 ]`、`[ 📝 查看 Diff ]`、`[ 🚀 提交变更 ]`），点击一键执行，无需在手机上打字！
+- **📑 原生可折叠工具进度 (`<blockquote expandable>`)**：长日志、多工具流执行过程自动包裹在可折叠块中，手机端默认仅占 3 行高度，点击即可就地展开。
+- **⚡ 即时消息 Reaction 反馈**：用户发送提示后立即反应 `👀`，执行工具反应 `⚡`，成功完成反应 `✅`，遇到异常反应 `⚠️`。
 - **/usage 配额看板**：直观展示 Gemini 7天周限制与 5小时速率限制剩余百分比（进度条格式）、重置倒计时与 AI 积分余额，附带 `[ 🔄 Refresh Quota ]` 与 `[ 🧠 Switch Model ]`。
 - **/skills 技能库**：分类展示当前 Agent 具备的 Builtin 及各插件（Firebase, Web Guidance, Xcode, AGY SDK 等）技能总览。
 - **/artifacts 产物管理**：列出会话生成的 HTML 报告、图表与 `scratch/` 脚本，附带 `[ 📥 一键下载 ]` 按钮。
@@ -310,16 +314,16 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-测试覆盖范围（102 项全部通过）：
+测试覆盖范围（109 项全部通过）：
 - `test_config.py`: 配置解析、Token 格式验证、白名单过滤、默认 runtime 路径、默认系统提示词内容校验、环境变量及文件覆盖测试
-- `test_session_manager.py`: 会话 CRUD、持久化与恢复、并发状态保护、Legacy 迁移、累计 Token 与耗时统计、命令使用频次与 LRU 追踪
-- `test_ui_keyboards.py`: 多项目内联键盘、模型选择菜单、推理强度切换菜单渲染、自适应 LRU 命令菜单生成（`/help` 置顶、Top 8 截断）、配额/技能/产物/帮助命令中心面板
-- `test_message_formatter.py`: HTML 实体转义、Markdown 转 Telegram HTML、代码高亮、标签自闭合、表格转换、独立移动 HTML 文档导出、文件导出条件判断、`sanitize_filename`、`detect_content_mode`、`parse_agy_file_block`、`extract_agy_file_blocks`、`render_agy_file` 三种模式（Markdown / Raw HTML / File Path）、移动端视口与响应式元素验证
+- `test_session_manager.py`: 会话 CRUD、持久化与恢复、并发状态保护、Legacy 迁移、累计 Token 与耗时统计、命令使用频次与 LRU 追踪、决策与动作状态暂存
+- `test_ui_keyboards.py`: 多项目内联键盘、模型选择菜单、推理强度切换菜单渲染、自适应 LRU 命令菜单生成（`/help` 置顶、Top 8 截断）、配额/技能/产物/帮助命令中心面板、决策选项键盘与智能后续动作键盘
+- `test_message_formatter.py`: HTML 实体转义、Markdown 转 Telegram HTML、代码高亮、标签自闭合、表格转换、独立移动 HTML 文档导出、文件导出条件判断、`sanitize_filename`、`detect_content_mode`、`parse_agy_file_block`、`extract_agy_file_blocks`、`extract_agy_action_blocks`、可折叠引用块渲染、移动端视口与响应式元素验证
 - `test_dir_tree.py`: 目录树扫描、文件大小格式化与独立 HTML 导航器生成
 - `test_file_renderers.py`: 代码高亮转换、Markdown 渲染、Diff 补丁视图、CSV 响应式表格渲染与二进制回退
 - `test_agy_bridge.py`: 命令构建、stream-json 协议解析、Mock 管道流、声明式规则检测、跨轮次进程池长连接复用与空闲回收、`steer()` 注入与 `is_running()` 状态判断
-- `test_telegram_client.py`: API 调用、HTML 实体解析失败自动降级、304 抑制、`send_document` 多部件上传、语音文件下载、自适应 `set_my_commands`
-- `test_bot.py`: 所有斜杠命令路由（含 `/usage`, `/skills`, `/artifacts`）、未授权拦截、流式处理管线、语音笔记/音频接收、文件附件处理、中途 Steering 注入、`/dir` 目录浏览、`/file` 文件发送、`/export` 导出、产物一键下载、Telegram 网络异常抗逆与自动降级保护
+- `test_telegram_client.py`: API 调用、HTML 实体解析失败自动降级、304 抑制、`send_document` 多部件上传、语音文件下载、自适应 `set_my_commands`、`set_message_reaction` Emoji 反应
+- `test_bot.py`: 所有斜杠命令路由（含 `/usage`, `/skills`, `/artifacts`）、集中式命令分发器、未授权拦截、流式处理管线、语音笔记/音频接收、文件附件处理、中途 Steering 注入、`/dir` 目录浏览、`/file` 文件发送、`/export` 导出、产物一键下载、`ask_question` 原生决策选项与 `[AGY_ACTIONS]` 快捷按钮交互闭环、Telegram 网络异常抗逆与自动降级保护
 - `test_smoke_agy.py`: 真实的 `agy` CLI 联调冒烟测试
 
 

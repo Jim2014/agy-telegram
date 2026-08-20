@@ -285,6 +285,53 @@ def build_artifacts_keyboard(artifacts: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"inline_keyboard": buttons}
 
 
+def build_decision_keyboard(
+    options: List[str],
+) -> Dict[str, Any]:
+    """
+    Build an interactive inline keyboard for ask_question choices.
+    Buttons trigger callback_data 'dec:<index>'.
+    """
+    keyboard: List[List[Dict[str, str]]] = []
+    row: List[Dict[str, str]] = []
+
+    for idx, opt in enumerate(options):
+        btn_label = opt[:28] + ("..." if len(opt) > 28 else "")
+        row.append({"text": f"👉 {btn_label}", "callback_data": f"dec:{idx}"})
+        if len(row) == 2 or len(opt) > 16:
+            keyboard.append(row)
+            row = []
+
+    if row:
+        keyboard.append(row)
+
+    return {"inline_keyboard": keyboard}
+
+
+def build_actions_keyboard(
+    actions: List[Any],
+) -> Dict[str, Any]:
+    """
+    Build an inline keyboard for [AGY_ACTIONS] suggested next steps.
+    Buttons trigger callback_data 'act:<index>'.
+    """
+    keyboard: List[List[Dict[str, str]]] = []
+    row: List[Dict[str, str]] = []
+
+    for idx, item in enumerate(actions[:6]):
+        label = getattr(item, "label", str(item))
+        btn_label = label[:26] + ("..." if len(label) > 26 else "")
+        row.append({"text": btn_label, "callback_data": f"act:{idx}"})
+        if len(row) == 2 or len(label) > 14:
+            keyboard.append(row)
+            row = []
+
+    if row:
+        keyboard.append(row)
+
+    return {"inline_keyboard": keyboard}
+
+
 if __name__ == "__main__":
     msg, kb = build_model_keyboard("gemini-3.7-flash", "high")
     print("build_model_keyboard output preview:\n", msg)

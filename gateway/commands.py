@@ -972,6 +972,47 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
         await bot._safe_answer_callback_query(cq_id)
         await handle_cmd_export(bot, chat_id)
 
+    elif data.startswith("dec:"):
+        idx_str = data[4:].strip()
+        opt_text = ""
+        try:
+            idx = int(idx_str)
+            if 0 <= idx < len(session.pending_decisions):
+                opt_text = session.pending_decisions[idx]
+        except Exception:
+            pass
+
+        if opt_text:
+            await bot._safe_answer_callback_query(cq_id, text=f"Selected: {opt_text[:30]}")
+            session.pending_decisions = []
+            await bot.handle_prompt(chat_id=chat_id, prompt=opt_text, reply_to_id=None)
+        else:
+            await bot._safe_answer_callback_query(cq_id, text="Option expired or unavailable", show_alert=True)
+
+    elif data.startswith("act:"):
+        idx_str = data[4:].strip()
+        action_item = None
+        try:
+            idx = int(idx_str)
+            if 0 <= idx < len(session.pending_actions):
+                action_item = session.pending_actions[idx]
+        except Exception:
+            pass
+
+        if action_item:
+            act_prompt = action_item.get("action", "")
+            act_label = action_item.get("label", "Action")
+            await bot._safe_answer_callback_query(cq_id, text=f"Running: {act_label[:30]}")
+            if act_prompt.startswith("/"):
+                parts = act_prompt.split(None, 1)
+                cmd = parts[0]
+                arg = parts[1] if len(parts) > 1 else ""
+                await bot.dispatch_slash_command(chat_id=chat_id, cmd=cmd, arg=arg, message_id=None)
+            else:
+                await bot.handle_prompt(chat_id=chat_id, prompt=act_prompt, reply_to_id=None)
+        else:
+            await bot._safe_answer_callback_query(cq_id, text="Action expired or unavailable", show_alert=True)
+
     else:
         await bot._safe_answer_callback_query(cq_id)
 

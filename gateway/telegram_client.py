@@ -404,6 +404,31 @@ class TelegramClient:
             logger.warning("Failed to set chat menu button: %s", e)
             return False
 
+    async def set_message_reaction(
+        self,
+        chat_id: int,
+        message_id: int,
+        reaction: Optional[str] = None,
+        is_big: bool = False,
+    ) -> bool:
+        """Add emoji reaction to a message (Telegram Bot API 7.0+). Pass reaction=None to clear."""
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+        }
+        if reaction:
+            payload["reaction"] = [{"type": "emoji", "emoji": reaction}]
+        else:
+            payload["reaction"] = []
+        if is_big:
+            payload["is_big"] = is_big
+        try:
+            res = await self._post("setMessageReaction", payload)
+            return bool(res)
+        except Exception as e:
+            logger.debug("Failed to set message reaction '%s' for msg %s: %s", reaction, message_id, e)
+            return False
+
 
 if __name__ == "__main__":
     async def main() -> None:
