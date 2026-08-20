@@ -13,7 +13,12 @@ if _repo_root not in sys.path:
 
 from gateway.dir_tree import generate_dir_tree_html, scan_directory_tree
 from gateway.file_renderers import render_file_to_html
-from gateway.message_formatter import escape_html, generate_standalone_html
+from gateway.message_formatter import (
+    escape_html,
+    format_duration,
+    format_tokens,
+    generate_standalone_html,
+)
 from gateway.ui_keyboards import (
     build_artifacts_keyboard,
     build_effort_keyboard,
@@ -274,23 +279,10 @@ async def handle_cmd_status(bot: Any, chat_id: int) -> None:
     cum_duration = active_stats.get("total_duration_seconds", 0.0)
     session_start = active_stats.get("session_started_at", session.created_at)
 
-    if cum_tokens >= 1_000_000:
-        tok_str = f"{cum_tokens / 1_000_000:.2f}M ({cum_tokens:,})"
-    elif cum_tokens >= 1_000:
-        tok_str = f"{cum_tokens / 1_000:.1f}k ({cum_tokens:,})"
-    else:
-        tok_str = f"{cum_tokens}"
-
-    if cum_thinking:
-        tok_str += f" (thinking: {cum_thinking:,})"
-
+    tok_str = format_tokens(cum_tokens, cum_thinking)
+    dur_str = format_duration(cum_duration)
     session_age = max(0, int(time.time() - session_start))
-    if session_age < 60:
-        sess_age_str = f"{session_age}s"
-    elif session_age < 3600:
-        sess_age_str = f"{session_age // 60}m {session_age % 60}s"
-    else:
-        sess_age_str = f"{session_age // 3600}h {(session_age % 3600) // 60}m"
+    sess_age_str = format_duration(session_age)
 
     status_text = (
         "📊 <b>Session & System Status:</b>\n\n"
@@ -303,9 +295,9 @@ async def handle_cmd_status(bot: Any, chat_id: int) -> None:
         "📈 <b>Active Session Cumulative Stats:</b>\n"
         f"• <b>Conversation ID:</b> {conv_id}\n"
         f"• <b>Session Age:</b> <code>{sess_age_str}</code>\n"
-        f"• <b>Total Turns:</b> <code>{total_turns}</code>\n"
+        f"• <b>Total Turns:</b> <code>{total_turns} turn(s)</code>\n"
         f"• <b>Total Tokens:</b> <code>{tok_str}</code>\n"
-        f"• <b>Cumulative Runtime:</b> <code>{cum_duration:.1f}s</code>\n\n"
+        f"• <b>Cumulative Runtime:</b> <code>{dur_str}</code>\n\n"
         f"📁 <b>Configured Projects:</b> {len(session.projects)}\n"
     )
     await bot._safe_send_message(chat_id=chat_id, text=status_text)
@@ -674,8 +666,16 @@ async def handle_cmd_usage(
     stats = proj.get("stats", {})
     if stats:
         tot_tok = stats.get("total_tokens", 0)
+        tot_th = stats.get("thinking_tokens", 0)
         tot_dur = stats.get("total_duration_seconds", 0.0)
-        lines.append(f"📊 <b>Active Session Stats:</b> <code>{tot_tok}</code> tokens used in <code>{tot_dur:.1f}s</code>")
+        tot_turns = stats.get("total_turns", 0)
+        tok_formatted = format_tokens(tot_tok, tot_th)
+        dur_formatted = format_duration(tot_dur)
+        lines.append(
+            f"📊 <b>Active Session Usage:</b>\n"
+            f"• <b>Tokens:</b> <code>{tok_formatted}</code>\n"
+            f"• <b>Runtime:</b> <code>{dur_formatted}</code> across <code>{tot_turns} turn(s)</code>"
+        )
 
     lines.append("\n💡 <i>Limits refresh automatically based on your subscription tier.</i>")
     text = "\n".join(lines)

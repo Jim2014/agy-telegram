@@ -80,6 +80,23 @@ def test_format_tool_summary():
     assert "60s" in t_sched
 
 
+def test_format_tokens_and_duration():
+    from gateway.message_formatter import format_duration, format_tokens
+
+    # Token formatting
+    assert format_tokens(3973596) == "3.97M (3,973,596)"
+    assert format_tokens(3973596, thinking=250000) == "3.97M (3,973,596) [thinking: 250.0k]"
+    assert format_tokens(45210) == "45.2k (45,210)"
+    assert format_tokens(350) == "350"
+    assert format_tokens(0) == "0"
+
+    # Duration formatting
+    assert format_duration(7208.2) == "2h 0m 8s (7,208s)"
+    assert format_duration(75.4) == "1m 15s (75.4s)"
+    assert format_duration(4.2) == "4.2s"
+    assert format_duration(0.0) == "0.0s"
+
+
 def test_balance_telegram_html():
     unclosed = "<b>bold <i>italic and <code>code"
     balanced = balance_telegram_html(unclosed)

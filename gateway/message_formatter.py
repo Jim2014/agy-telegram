@@ -88,6 +88,57 @@ def format_markdown_tables(text: str) -> str:
     return table_pattern.sub(repl_table, text)
 
 
+def format_tokens(num: int, thinking: int = 0) -> str:
+    """
+    Format token counts with human-readable abbreviations and full numbers.
+    Examples:
+        3973596 -> "3.97M (3,973,596)"
+        45210 -> "45.2k (45,210)"
+        350 -> "350"
+    """
+    safe_num = max(0, int(num))
+    if safe_num >= 1_000_000:
+        main_str = f"{safe_num / 1_000_000:.2f}M ({safe_num:,})"
+    elif safe_num >= 1_000:
+        main_str = f"{safe_num / 1_000:.1f}k ({safe_num:,})"
+    else:
+        main_str = f"{safe_num:,}"
+
+    if thinking > 0:
+        safe_th = int(thinking)
+        if safe_th >= 1_000_000:
+            th_str = f"{safe_th / 1_000_000:.2f}M"
+        elif safe_th >= 1_000:
+            th_str = f"{safe_th / 1_000:.1f}k"
+        else:
+            th_str = f"{safe_th:,}"
+        return f"{main_str} [thinking: {th_str}]"
+
+    return main_str
+
+
+def format_duration(seconds: float) -> str:
+    """
+    Format duration seconds into human-readable hours/minutes/seconds.
+    Examples:
+        7208.2 -> "2h 0m 8s" (or "2h 0m 8s (7,208s)")
+        75.4 -> "1m 15s (75.4s)"
+        4.2 -> "4.2s"
+    """
+    sec = max(0.0, float(seconds))
+    if sec < 60.0:
+        return f"{sec:.1f}s"
+
+    tot_sec = int(round(sec))
+    hours = tot_sec // 3600
+    minutes = (tot_sec % 3600) // 60
+    rem_s = tot_sec % 60
+
+    if hours > 0:
+        return f"{hours}h {minutes}m {rem_s}s ({sec:,.0f}s)"
+    return f"{minutes}m {rem_s}s ({sec:.1f}s)"
+
+
 def markdown_to_telegram_html(text: str) -> str:
     """
     Convert GitHub-flavored Markdown text to valid, rich Telegram-supported HTML.
