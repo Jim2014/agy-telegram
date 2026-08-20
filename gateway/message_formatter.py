@@ -47,44 +47,47 @@ def balance_telegram_html(text: str) -> str:
 
 
 def format_markdown_tables(text: str) -> str:
-    """Convert Markdown tables into cleanly aligned monospaced code blocks."""
-    table_pattern = re.compile(r"((?:^\|[^\n]+\|\r?\n){2,})", re.MULTILINE)
+    """
+    Format Markdown tables for mobile Telegram display.
+    Converts tables into structured, legible key-value card rows or bullet items
+    instead of clipping wide ASCII monospaced boxes on mobile screens.
+    """
+    table_pattern = re.compile(r"((?:^\|[^\n]+\|(?:\r?\n|$)){2,})", re.MULTILINE)
 
     def repl_table(match: re.Match) -> str:
         block = match.group(1).strip()
         lines = [l.strip() for l in block.split("\n") if l.strip()]
-        if len(lines) < 2:
+        if len(lines) < 2 or not re.match(r"^\|[\s\-:|]+\|$", lines[1]):
             return match.group(0)
 
-        # Verify separator row
-        if not re.match(r"^\|[\s\-:|]+\|$", lines[1]):
-            return match.group(0)
+        def clean_cell(c: str) -> str:
+            c = c.strip()
+            # Convert file links [label](file://...) -> label
+            c = re.sub(r"\[([^\]]+)\]\(file://[^\)]+\)", r"\1", c)
+            return c
 
-        rows: List[List[str]] = []
-        for l in [lines[0]] + lines[2:]:
-            cols = [c.strip() for c in l.strip("|").split("|")]
-            rows.append(cols)
+        headers = [clean_cell(c) for c in lines[0].strip("|").split("|")]
+        data_rows: List[List[str]] = []
+        for l in lines[2:]:
+            cols = [clean_cell(c) for c in l.strip("|").split("|")]
+            data_rows.append(cols)
 
-        if not rows:
-            return match.group(0)
+        formatted: List[str] = []
+        for r in data_rows:
+            if not any(r):
+                continue
+            if len(r) == 2:
+                formatted.append(f"• <b>{r[0]}</b>: {r[1]}")
+            elif len(r) >= 3:
+                main_title = r[0]
+                tags = " / ".join([x for x in r[1:-1] if x])
+                desc = r[-1]
+                tag_str = f" <i>({tags})</i>" if tags else ""
+                formatted.append(f"• <b>{main_title}</b>{tag_str}: {desc}")
+            else:
+                formatted.append("• " + " | ".join(r))
 
-        max_cols = max(len(r) for r in rows)
-        widths = [0] * max_cols
-        for r in rows:
-            for i, c in enumerate(r):
-                widths[i] = max(widths[i], len(c))
-
-        formatted_lines = []
-        # Header
-        h_cols = [r.ljust(widths[i]) if i < len(r) else "".ljust(widths[i]) for i, r in enumerate(rows[0])]
-        formatted_lines.append(" | ".join(h_cols))
-        formatted_lines.append("-+-".join("-" * w for w in widths))
-        # Data rows
-        for row in rows[1:]:
-            r_cols = [row[i].ljust(widths[i]) if i < len(row) else "".ljust(widths[i]) for i in range(max_cols)]
-            formatted_lines.append(" | ".join(r_cols))
-
-        return "\n```\n" + "\n".join(formatted_lines) + "\n```\n"
+        return "\n" + "\n".join(formatted) + "\n\n"
 
     return table_pattern.sub(repl_table, text)
 
@@ -199,13 +202,16 @@ def markdown_to_telegram_html(text: str) -> str:
     # 3. Escape HTML special characters in the remaining non-code text
     src = html.escape(src, quote=False)
 
-    # 4. Links: [text](https://...) -> <a href="https://...">text</a>
+    # 4. Links: [text](https://...) -> <a href="...">text</a> or [text](file://...) -> <code>text</code>
     def replace_link(match: re.Match) -> str:
-        label = match.group(1)
+        label = match.group(1).strip()
         url = match.group(2).strip()
-        return f'<a href="{url}">{label}</a>'
+        if url.startswith(("http://", "https://", "tg://")):
+            return f'<a href="{url}">{label}</a>'
+        else:
+            return f'<code>{label}</code>'
 
-    src = re.sub(r"\[([^\]]+)\]\((https?://[^\s\)]+)\)", replace_link, src)
+    src = re.sub(r"\[([^\]]+)\]\(([a-zA-Z0-9_+.-]+://[^\s\)]+|/[^\s\)]+)\)", replace_link, src)
 
     # 5. Headings: # H1, ## H2, ### H3 -> <b>...</b>
     src = re.sub(r"^(#{1,6})\s+(.+)$", r"<b>\2</b>", src, flags=re.MULTILINE)
@@ -601,104 +607,38 @@ def generate_standalone_html(
     if is_html_content:
         src = markdown_content
     else:
-        # 1. Protect code blocks with diff & syntax styling
-        code_blocks: List[str] = []
+        try:
+            import markdown
 
-        def save_cb(m: re.Match) -> str:
-            lang = (m.group(1) or "").strip().lower()
-            code = m.group(2)
-            idx = len(code_blocks)
-            lines = code.split("\n")
-            formatted_lines = []
-            is_diff = lang in ("diff", "patch") or any(l.startswith("@@") or l.startswith("diff --git") for l in lines[:5])
-            for l in lines:
-                esc = html.escape(l, quote=False)
-                if is_diff and esc.startswith("+") and not esc.startswith("+++"):
-                    formatted_lines.append(f'<span class="diff-add">{esc}</span>')
-                elif is_diff and esc.startswith("-") and not esc.startswith("---"):
-                    formatted_lines.append(f'<span class="diff-sub">{esc}</span>')
-                elif is_diff and (esc.startswith("@@") or esc.startswith("diff --git") or esc.startswith("index ")):
-                    formatted_lines.append(f'<span class="diff-info">{esc}</span>')
-                else:
-                    formatted_lines.append(esc)
-
-            lang_label = lang or ("diff" if is_diff else "code")
-            tag = (
-                f'<div class="code-wrapper">'
-                f'<div class="code-header"><span class="lang">{html.escape(lang_label)}</span></div>'
-                f'<pre><code>' + "\n".join(formatted_lines) + f'</code></pre></div>'
+            src = markdown.markdown(
+                markdown_content,
+                extensions=["tables", "fenced_code", "sane_lists", "nl2br"],
             )
-            code_blocks.append(tag)
-            return f"\x00CB{idx}\x00"
 
-        src = re.sub(r"```([a-zA-Z0-9_+-]*)\n?(.*?)```", save_cb, markdown_content, flags=re.DOTALL)
+            # Style diff blocks inside <code class="language-diff">
+            def style_diff(m: re.Match) -> str:
+                code_text = m.group(1)
+                lines = code_text.split("\n")
+                styled_lines = []
+                for l in lines:
+                    if l.startswith("+") and not l.startswith("+++"):
+                        styled_lines.append(f'<span class="diff-add">{l}</span>')
+                    elif l.startswith("-") and not l.startswith("---"):
+                        styled_lines.append(f'<span class="diff-sub">{l}</span>')
+                    elif l.startswith("@@") or l.startswith("diff --git"):
+                        styled_lines.append(f'<span class="diff-info">{l}</span>')
+                    else:
+                        styled_lines.append(l)
+                joined_diff = "\n".join(styled_lines)
+                return f'<div class="code-wrapper"><div class="code-header"><span class="lang">diff</span></div><pre><code class="language-diff">{joined_diff}</code></pre></div>'
 
-        # 2. Protect inline code
-        inline_codes: List[str] = []
+            src = re.sub(r'<pre><code class="language-diff">(.*?)</code></pre>', style_diff, src, flags=re.DOTALL)
 
-        def save_ic(m: re.Match) -> str:
-            c = m.group(1)
-            idx = len(inline_codes)
-            inline_codes.append(f'<code>{html.escape(c, quote=False)}</code>')
-            return f"\x00IC{idx}\x00"
+            # Wrap tables for smooth touch horizontal scroll
+            src = re.sub(r"(<table>.*?</table>)", r'<div class="table-wrapper">\1</div>', src, flags=re.DOTALL)
 
-        src = re.sub(r"`([^`\n]+)`", save_ic, src)
-
-        # 3. Escape normal text
-        src = html.escape(src, quote=False)
-
-        # 4. Links
-        src = re.sub(r"\[([^\]]+)\]\((https?://[^\s\)]+)\)", r'<a href="\2" target="_blank" rel="noopener">\1</a>', src)
-
-        # 5. Headers
-        src = re.sub(r"^###\s+(.+)$", r"<h3>\1</h3>", src, flags=re.MULTILINE)
-        src = re.sub(r"^##\s+(.+)$", r"<h2>\1</h2>", src, flags=re.MULTILINE)
-        src = re.sub(r"^#\s+(.+)$", r"<h1>\1</h1>", src, flags=re.MULTILINE)
-
-        # 6. Bold & Italic & Strikethrough
-        src = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", src)
-        src = re.sub(r"__(.+?)__", r"<strong>\1</strong>", src)
-        src = re.sub(r"(?<!\w)\*([^\*\n]+?)\*(?!\w)", r"<em>\1</em>", src)
-        src = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<em>\1</em>", src)
-        src = re.sub(r"~~(.+?)~~", r"<del>\1</del>", src)
-
-        # 7. Blockquotes
-        def repl_bq(m: re.Match) -> str:
-            raw = m.group(0).rstrip("\r\n")
-            lines = [re.sub(r"^&gt;\s?", "", l) for l in raw.split("\n")]
-            return f'<blockquote>{chr(10).join(lines)}</blockquote>\n'
-
-        src = re.sub(r"^(?:&gt;.*(?:\n|$))+", repl_bq, src, flags=re.MULTILINE)
-
-        # 8. Lists
-        src = re.sub(r"^[\*\-\+]\s+(.+)$", r"<li>\1</li>", src, flags=re.MULTILINE)
-        src = re.sub(r"((?:<li>.+</li>\n?)+)", r"<ul>\1</ul>", src)
-
-        # 9. Paragraphs
-        paragraphs = src.split("\n\n")
-        body_parts: List[str] = []
-        for p in paragraphs:
-            p_str = p.strip()
-            if not p_str:
-                continue
-            if (
-                p_str.startswith("<h")
-                or p_str.startswith("<ul")
-                or p_str.startswith("<blockquote")
-                or p_str.startswith("\x00CB")
-            ):
-                body_parts.append(p_str)
-            else:
-                p_formatted = p_str.replace("\n", "<br>")
-                body_parts.append(f"<p>{p_formatted}</p>")
-
-        src = "\n".join(body_parts)
-
-        # 10. Restore code blocks & inline code
-        for idx, tag in enumerate(inline_codes):
-            src = src.replace(f"\x00IC{idx}\x00", tag)
-        for idx, tag in enumerate(code_blocks):
-            src = src.replace(f"\x00CB{idx}\x00", tag)
+        except Exception:
+            src = f"<pre><code>{html.escape(markdown_content)}</code></pre>"
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="en">
@@ -706,6 +646,13 @@ def generate_standalone_html(
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{html.escape(title)}</title>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  try {{
+    mermaid.initialize({{ startOnLoad: true, theme: 'dark' }});
+  }} catch (e) {{}}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
 :root {{
   --bg: #0d1117;

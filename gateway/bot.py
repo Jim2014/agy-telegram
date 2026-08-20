@@ -874,7 +874,7 @@ class AgyTelegramBot:
                     },
                 )
                 clean_text = (
-                    f"📄 <i>Full {prefix} generated and attached below: <code>{auto_export_name}</code></i>\n\n"
+                    f"📄 _Full {prefix} generated and attached below: `{auto_export_name}`_\n\n"
                     + (clean_text[:400].strip() + "\n..." if len(clean_text) > 400 else clean_text)
                 )
 
@@ -898,9 +898,9 @@ class AgyTelegramBot:
 
             if valid_exports:
                 if len(valid_exports) == 1:
-                    notice = "📄 <i>Full report generated and attached below.</i>"
+                    notice = "📄 _Full report generated and attached below._"
                 else:
-                    notice = f"📄 <i>{len(valid_exports)} report file(s) generated and attached below.</i>"
+                    notice = f"📄 _{len(valid_exports)} report file(s) generated and attached below._"
                 clean_text = f"{clean_text}\n\n{notice}".strip() if clean_text else notice
 
             if export_errors:

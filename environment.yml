@@ -12,3 +12,4 @@ dependencies:
       - pytest-asyncio>=0.21.0
       - Pygments>=2.14.0
       - edge-tts>=7.0.0
+      - markdown>=3.5.0

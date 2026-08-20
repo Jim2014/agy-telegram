@@ -436,65 +436,18 @@ def render_markdown_template(
     raw_content: str,
     file_size_str: str,
 ) -> str:
-    """Render Markdown file into article HTML layout."""
-    src = raw_content
+    """Render Markdown file into article HTML layout with tables, diffs, and code blocks."""
+    try:
+        import markdown
 
-    # 1. Code blocks
-    code_blocks: List[str] = []
-    def save_cb(m: re.Match) -> str:
-        lang = (m.group(1) or "code").strip()
-        code = m.group(2)
-        idx = len(code_blocks)
-        esc_code = html.escape(code, quote=False)
-        tag = (
-            f'<div style="background:var(--hover-bg);border:1px solid var(--border);border-radius:8px;margin:14px 0;overflow:hidden;">'
-            f'<div style="padding:4px 12px;font-size:0.75rem;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border);background:var(--card-bg);">{html.escape(lang)}</div>'
-            f'<pre style="padding:12px;overflow-x:auto;font-family:var(--font-mono);font-size:0.85rem;"><code>{esc_code}</code></pre></div>'
+        body_html = markdown.markdown(
+            raw_content,
+            extensions=["tables", "fenced_code", "sane_lists", "nl2br"],
         )
-        code_blocks.append(tag)
-        return f"\x00CB{idx}\x00"
-
-    src = re.sub(r"```([a-zA-Z0-9_+-]*)\n?(.*?)```", save_cb, src, flags=re.DOTALL)
-
-    # 2. Inline code
-    inline_codes: List[str] = []
-    def save_ic(m: re.Match) -> str:
-        c = m.group(1)
-        idx = len(inline_codes)
-        inline_codes.append(f'<code style="font-family:var(--font-mono);font-size:0.85em;background:var(--hover-bg);padding:2px 6px;border-radius:4px;border:1px solid var(--border);">{html.escape(c, quote=False)}</code>')
-        return f"\x00IC{idx}\x00"
-
-    src = re.sub(r"`([^`\n]+)`", save_ic, src)
-
-    # 3. Escape normal text
-    src = html.escape(src, quote=False)
-
-    # 4. Links & Images
-    src = re.sub(r'!\[([^\]]*)\]\((https?://[^\s\)]+)\)', r'<img src="\2" alt="\1" style="max-width:100%;border-radius:8px;margin:12px 0;">', src)
-    src = re.sub(r'\[([^\]]+)\]\((https?://[^\s\)]+)\)', r'<a href="\2" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">\1</a>', src)
-
-    # 5. Headers
-    src = re.sub(r'^###\s+(.+)$', r'<h3 style="font-size:1.15rem;margin:18px 0 8px;">\1</h3>', src, flags=re.MULTILINE)
-    src = re.sub(r'^##\s+(.+)$', r'<h2 style="font-size:1.35rem;margin:22px 0 10px;border-bottom:1px solid var(--border);padding-bottom:6px;">\1</h2>', src, flags=re.MULTILINE)
-    src = re.sub(r'^#\s+(.+)$', r'<h1 style="font-size:1.6rem;margin:24px 0 12px;border-bottom:2px solid var(--border);padding-bottom:8px;">\1</h1>', src, flags=re.MULTILINE)
-
-    # 6. Bold & Italic
-    src = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', src)
-    src = re.sub(r'\*(.+?)\*', r'<em>\1</em>', src)
-
-    # 7. Blockquotes
-    src = re.sub(r'^>\s*(.+)$', r'<blockquote style="border-left:4px solid var(--accent);padding:8px 14px;margin:12px 0;background:var(--accent-bg);border-radius:0 8px 8px 0;">\1</blockquote>', src, flags=re.MULTILINE)
-
-    # 8. Unordered / Ordered list items
-    src = re.sub(r'^[-*]\s+(.+)$', r'<li style="margin:4px 0;">\1</li>', src, flags=re.MULTILINE)
-
-    # Restore placeholders
-    for idx, cb in enumerate(code_blocks):
-        src = src.replace(f"\x00CB{idx}\x00", cb)
-    for idx, ic in enumerate(inline_codes):
-        src = src.replace(f"\x00IC{idx}\x00", ic)
-
-    body_html = src.replace("\n\n", "<p style='margin:10px 0;'></p>")
+        # Wrap tables for touch horizontal scroll
+        body_html = re.sub(r"(<table>.*?</table>)", r'<div style="width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:16px 0;">\1</div>', body_html, flags=re.DOTALL)
+    except Exception:
+        body_html = f"<pre><code>{html.escape(raw_content)}</code></pre>"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
