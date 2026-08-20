@@ -579,6 +579,26 @@ def test_format_local_reset_time():
     assert format_local_reset_time("invalid-date") == "invalid-date"
 
 
+def test_markdown_tables_with_nested_formatting():
+    from gateway.message_formatter import markdown_to_telegram_html
+
+    sample = """
+| 模块 | 测试套件结果 | Git 提交状态 | 运行状态 |
+| :--- | :--- | :--- | :--- |
+| **agy-telegram** | **127 / 127 项通过 (100%)** | `2ac45cc` (feat: auto-create workspace directory...) | 🟢 正常运行中 |
+| **learner** | **36 / 36 项通过 (100%)** | `1893045` (feat: add interactive audio playback bar...) | 🟢 运行在 8901 端口 |
+
+1. [`gateway/commands.py`](file:///Users/jim/hermes-shared/agy-telegram/gateway/commands.py)
+"""
+    res = markdown_to_telegram_html(sample)
+    assert "<b>agy-telegram</b>" in res
+    assert "<b>*<i>" not in res
+    assert "</i>*" not in res
+    assert "<code><code>" not in res
+    assert "<code>gateway/commands.py</code>" in res
+
+
+
 
 
 

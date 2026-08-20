@@ -22,7 +22,13 @@ def escape_html(text: str) -> str:
 
 
 def balance_telegram_html(text: str) -> str:
-    """Ensure all opened Telegram HTML tags are properly balanced and closed."""
+    """Ensure all opened Telegram HTML tags are properly balanced, deduplicated, and closed."""
+    # 1. Deduplicate identical nested tags e.g. <code><code> -> <code>, </b></b> -> </b>
+    for tag in ["code", "b", "i", "s", "u", "blockquote", "pre"]:
+        text = re.sub(rf"<{tag}>(?:\s*<{tag}>)+", f"<{tag}>", text)
+        text = re.sub(rf"</{tag}>(?:\s*</{tag}>)+", f"</{tag}>", text)
+        text = re.sub(rf"<{tag}>\s*</{tag}>", "", text)
+
     tags = ["b", "i", "s", "u", "code", "pre", "blockquote", "a"]
     opened: List[str] = []
 
@@ -62,8 +68,10 @@ def format_markdown_tables(text: str) -> str:
 
         def clean_cell(c: str) -> str:
             c = c.strip()
-            # Convert file links [label](file://...) -> label
-            c = re.sub(r"\[([^\]]+)\]\(file://[^\)]+\)", r"\1", c)
+            # Convert file links [label](file://...) -> label or [label](url) -> label
+            c = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", c)
+            # Remove backticks to prevent interleaving
+            c = c.replace("`", "")
             return c
 
         headers = [clean_cell(c) for c in lines[0].strip("|").split("|")]
@@ -77,12 +85,15 @@ def format_markdown_tables(text: str) -> str:
             if not any(r):
                 continue
             if len(r) == 2:
-                formatted.append(f"• **{r[0]}**: {r[1]}")
+                title = r[0].strip().strip("*_")
+                val = r[1].strip()
+                formatted.append(f"• **{title}**: {val}")
             elif len(r) >= 3:
-                main_title = r[0]
-                tags = " / ".join([x for x in r[1:-1] if x])
-                desc = r[-1]
-                tag_str = f" _({tags})_" if tags else ""
+                main_title = r[0].strip().strip("*_")
+                raw_tags = [x.strip().strip("*_") for x in r[1:-1] if x.strip()]
+                tags = " / ".join(raw_tags)
+                desc = r[-1].strip()
+                tag_str = f" ({tags})" if tags else ""
                 formatted.append(f"• **{main_title}**{tag_str}: {desc}")
             else:
                 formatted.append("• " + " | ".join(r))
@@ -209,6 +220,8 @@ def markdown_to_telegram_html(text: str) -> str:
         if url.startswith(("http://", "https://", "tg://")):
             return f'<a href="{url}">{label}</a>'
         else:
+            if "\x00IC" in label or label.startswith("<code>"):
+                return label
             return f'<code>{label}</code>'
 
     src = re.sub(r"\[([^\]]+)\]\(([a-zA-Z0-9_+.-]+://[^\s\)]+|/[^\s\)]+)\)", replace_link, src)
