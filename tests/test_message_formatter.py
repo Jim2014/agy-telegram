@@ -91,8 +91,8 @@ def test_format_tokens_and_duration():
     assert format_tokens(0) == "0"
 
     # Duration formatting
-    assert format_duration(7208.2) == "2h 0m 8s (7,208s)"
-    assert format_duration(75.4) == "1m 15s (75.4s)"
+    assert format_duration(7208.2) == "2h 0m 8s"
+    assert format_duration(75.4) == "1m 15s"
     assert format_duration(4.2) == "4.2s"
     assert format_duration(0.0) == "0.0s"
 
@@ -177,11 +177,14 @@ def test_format_final_result():
     # Fallback to conversation_id when project_name is None
     res_conv = format_final_result(
         response_text="All done",
-        duration_seconds=2.0,
-        total_tokens=500,
+        duration_seconds=75.4,
+        total_tokens=9_935_900,
+        thinking_tokens=166_751,
         conversation_id="conv-1234-5678-90ab",
     )
     assert "conv-123..." in res_conv
+    assert "1m 15s" in res_conv
+    assert "9.94M (thinking: 166.8k) tokens" in res_conv
 
 
 def test_split_text_chunks():

@@ -830,20 +830,21 @@ class AgyTelegramBot:
                         last_edited_content = streaming_text
                         last_edit_time = now
 
+            turn_duration = time.time() - start_time
             if not total_duration:
-                total_duration = time.time() - start_time
+                total_duration = turn_duration
 
             metrics_data = {
                 "total_tokens": total_tokens,
                 "thinking_tokens": thinking_tokens,
-                "duration_seconds": total_duration,
+                "duration_seconds": turn_duration,
             }
 
             self.session_manager.record_turn_stats(
                 chat_id=chat_id,
                 turn_tokens=total_tokens,
                 turn_thinking=thinking_tokens,
-                turn_duration=total_duration,
+                turn_duration=turn_duration,
             )
 
             # 1. First extract [AGY_VOICE] spoken summary from final output so it NEVER leaks into HTML files or visible text
@@ -949,7 +950,7 @@ class AgyTelegramBot:
 
             final_formatted = format_final_result(
                 response_text=clean_text,
-                duration_seconds=total_duration,
+                duration_seconds=turn_duration,
                 total_tokens=total_tokens,
                 thinking_tokens=thinking_tokens,
                 conversation_id=conv_id,

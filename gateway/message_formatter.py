@@ -125,8 +125,8 @@ def format_duration(seconds: float) -> str:
     """
     Format duration seconds into human-readable hours/minutes/seconds.
     Examples:
-        7208.2 -> "2h 0m 8s" (or "2h 0m 8s (7,208s)")
-        75.4 -> "1m 15s (75.4s)"
+        7208.2 -> "2h 0m 8s"
+        75.4 -> "1m 15s"
         4.2 -> "4.2s"
     """
     sec = max(0.0, float(seconds))
@@ -139,8 +139,8 @@ def format_duration(seconds: float) -> str:
     rem_s = tot_sec % 60
 
     if hours > 0:
-        return f"{hours}h {minutes}m {rem_s}s ({sec:,.0f}s)"
-    return f"{minutes}m {rem_s}s ({sec:.1f}s)"
+        return f"{hours}h {minutes}m {rem_s}s"
+    return f"{minutes}m {rem_s}s"
 
 
 def markdown_to_telegram_html(text: str) -> str:
@@ -430,11 +430,23 @@ def format_final_result(
 
     footer_parts: List[str] = []
     if duration_seconds is not None:
-        footer_parts.append(f"⏱ {duration_seconds:.1f}s")
+        footer_parts.append(f"⏱ {format_duration(duration_seconds)}")
     if total_tokens is not None:
-        tok_str = f"{total_tokens/1000:.1f}k" if total_tokens >= 1000 else f"{total_tokens}"
+        if total_tokens >= 1_000_000:
+            tok_str = f"{total_tokens / 1_000_000:.2f}M"
+        elif total_tokens >= 1_000:
+            tok_str = f"{total_tokens / 1_000:.1f}k"
+        else:
+            tok_str = f"{total_tokens}"
+
         if thinking_tokens:
-            tok_str += f" (thinking: {thinking_tokens})"
+            if thinking_tokens >= 1_000_000:
+                th_str = f"{thinking_tokens / 1_000_000:.2f}M"
+            elif thinking_tokens >= 1_000:
+                th_str = f"{thinking_tokens / 1_000:.1f}k"
+            else:
+                th_str = f"{thinking_tokens}"
+            tok_str += f" (thinking: {th_str})"
         footer_parts.append(f"🪙 {tok_str} tokens")
     if project_name:
         footer_parts.append(f"📁 <code>{escape_html(project_name)}</code>")
