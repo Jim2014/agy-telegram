@@ -1103,13 +1103,16 @@ def extract_agy_voice_block(text: str) -> Tuple[str, Optional[AgyVoiceBlock]]:
         lang = m.group(1) or "zh"
         body = m.group(2).strip()
         if body:
-            # Strip any accidental action blocks or options leaking into voice
+            # 1. Strip any accidental action blocks or options leaking into voice
             clean_body = re.sub(r"\[AGY_ACTIONS\].*?\[END_AGY_ACTIONS\]", "", body, flags=re.DOTALL | re.IGNORECASE)
             clean_body = re.sub(r"\[AGY_FILE\].*?\[END_AGY_FILE\]", "", clean_body, flags=re.DOTALL | re.IGNORECASE)
             clean_body = re.sub(r"^[\*\-\+•]\s*.*$", "", clean_body, flags=re.MULTILINE)
-            # Strip markdown formatting symbols
-            clean_body = re.sub(r"[`*_#~]", "", clean_body)
-            # Normalize whitespace
+            # 2. Strip URLs and simplify long absolute file paths to basenames for natural listening
+            clean_body = re.sub(r"https?://\S+", "", clean_body)
+            clean_body = re.sub(r"(?:/[a-zA-Z0-9_.-]+)+/([a-zA-Z0-9_.-]+)", r"\1", clean_body)
+            # 3. Strip visual markdown formatting symbols
+            clean_body = re.sub(r"[`*_#~|<>{}]", " ", clean_body)
+            # 4. Normalize whitespace
             clean_body = re.sub(r"\s+", " ", clean_body).strip()
             if clean_body:
                 voice_block = AgyVoiceBlock(text=clean_body, lang=lang.lower()[:2])

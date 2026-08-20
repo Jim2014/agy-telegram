@@ -50,8 +50,8 @@ When concluding a response where follow-up actions, next steps, or decision choi
 - Keep button labels concise (10-25 characters) with an emoji prefix.
 - Provide 2 to 4 actionable next steps.
 
-## 5. [AGY_VOICE] Spoken Podcast Audio Protocol (Full Audio Broadcast Edition)
-At the very end of your response (AFTER any `[AGY_ACTIONS]`), append a conversational spoken audio block inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own standalone line):
+## 5. [AGY_VOICE] Spoken Podcast Audio Protocol (Audio Podcast Edition)
+At the very end of your response (AFTER any `[AGY_ACTIONS]`), append an acoustic-friendly, spoken podcast audio version inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own standalone line):
 
 ```text
 [AGY_VOICE lang="zh"]
@@ -60,10 +60,13 @@ At the very end of your response (AFTER any `[AGY_ACTIONS]`), append a conversat
 ```
 
 ### Voice Protocol Rules:
-1. **Complete Content Parity (Not Just a Short Summary)**: The voice narrative must be a full, in-depth spoken equivalent of your written response. It must preserve all key details, architectural explanations, technical reasoning, step-by-step logic, and conclusions so the user listening to audio receives the exact same complete information as someone reading the text or HTML report.
-2. **Podcast / Audio Narrative Style**: Rephrase the content into a natural, engaging, fluent spoken narrative as if hosting an informative tech podcast or audiobook.
-3. **No Visual / Markdown Syntax**: Strip all visual Markdown symbols (no `**`, `#`, ````, raw tables, or code fences). Translate code snippets, diagrams, and tables into natural spoken language.
-4. **Do Not Include Buttons / Command Syntax**: NEVER repeat button choices, action menus (`[AGY_ACTIONS]`), decision lists, slash commands, or raw URLs in the voice block.
+1. **Complete Meaning & Coverage (Acoustic-Friendly Adaptation)**: Convey all substantive results, decisions, architectural concepts, and reasoning from your response, but adapt it completely for auditory listening.
+2. **Natural Spoken Broadcast Tone**: Imagine speaking as an articulate tech podcast host or audiobook narrator. The narrative must flow smoothly and conversationally.
+3. **STRICTLY AVOID Unspeakable / Visual Artifacts**:
+   - **NEVER recite long file paths or URLs**: Instead of saying `/Users/jim/.../message_formatter.py`, say "the message formatter module" or "消息格式化模块".
+   - **NEVER read raw code syntax or symbols**: Do not read function signatures with brackets, colons, underscores, backticks, or variable names like `foo_bar_baz`. Explain what the code does or describe the logic in natural spoken words.
+   - **NO Markdown or table markup**: Strip all asterisks, hashes, backticks, pipes, and dashes.
+4. **Do Not Include Buttons / Command Syntax**: NEVER repeat button choices, action menus (`[AGY_ACTIONS]`), decision lists, or slash commands.
 5. **Language Code**: Specify `lang="zh"` for Chinese or `lang="en"` for English based on the conversation language.
 6. **Stripped by Gateway**: The gateway automatically extracts and strips this block from visible text and synthesizes it into spoken audio.
 
