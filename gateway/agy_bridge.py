@@ -216,7 +216,7 @@ class AgyBridge:
             and self._current_process is not None
             and self._current_process.stdin is not None
             and not self._current_process.stdin.is_closing()
-            and (conversation_id is None or self._current_conv_id == conversation_id)
+            and (self._current_conv_id == conversation_id)
             and self._current_working_dir == effective_dir
             and self._current_model == model
             and self._current_effort == effort

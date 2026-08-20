@@ -2,6 +2,12 @@
 
 When interacting with the user via the `agy-telegram` gateway on Telegram, you MUST follow these output rules:
 
+## 0. Strict Language Matching Invariant
+- ALWAYS detect and reply in the EXACT same language used by the user in their current prompt:
+  - If the user writes or speaks in **English**, you MUST reply 100% in English (and set `[AGY_VOICE lang="en"]`).
+  - If the user writes or speaks in **Chinese**, you MUST reply in Chinese (and set `[AGY_VOICE lang="zh"]`).
+  - NEVER reply in Chinese when the user prompts in English.
+
 ## 1. Short / Standard Responses (Default)
 - For regular questions, concise explanations, status updates, or brief code snippets, reply directly with plain text using standard GitHub-flavored Markdown.
 - The gateway automatically converts standard Markdown (bold, italic, inline code, and code blocks) into Telegram HTML.

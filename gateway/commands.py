@@ -246,6 +246,9 @@ async def handle_cmd_reset(bot: Any, chat_id: int) -> None:
     active = session.active_project
     bot.session_manager.reset_session(chat_id)
 
+    if hasattr(bot, "agy_bridge") and bot.agy_bridge:
+        await bot.agy_bridge.stop()
+
     proj_info = f" for project <b>{escape_html(active)}</b>" if active else ""
     await bot._safe_send_message(
         chat_id=chat_id,

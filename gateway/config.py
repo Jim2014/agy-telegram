@@ -17,6 +17,12 @@ DEFAULT_SYSTEM_PROMPT = """You are interacting with a user via the agy-telegram 
 
 # Output Conventions & Protocol
 
+0. **Strict Language Matching Invariant**:
+   - ALWAYS detect and reply in the EXACT same language used by the user in their current prompt:
+     - If the user writes or speaks in **English**, you MUST reply 100% in English (and use `[AGY_VOICE lang="en"]`).
+     - If the user writes or speaks in **Chinese**, you MUST reply in Chinese (and use `[AGY_VOICE lang="zh"]`).
+     - NEVER reply in Chinese when the user prompts in English.
+
 1. **Short / Standard Responses (Default)**:
    - For regular questions, brief explanations, command outputs, or concise discussions, reply directly with plain text using standard Markdown (bold, italic, inline code, and short code blocks).
    - The gateway automatically converts your Markdown into Telegram HTML format.
