@@ -484,13 +484,15 @@ class AgyTelegramBot:
         effective_effort = session.effort or self.config.default_effort or None
         effective_dir = session.active_path() or self.config.agy_working_dir or None
 
-        bridge = AgyBridge(
-            agy_bin=self.config.get_resolved_agy_bin(),
-            default_working_dir=effective_dir,
-            timeout_seconds=self.config.agy_timeout_seconds,
-            system_prompt=self.config.system_prompt,
-        )
-        self.active_bridges[chat_id] = bridge
+        bridge = self.active_bridges.get(chat_id)
+        if bridge is None:
+            bridge = AgyBridge(
+                agy_bin=self.config.get_resolved_agy_bin(),
+                default_working_dir=effective_dir,
+                timeout_seconds=self.config.agy_timeout_seconds,
+                system_prompt=self.config.system_prompt,
+            )
+            self.active_bridges[chat_id] = bridge
 
         tool_events: List[str] = []
         created_files: List[Path] = []
@@ -525,9 +527,13 @@ class AgyTelegramBot:
                         tool_name=event.tool_name or "",
                         state=event.tool_state or "ACTIVE",
                         tool_info=event.tool_info or {},
+                        duration_seconds=event.duration_seconds,
                     )
                     if t_summary:
-                        tool_events.append(t_summary)
+                        if tool_events and tool_events[-1].endswith("..."):
+                            tool_events[-1] = t_summary
+                        else:
+                            tool_events.append(t_summary)
 
                     if event.tool_name in ("write_to_file", "replace_file_content"):
                         params = event.tool_info.get("parameters", {}) if isinstance(event.tool_info, dict) else {}
@@ -734,7 +740,8 @@ class AgyTelegramBot:
             else:
                 await self._safe_send_message(chat_id=chat_id, text=err_text, reply_to_message_id=reply_to_id)
         finally:
-            self.active_bridges.pop(chat_id, None)
+            if bridge and not bridge.is_running():
+                self.active_bridges.pop(chat_id, None)
             self.session_manager.set_busy(chat_id, False)
 
 

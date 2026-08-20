@@ -227,9 +227,9 @@ async def test_steer_method(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_injection_first_turn(monkeypatch):
-    """Test that system prompt is injected on the first turn (no conversation_id)."""
-    bridge = AgyBridge(system_prompt="[SYSTEM] Follow markdown conventions.")
+async def test_system_prompt_injection_first_turn(monkeypatch, tmp_path):
+    """Test that system prompt is injected on the first turn when no declarative rules exist."""
+    bridge = AgyBridge(system_prompt="[SYSTEM] Follow markdown conventions.", default_working_dir=str(tmp_path))
 
     class MockStdin:
         def __init__(self):
@@ -280,7 +280,7 @@ async def test_system_prompt_injection_first_turn(monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
 
     events = []
-    async for ev in bridge.run_streaming(prompt="Please write a summary", conversation_id=None):
+    async for ev in bridge.run_streaming(prompt="Please write a summary", conversation_id=None, working_dir=str(tmp_path)):
         events.append(ev)
 
     assert len(proc.stdin.written) == 1
@@ -423,4 +423,168 @@ def test_is_running():
 
     bridge._is_stopped = True
     assert bridge.is_running() is False
+
+
+@pytest.mark.asyncio
+async def test_declarative_rules_clean_prompt(monkeypatch, tmp_path):
+    """Test that if workspace has .gemini/rules/telegram-output.md, prompt remains clean without prepended system prompt."""
+    rules_dir = tmp_path / ".gemini" / "rules"
+    rules_dir.mkdir(parents=True)
+    rule_file = rules_dir / "telegram-output.md"
+    rule_file.write_text("# Telegram Output Rules")
+
+    bridge = AgyBridge(system_prompt="[SYSTEM] Long system prompt text.")
+
+    class MockStdin:
+        def __init__(self):
+            self.written = []
+            self.closed = False
+
+        def write(self, data):
+            self.written.append(data)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+        def is_closing(self):
+            return self.closed
+
+    class MockStream:
+        def __init__(self, lines):
+            self.lines = list(lines)
+
+        async def readline(self):
+            if self.lines:
+                return self.lines.pop(0)
+            return b""
+
+        async def read(self):
+            return b""
+
+    class MockProcess:
+        def __init__(self):
+            self.stdin = MockStdin()
+            self.stdout = MockStream([
+                b'{"event":"result","result":{"status":"SUCCESS","response":"Clean response"}}\n',
+            ])
+            self.stderr = MockStream([])
+            self.returncode = 0
+            self.pid = 44444
+
+        async def wait(self):
+            return 0
+
+    proc = MockProcess()
+    async def mock_exec(*args, **kwargs):
+        return proc
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
+
+    # First turn with workspace containing rules
+    async for _ in bridge.run_streaming(prompt="Clean question", conversation_id=None, working_dir=str(tmp_path)):
+        pass
+
+    assert len(proc.stdin.written) == 1
+    payload = json.loads(proc.stdin.written[0].decode())
+    # Should NOT have prepended system prompt
+    assert payload == {"event": "user", "message": {"content": "Clean question"}}
+
+
+@pytest.mark.asyncio
+async def test_multiturn_process_reuse(monkeypatch, tmp_path):
+    """Test that consecutive prompt turns reuse the active warm subprocess without respawning."""
+    bridge = AgyBridge(keep_alive=True, default_working_dir=str(tmp_path))
+
+    class MockStdin:
+        def __init__(self):
+            self.written = []
+            self.closed = False
+
+        def write(self, data):
+            self.written.append(data)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+        def is_closing(self):
+            return self.closed
+
+    class MockStream:
+        def __init__(self):
+            self.lines = []
+
+        async def readline(self):
+            if self.lines:
+                return self.lines.pop(0)
+            return b""
+
+        async def read(self):
+            return b""
+
+    class MockProcess:
+        def __init__(self):
+            self.stdin = MockStdin()
+            self.stdout = MockStream()
+            self.stderr = MockStream()
+            self.returncode = None
+            self.pid = 55555
+
+        async def wait(self):
+            self.returncode = 0
+            return 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        def kill(self):
+            self.returncode = 0
+
+    proc = MockProcess()
+    spawn_count = 0
+
+    async def mock_exec(*args, **kwargs):
+        nonlocal spawn_count
+        spawn_count += 1
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
+
+    # Turn 1
+    proc.stdout.lines = [
+        b'{"event":"init","conversation_id":"conv-reuse-1"}\n',
+        b'{"event":"result","result":{"conversation_id":"conv-reuse-1","status":"SUCCESS","response":"Turn 1 done"}}\n',
+    ]
+    t1_events = []
+    async for ev in bridge.run_streaming(prompt="Turn 1 prompt", conversation_id=None, working_dir=str(tmp_path)):
+        t1_events.append(ev)
+
+    assert spawn_count == 1
+    assert bridge.is_running() is True
+    assert bridge._current_conv_id == "conv-reuse-1"
+    assert len(proc.stdin.written) == 1
+
+    # Turn 2 - with matching conversation_id & working_dir -> should REUSE process without mock_exec call!
+    proc.stdout.lines = [
+        b'{"event":"result","result":{"conversation_id":"conv-reuse-1","status":"SUCCESS","response":"Turn 2 done"}}\n',
+    ]
+    t2_events = []
+    async for ev in bridge.run_streaming(prompt="Turn 2 prompt", conversation_id="conv-reuse-1", working_dir=str(tmp_path)):
+        t2_events.append(ev)
+
+    assert spawn_count == 1  # No second spawn! Process was reused!
+    assert len(proc.stdin.written) == 2
+    payload2 = json.loads(proc.stdin.written[1].decode())
+    assert payload2 == {"event": "user", "message": {"content": "Turn 2 prompt"}}
+
+    # Stop bridge cleans up
+    await bridge.stop()
+    assert bridge.is_running() is False
+    assert bridge._current_process is None
+
+
 

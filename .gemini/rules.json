@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "name": "telegram-output",
+      "path": "rules/telegram-output.md",
+      "description": "Telegram output formatting conventions and AGY_FILE mobile document export protocol"
+    }
+  ]
+}

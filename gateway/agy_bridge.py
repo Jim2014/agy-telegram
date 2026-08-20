@@ -43,21 +43,50 @@ class AgyBridge:
         default_working_dir: Optional[str] = None,
         timeout_seconds: int = 300,
         system_prompt: Optional[str] = None,
+        idle_timeout_seconds: float = 300.0,
+        keep_alive: bool = True,
     ) -> None:
         self.agy_bin = agy_bin
         self.default_working_dir = default_working_dir or os.getcwd()
         self.timeout_seconds = timeout_seconds
         self.system_prompt = system_prompt
+        self.idle_timeout_seconds = idle_timeout_seconds
+        self.keep_alive = keep_alive
         self._current_process: Optional[asyncio.subprocess.Process] = None
         self._is_stopped = False
         self._pending_turns = 0
         self._lock = asyncio.Lock()
         self._steer_history: List[str] = []
+        self._idle_task: Optional[asyncio.Task] = None
+        self._current_conv_id: Optional[str] = None
+        self._current_working_dir: Optional[str] = None
+        self._current_model: Optional[str] = None
+        self._current_effort: Optional[str] = None
 
     def is_running(self) -> bool:
         """Check if the agy process is currently running and active."""
         proc = self._current_process
         return proc is not None and proc.returncode is None and not self._is_stopped
+
+    def _cancel_idle_timer(self) -> None:
+        """Cancel the idle timeout timer if running."""
+        if self._idle_task and not self._idle_task.done():
+            self._idle_task.cancel()
+        self._idle_task = None
+
+    def _start_idle_timer(self) -> None:
+        """Schedule a timer to terminate the idle daemon process after inactivity."""
+        self._cancel_idle_timer()
+        self._idle_task = asyncio.create_task(self._idle_worker())
+
+    async def _idle_worker(self) -> None:
+        """Background worker that shuts down the agy process when idle timeout expires."""
+        try:
+            await asyncio.sleep(self.idle_timeout_seconds)
+            logger.info("Session idle timeout reached (%ss), stopping background agy daemon.", self.idle_timeout_seconds)
+            await self.stop()
+        except asyncio.CancelledError:
+            pass
 
     def build_command(
         self,
@@ -135,56 +164,93 @@ class AgyBridge:
         """Run agy CLI with stream-json input/output and yield streaming AgyEvent instances."""
         self._is_stopped = False
         self._steer_history.clear()
-        cmd = self.build_command(
-            prompt=prompt,
-            conversation_id=conversation_id,
-            model=model,
-            effort=effort,
-            working_dir=working_dir,
-        )
+        self._cancel_idle_timer()
+
         effective_dir = working_dir or self.default_working_dir
+        can_reuse = (
+            self.is_running()
+            and self._current_process is not None
+            and self._current_process.stdin is not None
+            and not self._current_process.stdin.is_closing()
+            and (conversation_id is None or self._current_conv_id == conversation_id)
+            and self._current_working_dir == effective_dir
+            and self._current_model == model
+            and self._current_effort == effort
+        )
 
-        logger.info("Executing agy command: %s (cwd=%s)", " ".join(cmd[:6]) + " ...", effective_dir)
-
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=effective_dir,
-            )
-            self._current_process = process
-        except FileNotFoundError:
-            err_msg = f"agy binary not found at: {self.agy_bin}"
-            logger.error(err_msg)
-            yield AgyEvent(type="error", status="ERROR", response=err_msg)
-            return
-        except Exception as e:
-            err_msg = f"Failed to start agy process: {e}"
-            logger.error(err_msg)
-            yield AgyEvent(type="error", status="ERROR", response=err_msg)
-            return
-
-        assert process.stdout is not None
-        assert process.stderr is not None
-        assert process.stdin is not None
-
-        # Determine effective prompt for the turn (inject system prompt only on the first turn of a session)
-        eff_sys_prompt = system_prompt if system_prompt is not None else self.system_prompt
-        is_first_turn = not bool(conversation_id)
-
-        if is_first_turn and eff_sys_prompt and eff_sys_prompt.strip():
-            initial_content = f"{eff_sys_prompt.strip()}\n\n---\n\n{prompt}"
+        if can_reuse:
+            assert self._current_process is not None
+            process = self._current_process
+            logger.info("Reusing active warm agy process (PID %s) for new turn", process.pid)
+            async with self._lock:
+                self._pending_turns = 1
+                payload = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
+                process.stdin.write(payload.encode("utf-8"))
+                await process.stdin.drain()
         else:
-            initial_content = prompt
+            if self.is_running():
+                await self.stop()
 
-        # Send initial user prompt turn
-        async with self._lock:
-            self._pending_turns = 1
-            init_payload = json.dumps({"event": "user", "message": {"content": initial_content}}) + "\n"
-            process.stdin.write(init_payload.encode("utf-8"))
-            await process.stdin.drain()
+            cmd = self.build_command(
+                prompt=prompt,
+                conversation_id=conversation_id,
+                model=model,
+                effort=effort,
+                working_dir=effective_dir,
+            )
+            logger.info("Executing agy command: %s (cwd=%s)", " ".join(cmd[:6]) + " ...", effective_dir)
+
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=effective_dir,
+                )
+                self._current_process = process
+                self._current_conv_id = conversation_id
+                self._current_working_dir = effective_dir
+                self._current_model = model
+                self._current_effort = effort
+            except FileNotFoundError:
+                err_msg = f"agy binary not found at: {self.agy_bin}"
+                logger.error(err_msg)
+                yield AgyEvent(type="error", status="ERROR", response=err_msg)
+                return
+            except Exception as e:
+                err_msg = f"Failed to start agy process: {e}"
+                logger.error(err_msg)
+                yield AgyEvent(type="error", status="ERROR", response=err_msg)
+                return
+
+            assert process.stdout is not None
+            assert process.stderr is not None
+            assert process.stdin is not None
+
+            # Determine effective prompt for the turn (inject system prompt only on first turn if no rules)
+            eff_sys_prompt = system_prompt if system_prompt is not None else self.system_prompt
+            is_first_turn = not bool(conversation_id)
+
+            has_workspace_rules = False
+            if effective_dir:
+                try:
+                    rule_file = Path(effective_dir) / ".gemini" / "rules" / "telegram-output.md"
+                    has_workspace_rules = rule_file.is_file()
+                except Exception:
+                    has_workspace_rules = False
+
+            if is_first_turn and eff_sys_prompt and eff_sys_prompt.strip() and not has_workspace_rules:
+                initial_content = f"{eff_sys_prompt.strip()}\n\n---\n\n{prompt}"
+            else:
+                initial_content = prompt
+
+            # Send initial user prompt turn
+            async with self._lock:
+                self._pending_turns = 1
+                init_payload = json.dumps({"event": "user", "message": {"content": initial_content}}) + "\n"
+                process.stdin.write(init_payload.encode("utf-8"))
+                await process.stdin.drain()
 
         try:
             # Stream lines from stdout
@@ -204,11 +270,17 @@ class AgyBridge:
                 if not event:
                     continue
 
+                if event.type == "init" and event.conversation_id:
+                    self._current_conv_id = event.conversation_id
+
                 if event.type == "result":
+                    if event.conversation_id:
+                        self._current_conv_id = event.conversation_id
+
                     async with self._lock:
                         self._pending_turns -= 1
                         has_more_turns = (self._pending_turns > 0)
-                        if not has_more_turns and not process.stdin.is_closing():
+                        if not self.keep_alive and not has_more_turns and not process.stdin.is_closing():
                             try:
                                 process.stdin.close()
                             except Exception:
@@ -227,25 +299,28 @@ class AgyBridge:
                         )
                         continue
                     else:
-                        # Final result for the entire multi-turn exchange
+                        # Final result for the entire exchange
                         yield event
+                        if self.keep_alive:
+                            self._start_idle_timer()
                         break
                 else:
                     yield event
 
-            await process.wait()
+            if not self.keep_alive:
+                await process.wait()
 
-            # Check if non-zero exit and no result event was generated
-            if process.returncode != 0 and not self._is_stopped:
-                stderr_bytes = await process.stderr.read()
-                stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
-                logger.warning("agy exited with code %d. Stderr: %s", process.returncode, stderr_text)
-                if stderr_text:
-                    yield AgyEvent(
-                        type="error",
-                        status="ERROR",
-                        response=f"agy error (exit code {process.returncode}): {stderr_text}",
-                    )
+                # Check if non-zero exit and no result event was generated
+                if process.returncode != 0 and not self._is_stopped:
+                    stderr_bytes = await process.stderr.read()
+                    stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+                    logger.warning("agy exited with code %d. Stderr: %s", process.returncode, stderr_text)
+                    if stderr_text:
+                        yield AgyEvent(
+                            type="error",
+                            status="ERROR",
+                            response=f"agy error (exit code {process.returncode}): {stderr_text}",
+                        )
 
         except asyncio.TimeoutError:
             logger.error("agy process timed out after %d seconds", self.timeout_seconds)
@@ -260,7 +335,8 @@ class AgyBridge:
             await self.stop()
             raise
         finally:
-            self._current_process = None
+            if not self.keep_alive:
+                self._current_process = None
 
     def _parse_line(self, line: str) -> Optional[AgyEvent]:
         """Parse a single line from stream-json output."""
@@ -345,6 +421,7 @@ class AgyBridge:
 
     async def stop(self) -> None:
         """Interrupt and terminate the running agy process."""
+        self._cancel_idle_timer()
         self._is_stopped = True
         proc = self._current_process
         if proc and proc.returncode is None:
@@ -365,6 +442,8 @@ class AgyBridge:
                 pass
             except Exception as e:
                 logger.warning("Error stopping process: %s", e)
+        self._current_process = None
+        self._current_conv_id = None
 
 
 if __name__ == "__main__":

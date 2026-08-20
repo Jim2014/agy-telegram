@@ -33,16 +33,51 @@ def test_format_tool_summary():
     assert "git status" in t1
     assert "⚙️" in t1
 
-    # Done view_file
-    t2 = format_tool_summary("view_file", "DONE", {"parameters": {"AbsolutePath": "/a/b/c.py"}})
-    assert "c.py" in t2
+    # Done view_file with duration and line range
+    t2 = format_tool_summary(
+        "view_file",
+        "DONE",
+        {"parameters": {"AbsolutePath": "/a/b/c.py", "StartLine": 10, "EndLine": 25}},
+        duration_seconds=1.23,
+    )
+    assert "c.py#L10-L25" in t2
     assert "✅" in t2
+    assert "1.2s" in t2
 
     # Error tool
     t3 = format_tool_summary("list_dir", "ERROR", {"error": {"message": "Permission denied"}})
     assert "list_dir failed" in t3
     assert "Permission denied" in t3
     assert "⚠️" in t3
+
+    # Subagents
+    t_sub = format_tool_summary(
+        "invoke_subagent",
+        "ACTIVE",
+        {"parameters": {"Subagents": [{"Role": "Code Reviewer"}, {"Role": "Security Analyst"}]}},
+    )
+    assert "🤖" in t_sub
+    assert "Code Reviewer" in t_sub
+    assert "Security Analyst" in t_sub
+
+    # Search & Web
+    t_web = format_tool_summary("read_url_content", "ACTIVE", {"parameters": {"Url": "https://antigravity.dev/docs"}})
+    assert "🌐" in t_web
+    assert "https://antigravity.dev/docs" in t_web
+
+    # Image generation
+    t_img_act = format_tool_summary("generate_image", "ACTIVE", {"parameters": {"ImageName": "app_mockup"}})
+    assert "🎨" in t_img_act
+    assert "app_mockup" in t_img_act
+    t_img = format_tool_summary("generate_image", "DONE", {"parameters": {"ImageName": "app_mockup"}}, duration_seconds=3.5)
+    assert "✅" in t_img
+    assert "app_mockup" in t_img
+    assert "3.5s" in t_img
+
+    # Schedule / task
+    t_sched = format_tool_summary("schedule", "ACTIVE", {"parameters": {"DurationSeconds": 60}})
+    assert "⏰" in t_sched
+    assert "60s" in t_sched
 
 
 def test_balance_telegram_html():

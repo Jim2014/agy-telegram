@@ -192,9 +192,36 @@ def markdown_to_telegram_html(text: str) -> str:
     return balance_telegram_html(src)
 
 
-def format_tool_summary(tool_name: str, state: str, tool_info: Dict[str, Any]) -> str:
-    """Format a concise single-line tool execution status."""
+def format_tool_summary(
+    tool_name: str,
+    state: str,
+    tool_info: Dict[str, Any],
+    duration_seconds: Optional[float] = None,
+) -> str:
+    """Format a concise, informative single-line tool execution status."""
     params = tool_info.get("parameters", {}) if isinstance(tool_info, dict) else {}
+
+    # Tool specific icon mapping
+    tool_icons = {
+        "run_command": "⚙️",
+        "view_file": "📄",
+        "write_to_file": "📝",
+        "replace_file_content": "✏️",
+        "list_dir": "📁",
+        "find_by_name": "🔍",
+        "grep_search": "🔍",
+        "search_web": "🌐",
+        "read_url_content": "🌐",
+        "invoke_subagent": "🤖",
+        "manage_subagents": "👥",
+        "send_message": "💬",
+        "define_subagent": "🧬",
+        "generate_image": "🎨",
+        "manage_task": "📋",
+        "schedule": "⏰",
+        "ask_question": "❓",
+    }
+    icon = tool_icons.get(tool_name, "🔧")
 
     param_summary = ""
     if tool_name == "run_command":
@@ -203,22 +230,66 @@ def format_tool_summary(tool_name: str, state: str, tool_info: Dict[str, Any]) -
     elif tool_name in ("view_file", "write_to_file", "replace_file_content"):
         path = params.get("AbsolutePath") or params.get("TargetFile") or ""
         short_path = path.split("/")[-1] if path else ""
-        param_summary = f" {escape_html(short_path)}"
+        start_l = params.get("StartLine")
+        end_l = params.get("EndLine")
+        line_range = f"#L{start_l}-L{end_l}" if start_l and end_l else (f"#L{start_l}" if start_l else "")
+        param_summary = f" {escape_html(short_path + line_range)}"
     elif tool_name == "list_dir":
         dpath = params.get("DirectoryPath", "")
         short_path = dpath.split("/")[-1] or "/" if dpath else ""
         param_summary = f" {escape_html(short_path)}"
+    elif tool_name == "find_by_name":
+        pat = params.get("Pattern", "")
+        dpath = params.get("SearchDirectory", "")
+        short_d = dpath.split("/")[-1] if dpath else ""
+        param_summary = f" '{escape_html(pat)}'{' in ' + escape_html(short_d) if short_d else ''}"
     elif tool_name == "grep_search":
         q = params.get("Query", "")
         param_summary = f" '{escape_html(q[:30])}'"
-    elif tool_name == "search_web":
-        q = params.get("query", "")
-        param_summary = f" '{escape_html(q[:30])}'"
+    elif tool_name in ("search_web", "read_url_content"):
+        q = params.get("query") or params.get("Url") or ""
+        param_summary = f" '{escape_html(q[:40])}'"
+    elif tool_name == "invoke_subagent":
+        subagents = params.get("Subagents", [])
+        if isinstance(subagents, list) and subagents:
+            roles = [s.get("Role") or s.get("TypeName") or "agent" for s in subagents if isinstance(s, dict)]
+            param_summary = f" [{', '.join(roles[:2])}{'...' if len(roles) > 2 else ''}]"
+        else:
+            param_summary = " subagent"
+    elif tool_name == "manage_subagents":
+        act = params.get("Action", "")
+        param_summary = f" ({escape_html(act)})" if act else ""
+    elif tool_name == "send_message":
+        rec = params.get("Recipient", "")
+        short_rec = rec.split("/")[-1][:12] if rec else ""
+        param_summary = f" -> <code>{escape_html(short_rec)}</code>" if short_rec else ""
+    elif tool_name == "define_subagent":
+        s_name = params.get("name", "")
+        param_summary = f" <code>{escape_html(s_name)}</code>" if s_name else ""
+    elif tool_name == "generate_image":
+        img_name = params.get("ImageName") or params.get("Prompt", "")
+        param_summary = f" '{escape_html(img_name[:30])}'"
+    elif tool_name == "manage_task":
+        act = params.get("Action", "")
+        tid = params.get("TaskId", "")
+        short_tid = tid.split("/")[-1] if tid else ""
+        param_summary = f" ({escape_html(act)}{' ' + escape_html(short_tid) if short_tid else ''})"
+    elif tool_name == "schedule":
+        dur = params.get("DurationSeconds")
+        cron = params.get("CronExpression")
+        timing = f"{dur}s" if dur else (cron or "")
+        param_summary = f" ({escape_html(str(timing))})" if timing else ""
+    elif tool_name == "ask_question":
+        qs = params.get("questions", [])
+        q_text = qs[0].get("question", "") if isinstance(qs, list) and qs and isinstance(qs[0], dict) else ""
+        param_summary = f": {escape_html(q_text[:30] + ('...' if len(q_text) > 30 else ''))}" if q_text else ""
+
+    dur_str = f" <i>({duration_seconds:.1f}s)</i>" if duration_seconds is not None and duration_seconds > 0 else ""
 
     if state == "ACTIVE":
-        return f"⚙️ <i>{escape_html(tool_name)}</i>{param_summary}..."
+        return f"{icon} <i>{escape_html(tool_name)}</i>{param_summary}..."
     elif state == "DONE":
-        return f"✅ <i>{escape_html(tool_name)}</i>{param_summary}"
+        return f"✅ <i>{escape_html(tool_name)}</i>{param_summary}{dur_str}"
     elif state == "ERROR":
         err_msg = ""
         if isinstance(tool_info, dict) and "error" in tool_info:
@@ -227,7 +298,7 @@ def format_tool_summary(tool_name: str, state: str, tool_info: Dict[str, Any]) -
         err_short = escape_html(err_msg[:60] + ("..." if len(err_msg) > 60 else ""))
         return f"⚠️ <i>{escape_html(tool_name)} failed:</i> {err_short}"
     else:
-        return f"🔧 <i>{escape_html(tool_name)}</i> [{escape_html(state)}]"
+        return f"🔧 <i>{escape_html(tool_name)}</i> [{escape_html(state)}]{dur_str}"
 
 
 def format_streaming_message(

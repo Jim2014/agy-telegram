@@ -25,20 +25,21 @@
 ## 核心特性
 
 1. **Telegram Long-Polling**: 基于 Telegram Bot API，无需公网 IP 或 Webhook 配置。
-2. **实时流式与中间过程可视化**: 实时捕获 agy 的 `stream-json` 事件，展示工具调用（`run_command`, `list_dir`, `view_file` 等）、思考状态并限频推回 Telegram。
-3. **中途引导 (Steering) 支持**: 当 agy 正在思考或执行多步工具时，无需中断或 `/stop` 整个会话，系统可直接将补充指引与追加要求 **Steer（注入）** 进当前运行会话，平滑接续执行。
-4. **项目化会话持久化与隔离**: 支持多项目工作区管理（`/new`, `/open`, `/delete`, `/reset`, `/projects`），每个项目独立保存 `path` 与 `conversation_id`，跨项目持久化无缝切换。
-5. **灵活参数调整**: 通过 `/model` 切换模型，通过 `/effort` 调整推理强度 (low/medium/high)，通过 `/dir` 调整当前项目工作区。
-6. **语音消息与音频交互 (Voice Messages Support)**: 支持直接在 Telegram 中发送语音条或音频文件，网关自动接收并下载至 `runtime/voice/` 目录，将绝对路径与音频元数据构造为语音任务提示词交由 `agy` 自主解析与执行；在任务运行中发送语音亦可实时 Steering 注入当前会话。
-7. **文件与图片附件交互 (Document & Photo Attachments)**: 支持在 Telegram 中直接发送文档、代码文件、数据表格或图片，网关自动接收下载至 `runtime/documents/` 并将文件绝对路径与元数据传给 `agy` 深度分析与处理；支持中途 Steering 注入。
-8. **运行时隔离与 Git 保护**: 所有运行时日志（`runtime/gateway.log`）、进程 PID（`runtime/gateway.pid`）、会话持久化（`runtime/sessions.json`）、语音缓存（`runtime/voice/`）与文件附件（`runtime/documents/`）均自动归档在 `runtime/` 目录，已加入 `.gitignore` 彻底杜绝误提交。
-9. **安全与健壮性 (Harden & Auto-Heal)**:
-   - 支持 `ALLOWED_CHAT_IDS` 白名单鉴权。
-   - **Telegram 网络异常免疫**：所有 Telegram API 调用统一走安全封装，遭遇 `httpx.ReadError`、超时、网络瞬断时自动降级并不中断流式任务或退出主进程。
-   - **看门狗崩溃自动拉起 (Watchdog Supervisor)**：提供独立的看门狗守护进程（`runtime/watchdog.sh` / `./restart.sh watch`），周期巡检进程状态，意外退出后 10 秒内自动拉起。
-   - 保留 `/stop` 供强制中断正在执行的 agy 子进程。
-   - 自动处理 Telegram 4096 字符截断、限频 (Throttling) 与 HTML 标签容错降级。
-   - 全套单元测试、网络抗逆测试与 agy 冒烟测试。
+2. **实时流式与中间过程可视化**: 实时捕获 agy 的 `stream-json` 事件，展示丰富工具调用（`run_command`, `view_file`, `grep_search`, `invoke_subagent`, `read_url_content`, `generate_image`, `schedule` 等）及其执行耗时，并在 Telegram 中动态高亮实时状态。
+3. **中途引导 (Steering) 与长连接进程池 (Session Daemon)**: 当 agy 正在思考或执行多步工具时，可通过 `/steer` 或直接发消息将指令注入当前会话；支持 `--input-format stream-json` 多轮长连接保活，消弭每轮冷启动开销。
+4. **声明式 Agent 规则定制**: 遵循 AGY v1.1.15 规范，采用 `.gemini/rules/telegram-output.md` 与 `.gemini/rules.json` 声明格式与 `[AGY_FILE]` 导出规则，彻底净化用户 Prompt 历史并维持系统级约束。
+5. **项目化会话持久化与隔离**: 支持多项目工作区管理（`/new`, `/open`, `/delete`, `/reset`, `/projects`），每个项目独立保存 `path` 与 `conversation_id`，跨项目持久化无缝切换。
+6. **灵活参数调整**: 通过 `/model` 切换模型，通过 `/effort` 调整推理强度 (low/medium/high)，通过 `/dir` 调整当前项目工作区。
+7. **语音消息与音频交互 (Voice Messages Support)**: 支持直接在 Telegram 中发送语音条或音频文件，网关自动接收并下载至 `runtime/voice/` 目录，将绝对路径与音频元数据构造为语音任务提示词交由 `agy` 自主解析与执行；在任务运行中发送语音亦可实时 Steering 注入当前会话。
+8. **文件与图片附件交互 (Document & Photo Attachments)**: 支持在 Telegram 中直接发送文档、代码文件、数据表格或图片，网关自动接收下载至 `runtime/documents/` 并将文件绝对路径与元数据传给 `agy` 深度分析与处理；支持中途 Steering 注入。
+9. **运行时隔离与 Git 保护**: 所有运行时日志（`runtime/gateway.log`）、进程 PID（`runtime/gateway.pid`）、会话持久化（`runtime/sessions.json`）、语音缓存（`runtime/voice/`）与文件附件（`runtime/documents/`）均自动归档在 `runtime/` 目录，已加入 `.gitignore` 彻底杜绝误提交。
+10. **安全与健壮性 (Harden & Auto-Heal)**:
+    - 支持 `ALLOWED_CHAT_IDS` 白名单鉴权。
+    - **Telegram 网络异常免疫**：所有 Telegram API 调用统一走安全封装，遭遇 `httpx.ReadError`、超时、网络瞬断时自动降级并不中断流式任务或退出主进程。
+    - **看门狗崩溃自动拉起 (Watchdog Supervisor)**：提供独立的看门狗守护进程（`runtime/watchdog.sh` / `./restart.sh watch`），周期巡检进程状态，意外退出后 10 秒内自动拉起。
+    - 保留 `/stop` 供强制中断正在执行的 agy 子进程。
+    - 自动处理 Telegram 4096 字符截断、限频 (Throttling) 与 HTML 标签容错降级。
+    - 全套单元测试（99 项全覆盖）、网络抗逆测试与 agy 冒烟测试。详细演进规划请参考 [ROADMAP.md](ROADMAP.md)。
 
 ---
 
