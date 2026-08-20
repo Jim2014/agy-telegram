@@ -45,13 +45,30 @@ class WebAppDoc:
     content_type: str = "text/html; charset=utf-8"
 
 
+def get_local_lan_ip() -> str:
+    """Helper to detect local LAN IP for local Wi-Fi mobile access."""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
 class WebAppServer:
     """Async embedded HTTP server for serving Telegram Mini App Webviews."""
 
     def __init__(self, host: str = "0.0.0.0", port: int = 8765, base_url: str = "") -> None:
         self.host = host
         self.port = port
-        self.base_url = base_url.rstrip("/") if base_url else f"http://127.0.0.1:{port}"
+        if base_url:
+            self.base_url = base_url.rstrip("/")
+        else:
+            lan_ip = get_local_lan_ip()
+            self.base_url = f"http://{lan_ip}:{port}"
         self._server: Optional[asyncio.AbstractServer] = None
         self._docs: Dict[str, WebAppDoc] = {}
         self._is_running = False
