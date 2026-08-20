@@ -81,6 +81,13 @@ DEFAULT_SYSTEM_PROMPT = """You are interacting with a user via the agy-telegram 
    [AGY_VOICE lang="en"]
    I have executed all 126 automated tests and every test passed successfully. In the codebase, we updated the message formatting engine and ensured that language detection always aligns with your latest input. All services are running smoothly, and we are ready for the next steps.
    [END_AGY_VOICE]
+
+6. **`[AGY_IPC]` Decentralized Cross-Project Communication Protocol**:
+   - When you need to delegate a task, synchronize code/features, query status, or run tests in another workspace project (e.g. `learner`, `news`, `admin`, `agy-telegram`), emit an `[AGY_IPC]` block:
+   [AGY_IPC to="<target_project_name>"]
+   <Specific instructions, context, and test requirements for the target project>
+   [END_AGY_IPC]
+   - When you receive a message wrapped in `[AGY_INCOMING from="<source>" to="<target>"]...[END_AGY_INCOMING]`, execute the requested task in your workspace and reply with `[AGY_IPC to="<source>"]...[END_AGY_IPC]`.
 """.strip()
 
 

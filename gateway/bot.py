@@ -39,6 +39,14 @@ from gateway.commands import (
     handle_cmd_voice as cmd_handle_voice,
 )
 from gateway.config import Config
+from gateway.ipc_router import (
+    IPCCall,
+    IPCResult,
+    extract_ipc_calls,
+    format_incoming_envelope,
+    format_pinned_accordion_card,
+    format_return_envelope,
+)
 from gateway.media_handlers import (
     handle_document_message as mh_handle_document_message,
     handle_voice_message as mh_handle_voice_message,
@@ -654,6 +662,189 @@ class AgyTelegramBot:
     async def handle_document_message(self, chat_id: int, message: Dict[str, Any], message_id: Optional[int]) -> None:
         await mh_handle_document_message(self, chat_id, message, message_id)
 
+    async def _handle_ipc_calls(
+        self,
+        chat_id: int,
+        ipc_calls: List[IPCCall],
+        active_proj: str,
+        bridge: AgyBridge,
+        effective_model: Optional[str],
+        effective_effort: Optional[str],
+    ) -> Tuple[str, List[IPCResult]]:
+        """Execute background cross-project IPC calls with pinned accordion cards and return injection."""
+        session = self.session_manager.get_session(chat_id)
+        results: List[IPCResult] = []
+        return_envelopes: List[str] = []
+
+        for call in ipc_calls:
+            target = call.target_project
+            if target not in session.projects:
+                avail = ", ".join(session.projects.keys()) or "none"
+                err_msg = f"Target project '{target}' is not registered in session. Available projects: {avail}"
+                logger.warning("IPC call failed: %s", err_msg)
+                results.append(
+                    IPCResult(
+                        target_project=target,
+                        source_project=active_proj,
+                        status="ERROR",
+                        response_content="",
+                        error_message=err_msg,
+                    )
+                )
+                return_envelopes.append(
+                    format_return_envelope(
+                        source=target,
+                        target=active_proj,
+                        body=f"Error: {err_msg}",
+                        status="ERROR",
+                    )
+                )
+                continue
+
+            target_proj_info = session.projects[target]
+            target_path = target_proj_info.get("path") or self.config.agy_working_dir or os.getcwd()
+            target_conv_id = target_proj_info.get("conversation_id")
+
+            # 1. Send initial pinned accordion card
+            card_text = format_pinned_accordion_card(
+                target_project=target,
+                source_project=active_proj,
+                task_preview=call.content,
+                tools_log=[],
+                status_text="Starting background worker in workspace...",
+            )
+            pin_msg = await self._safe_send_message(chat_id=chat_id, text=card_text)
+            pin_msg_id = pin_msg.get("message_id") if pin_msg else None
+            if pin_msg_id:
+                await self.client.pin_chat_message(chat_id=chat_id, message_id=pin_msg_id, disable_notification=True)
+
+            # 2. Run ephemeral worker in target workspace
+            envelope_prompt = format_incoming_envelope(
+                source=active_proj,
+                target=target,
+                body=call.content,
+                hop_count=call.hop_count,
+            )
+
+            tools_log: List[str] = []
+            target_accumulated_text = ""
+            target_start = time.time()
+            last_card_edit = time.time()
+            is_error = False
+            error_reason = ""
+
+            try:
+                async for event in bridge.run_ephemeral_worker(
+                    prompt=envelope_prompt,
+                    working_dir=target_path,
+                    conversation_id=target_conv_id,
+                    model=effective_model,
+                    effort=effective_effort,
+                    timeout_seconds=self.config.agy_timeout_seconds,
+                ):
+                    now = time.time()
+                    if event.type == "init":
+                        if event.conversation_id:
+                            session.projects[target]["conversation_id"] = event.conversation_id
+                            self.session_manager.save_sessions()
+
+                    elif event.type == "tool":
+                        t_sum = format_tool_summary(
+                            tool_name=event.tool_name or "",
+                            state=event.tool_state or "ACTIVE",
+                            tool_info=event.tool_info or {},
+                            duration_seconds=event.duration_seconds,
+                        )
+                        if t_sum:
+                            if tools_log and tools_log[-1].endswith("..."):
+                                tools_log[-1] = t_sum
+                            else:
+                                tools_log.append(t_sum)
+
+                    elif event.type in ("text", "text_delta"):
+                        target_accumulated_text += (event.text_delta or getattr(event, "content", "") or "")
+
+                    elif event.type in ("result", "done"):
+                        if event.response:
+                            target_accumulated_text = event.response
+                        if event.status and event.status.upper() != "SUCCESS":
+                            is_error = True
+                            error_reason = event.response or "Unknown worker failure"
+                        break
+
+                    elif event.type == "error":
+                        is_error = True
+                        error_reason = event.response or "Worker error encountered"
+                        break
+
+                    # Throttle live card edits
+                    if pin_msg_id and (now - last_card_edit >= self.config.stream_throttle_seconds):
+                        prog_card = format_pinned_accordion_card(
+                            target_project=target,
+                            source_project=active_proj,
+                            task_preview=call.content,
+                            tools_log=tools_log,
+                            status_text="Executing tools in workspace...",
+                            duration_seconds=now - target_start,
+                        )
+                        await self._safe_edit_message_text(
+                            chat_id=chat_id,
+                            message_id=pin_msg_id,
+                            text=prog_card,
+                        )
+                        last_card_edit = now
+
+            except Exception as e:
+                is_error = True
+                error_reason = str(e)
+                logger.error("Error running IPC task for %s: %s", target, e, exc_info=True)
+
+            dur = time.time() - target_start
+            clean_reply, sub_calls = extract_ipc_calls(target_accumulated_text, default_source=target)
+            final_body = sub_calls[0].content if sub_calls else clean_reply
+
+            # 3. Update pinned card to final state (Completed 🟢 or Error 🔴)
+            final_card = format_pinned_accordion_card(
+                target_project=target,
+                source_project=active_proj,
+                task_preview=call.content,
+                tools_log=tools_log,
+                status_text=error_reason if is_error else "Completed",
+                is_done=not is_error,
+                is_error=is_error,
+                duration_seconds=dur,
+                final_reply=final_body,
+            )
+            if pin_msg_id:
+                await self._safe_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=pin_msg_id,
+                    text=final_card,
+                )
+
+            res = IPCResult(
+                target_project=target,
+                source_project=active_proj,
+                status="ERROR" if is_error else "SUCCESS",
+                response_content=final_body,
+                duration_seconds=dur,
+                error_message=error_reason if is_error else "",
+                tools_executed=tools_log,
+            )
+            results.append(res)
+
+            return_envelopes.append(
+                format_return_envelope(
+                    source=target,
+                    target=active_proj,
+                    body=final_body if not is_error else f"Error in {target}: {error_reason}\nLogs:\n" + "\n".join(tools_log),
+                    status="ERROR" if is_error else "SUCCESS",
+                )
+            )
+
+        combined_return_text = "\n\n".join(return_envelopes)
+        return combined_return_text, results
+
     async def handle_prompt(self, chat_id: int, prompt: str, reply_to_id: Optional[int]) -> None:
         """Execute agy with prompt and stream real-time results back to Telegram with document export support."""
         session = self.session_manager.get_session(chat_id)
@@ -856,6 +1047,43 @@ class AgyTelegramBot:
 
             # 2. Check for [AGY_FILE] protocol blocks in final output
             clean_text, agy_files = extract_agy_file_blocks(final_raw)
+
+            # 2.5 Process cross-project [AGY_IPC] communication calls
+            clean_text, ipc_calls = extract_ipc_calls(clean_text, default_source=active_proj)
+            if ipc_calls:
+                combined_return_text, ipc_results = await self._handle_ipc_calls(
+                    chat_id=chat_id,
+                    ipc_calls=ipc_calls,
+                    active_proj=active_proj,
+                    bridge=bridge,
+                    effective_model=effective_model,
+                    effective_effort=effective_effort,
+                )
+                if combined_return_text:
+                    followup_text = ""
+                    async for f_event in bridge.run_streaming(
+                        prompt=combined_return_text,
+                        conversation_id=conv_id,
+                        model=effective_model,
+                        effort=effective_effort,
+                        working_dir=effective_dir,
+                        system_prompt=self.config.system_prompt,
+                    ):
+                        if f_event.type in ("text", "text_delta"):
+                            followup_text += (f_event.text_delta or getattr(f_event, "content", "") or "")
+                        elif f_event.type in ("result", "done"):
+                            if f_event.response:
+                                followup_text = f_event.response
+                            break
+
+                    if followup_text:
+                        clean_text = followup_text
+                        clean_text, voice_block_followup = extract_agy_voice_block(clean_text)
+                        if voice_block_followup:
+                            voice_block = voice_block_followup
+                        clean_text, follow_files = extract_agy_file_blocks(clean_text)
+                        if follow_files:
+                            agy_files.extend(follow_files)
 
             # 3. Auto-export long responses as standalone HTML document
             auto_export_content: Optional[str] = None

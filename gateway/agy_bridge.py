@@ -474,6 +474,72 @@ class AgyBridge:
         self._current_process = None
         self._current_conv_id = None
 
+    async def run_ephemeral_worker(
+        self,
+        prompt: str,
+        working_dir: str,
+        conversation_id: Optional[str] = None,
+        model: Optional[str] = None,
+        effort: Optional[str] = None,
+        timeout_seconds: int = 300,
+    ) -> AsyncGenerator[AgyEvent, None]:
+        """
+        Run an isolated, single-turn agy worker in a specific target working directory.
+        Operates completely independently without altering the active conversation state.
+        """
+        cmd = self.build_command(
+            prompt=prompt,
+            conversation_id=conversation_id,
+            model=model,
+            effort=effort,
+            working_dir=working_dir,
+            system_prompt=self.system_prompt,
+        )
+        Path(working_dir).mkdir(parents=True, exist_ok=True)
+        logger.info("Spawning ephemeral agy worker in %s: %s", working_dir, " ".join(cmd[:6]))
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=working_dir,
+        )
+
+        if process.stdin:
+            payload = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
+            process.stdin.write(payload.encode("utf-8"))
+            await process.stdin.drain()
+
+        assert process.stdout is not None
+        try:
+            while True:
+                line_bytes = await asyncio.wait_for(process.stdout.readline(), timeout=timeout_seconds)
+                if not line_bytes:
+                    break
+                line = line_bytes.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                event = self._parse_line(line)
+                if event:
+                    yield event
+                    if event.type in ("result", "error"):
+                        break
+        finally:
+            if process.returncode is None:
+                try:
+                    if process.stdin and not process.stdin.is_closing():
+                        process.stdin.close()
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=2.0)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.wait()
+                except Exception:
+                    pass
+
+
 
 if __name__ == "__main__":
     async def main() -> None:
