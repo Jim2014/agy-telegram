@@ -426,7 +426,7 @@ def build_voice_keyboard(current_mode: str) -> Tuple[str, Dict[str, Any]]:
         "• <b>Language Adaptation:</b> Automatic (Xiaoxiao for Chinese / Jenny for English)\n\n"
         "<b>Available Modes:</b>\n"
         "• <b>🔴 Disabled:</b> Turn off voice scripts and audio synthesis completely.\n"
-        "• <b>📝 On-Demand:</b> Extract voice script without synthesizing upfront; audio is generated and sent only when you click <code>[ 🔊 Play Audio ]</code>.\n"
+        "• <b>📝 On-Demand:</b> Extract voice script without synthesizing upfront; audio is generated and sent only when you click <code>[ 🔊 Send Audio ]</code>.\n"
         "• <b>⚡ Auto-Send:</b> Automatically synthesize and send a native Telegram voice note directly with each reply.\n\n"
         "💡 <i>Tap an option below or run <code>/voice &lt;disable|ondemand|autosend&gt;</code> in chat.</i>"
     )
@@ -434,8 +434,8 @@ def build_voice_keyboard(current_mode: str) -> Tuple[str, Dict[str, Any]]:
 
 
 def build_voice_play_button(voice_id: str) -> Dict[str, Any]:
-    """Build an inline button to play/send the voice summary."""
-    return {"text": "🔊 Play Audio", "callback_data": f"voice:{voice_id}"}
+    """Build an inline button to generate/send the voice note to chat."""
+    return {"text": "🔊 Send Audio", "callback_data": f"voice:{voice_id}"}
 
 
 if __name__ == "__main__":

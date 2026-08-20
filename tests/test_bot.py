@@ -1201,7 +1201,7 @@ async def test_bot_voice_command_and_voice_summary_flow(mock_bot, monkeypatch):
     markup = edit_call.get("reply_markup")
     assert markup is not None
     buttons = markup["inline_keyboard"]
-    assert any("🔊 Play Audio" in btn["text"] for row in buttons for btn in row)
+    assert any("🔊 Send Audio" in btn["text"] for row in buttons for btn in row)
 
 
 @pytest.mark.asyncio

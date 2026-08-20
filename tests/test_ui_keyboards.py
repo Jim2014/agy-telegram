@@ -168,7 +168,7 @@ def test_build_voice_keyboard_and_play_button():
 
     # 2. Voice play button
     btn = build_voice_play_button("v_123_456")
-    assert btn["text"] == "🔊 Play Audio"
+    assert btn["text"] == "🔊 Send Audio"
     assert btn["callback_data"] == "voice:v_123_456"
 
 
