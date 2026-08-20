@@ -25,27 +25,60 @@ ALL_BOT_COMMAND_SPECS: List[Dict[str, Any]] = [
     {"command": "file", "description": "📎 Send workspace file document", "default_priority": 40},
     {"command": "export", "description": "📄 Export conversation as HTML", "default_priority": 35},
     {"command": "steer", "description": "🎯 Steer running prompt", "default_priority": 30},
+    {"command": "voice", "description": "🎙️ Configure voice notes mode", "default_priority": 28},
+    {"command": "pin", "description": "📌 Pin workspace status banner", "default_priority": 26},
     {"command": "stop", "description": "🛑 Interrupt running agy prompt", "default_priority": 25},
     {"command": "reset", "description": "🔄 Clear active conversation", "default_priority": 20},
     {"command": "delete", "description": "🗑️ Delete a project (/delete <name>)", "default_priority": 10},
 ]
 
+# Canonical command alias mapping
+COMMAND_ALIASES: Dict[str, str] = {
+    "start": "help",
+    "help": "help",
+    "usage": "usage",
+    "quota": "usage",
+    "status": "status",
+    "projects": "projects",
+    "open": "open",
+    "new": "new",
+    "model": "model",
+    "effort": "effort",
+    "skills": "skills",
+    "plugins": "skills",
+    "artifacts": "artifacts",
+    "scratch": "artifacts",
+    "dir": "dir",
+    "ls": "dir",
+    "file": "file",
+    "export": "export",
+    "steer": "steer",
+    "voice": "voice",
+    "tts": "voice",
+    "audio": "voice",
+    "pin": "pin",
+    "banner": "pin",
+    "stop": "stop",
+    "reset": "reset",
+    "delete": "delete",
+}
+
 
 def build_adaptive_bot_commands(
     session: Optional[Any] = None,
-    max_commands: int = 8,
+    max_commands: Optional[int] = None,
 ) -> List[Dict[str, str]]:
     """
-    Generate an adaptive, LRU-sorted command list for the Telegram slash menu.
-    - /help is always pinned at index 0.
-    - Remaining commands are sorted by (usage_frequency * 1000 + last_used_timestamp, default_priority).
-    - Returns top `max_commands` items to keep the mobile menu clean and uncluttered.
+    Generate an adaptive, pure LRU-sorted command list for the Telegram slash menu.
+    - /help is always permanently fixed / pinned at index 0.
+    - Remaining commands are sorted by LRU (last_used_timestamp descending),
+      falling back to default_priority descending for unused commands.
+    - Returns all supported bot commands (or up to `max_commands` if explicitly passed).
     """
-    stats = getattr(session, "command_stats", {}) if session else {}
     last_used = getattr(session, "command_last_used", {}) if session else {}
 
     pinned: List[Dict[str, str]] = []
-    others: List[Tuple[float, Dict[str, str]]] = []
+    others: List[Tuple[float, int, Dict[str, str]]] = []
 
     for spec in ALL_BOT_COMMAND_SPECS:
         cmd_name = spec["command"]
@@ -56,22 +89,20 @@ def build_adaptive_bot_commands(
             pinned.append(entry)
             continue
 
-        count = stats.get(cmd_name, 0)
-        ts = last_used.get(cmd_name, 0.0)
-        default_prio = spec.get("default_priority", 0)
+        ts = float(last_used.get(cmd_name, 0.0))
+        default_prio = int(spec.get("default_priority", 0))
 
-        # Recency & frequency score
-        score = (count * 1000.0) + (ts / 1e8 if ts > 0 else 0) + (default_prio * 0.1)
-        others.append((score, entry))
+        # Pure LRU sort key: (-ts, -default_prio)
+        # Most recently used (highest timestamp) bubbles to the top right after /help.
+        # Unused commands (ts == 0.0) preserve their relative default priority order.
+        others.append((-ts, -default_prio, entry))
 
-    # Sort others by score descending
-    others.sort(key=lambda x: x[0], reverse=True)
+    # Sort others by (-ts, -default_prio)
+    others.sort(key=lambda x: (x[0], x[1]))
 
-    result = list(pinned)
-    for _, item in others:
-        if len(result) >= max_commands:
-            break
-        result.append(item)
+    result = list(pinned) + [item for _, _, item in others]
+    if max_commands is not None and max_commands > 0:
+        result = result[:max_commands]
 
     return result
 

@@ -63,6 +63,7 @@ from gateway.message_formatter import (
 from gateway.session_manager import ChatSession, SessionManager
 from gateway.telegram_client import TelegramClient
 from gateway.ui_keyboards import (
+    COMMAND_ALIASES,
     build_actions_keyboard,
     build_adaptive_bot_commands,
     build_decision_keyboard,
@@ -78,7 +79,7 @@ from gateway.webapp_server import WebAppServer
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_BOT_COMMANDS = build_adaptive_bot_commands(None, max_commands=8)
+DEFAULT_BOT_COMMANDS = build_adaptive_bot_commands(None)
 
 
 class AgyTelegramBot:
@@ -119,7 +120,7 @@ class AgyTelegramBot:
         """Update adaptive LRU-sorted command menu for a specific chat."""
         try:
             session = self.session_manager.get_session(chat_id)
-            adaptive_cmds = build_adaptive_bot_commands(session, max_commands=8)
+            adaptive_cmds = build_adaptive_bot_commands(session)
             return await self.client.set_my_commands(
                 commands=adaptive_cmds,
                 scope={"type": "chat", "chat_id": chat_id},
@@ -518,57 +519,58 @@ class AgyTelegramBot:
         message_id: Optional[int] = None,
     ) -> None:
         """Route and execute slash command with usage tracking."""
-        clean_cmd = cmd.lower().split("@")[0]
-        self.session_manager.record_command_usage(chat_id, clean_cmd)
+        clean_cmd = cmd.lower().split("@")[0].lstrip("/")
+        canonical_cmd = COMMAND_ALIASES.get(clean_cmd, clean_cmd)
+        self.session_manager.record_command_usage(chat_id, canonical_cmd)
         asyncio.create_task(self.update_chat_command_menu(chat_id))
 
-        if clean_cmd in ("/start", "/help"):
+        if canonical_cmd == "help":
             await self.handle_cmd_help(chat_id)
-        elif clean_cmd in ("/usage", "/quota"):
+        elif canonical_cmd == "usage":
             await self.handle_cmd_usage(chat_id, reply_to_id=message_id)
-        elif clean_cmd in ("/skills", "/plugins"):
+        elif canonical_cmd == "skills":
             await self.handle_cmd_skills(chat_id, reply_to_id=message_id)
-        elif clean_cmd in ("/artifacts", "/scratch"):
+        elif canonical_cmd == "artifacts":
             await self.handle_cmd_artifacts(chat_id, arg, reply_to_id=message_id)
-        elif clean_cmd == "/new":
+        elif canonical_cmd == "new":
             await self.handle_cmd_new(chat_id, arg)
-        elif clean_cmd == "/open":
+        elif canonical_cmd == "open":
             await self.handle_cmd_open(chat_id, arg)
-        elif clean_cmd == "/projects":
+        elif canonical_cmd == "projects":
             await self.handle_cmd_projects(chat_id)
-        elif clean_cmd == "/delete":
+        elif canonical_cmd == "delete":
             await self.handle_cmd_delete(chat_id, arg)
-        elif clean_cmd == "/reset":
+        elif canonical_cmd == "reset":
             await self.handle_cmd_reset(chat_id)
-        elif clean_cmd == "/status":
+        elif canonical_cmd == "status":
             await self.handle_cmd_status(chat_id)
-        elif clean_cmd == "/model":
+        elif canonical_cmd == "model":
             await self.handle_cmd_model(chat_id, arg)
-        elif clean_cmd == "/effort":
+        elif canonical_cmd == "effort":
             await self.handle_cmd_effort(chat_id, arg)
-        elif clean_cmd in ("/dir", "/ls"):
+        elif canonical_cmd == "dir":
             await self.handle_cmd_dir(chat_id, arg, message_id)
-        elif clean_cmd == "/file":
+        elif canonical_cmd == "file":
             await self.handle_cmd_file(chat_id, arg, message_id)
-        elif clean_cmd == "/export":
+        elif canonical_cmd == "export":
             await self.handle_cmd_export(chat_id, message_id)
-        elif clean_cmd == "/steer":
+        elif canonical_cmd == "steer":
             await self.handle_cmd_steer(chat_id, arg, message_id)
-        elif clean_cmd in ("/pin", "/banner"):
+        elif canonical_cmd == "pin":
             await self.update_pinned_banner(chat_id, force_repin=True)
             await self._safe_send_message(
                 chat_id=chat_id,
                 text="📌 <b>Pinned workspace banner updated and pinned to top of chat.</b>",
                 reply_to_message_id=message_id,
             )
-        elif clean_cmd in ("/voice", "/tts", "/audio"):
+        elif canonical_cmd == "voice":
             await self.handle_cmd_voice(chat_id, arg, message_id=message_id)
-        elif clean_cmd == "/stop":
+        elif canonical_cmd == "stop":
             await self.handle_cmd_stop(chat_id)
         else:
             await self._safe_send_message(
                 chat_id=chat_id,
-                text=f"❓ Unknown command <code>{escape_html(clean_cmd)}</code>. Use /help for instructions.",
+                text=f"❓ Unknown command <code>/{escape_html(clean_cmd)}</code>. Use /help for instructions.",
             )
 
     # Backward-compatible command and media delegation wrappers

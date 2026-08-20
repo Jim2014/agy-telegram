@@ -55,6 +55,7 @@ def test_build_effort_keyboard():
 def test_build_adaptive_bot_commands():
     from gateway.session_manager import ChatSession
     from gateway.ui_keyboards import (
+        ALL_BOT_COMMAND_SPECS,
         build_adaptive_bot_commands,
         build_artifacts_keyboard,
         build_help_keyboard,
@@ -62,25 +63,35 @@ def test_build_adaptive_bot_commands():
         build_usage_keyboard,
     )
 
-    # 1. Empty session -> default commands with help at index 0
-    cmds = build_adaptive_bot_commands(None, max_commands=8)
-    assert len(cmds) == 8
+    # 1. Empty session -> returns all registered commands with help pinned at index 0
+    cmds = build_adaptive_bot_commands(None)
+    assert len(cmds) == len(ALL_BOT_COMMAND_SPECS)
     assert cmds[0]["command"] == "help"
 
-    # 2. Session with heavy usage of 'artifacts' and 'skills' -> they should bubble up right after help!
+    # 2. Session with LRU usage -> most recently used command bubbles up immediately after help
     session = ChatSession(
         chat_id=123,
-        command_stats={"artifacts": 50, "skills": 45, "usage": 30},
-        command_last_used={"artifacts": 1700000000.0, "skills": 1700000000.0, "usage": 1700000000.0},
+        command_stats={"model": 1, "skills": 5, "artifacts": 10},
+        command_last_used={
+            "model": 1700000100.0,
+            "skills": 1700000200.0,
+            "artifacts": 1700000300.0,  # Most recently used
+            "help": 1700000400.0,       # Pinned command
+        },
     )
-    adaptive_cmds = build_adaptive_bot_commands(session, max_commands=8)
-    assert len(adaptive_cmds) == 8
-    assert adaptive_cmds[0]["command"] == "help"
-    assert adaptive_cmds[1]["command"] == "artifacts"
-    assert adaptive_cmds[2]["command"] == "skills"
-    assert adaptive_cmds[3]["command"] == "usage"
+    adaptive_cmds = build_adaptive_bot_commands(session)
+    assert len(adaptive_cmds) == len(ALL_BOT_COMMAND_SPECS)
+    assert adaptive_cmds[0]["command"] == "help"       # Pinned at index 0
+    assert adaptive_cmds[1]["command"] == "artifacts"  # t=300
+    assert adaptive_cmds[2]["command"] == "skills"     # t=200
+    assert adaptive_cmds[3]["command"] == "model"      # t=100
 
-    # 3. Test new keyboards
+    # 3. Explicit max_commands limit
+    limited_cmds = build_adaptive_bot_commands(session, max_commands=4)
+    assert len(limited_cmds) == 4
+    assert [c["command"] for c in limited_cmds] == ["help", "artifacts", "skills", "model"]
+
+    # 4. Test new keyboards
     hk = build_help_keyboard()
     assert any(any(b["callback_data"] == "usage:show" for b in row) for row in hk["inline_keyboard"])
 
@@ -92,6 +103,49 @@ def test_build_adaptive_bot_commands():
 
     ak = build_artifacts_keyboard([{"name": "test_report.html"}])
     assert any(any(b["callback_data"] == "artifact:dl:0" for b in row) for row in ak["inline_keyboard"])
+
+
+def test_lru_command_sequence_progression():
+    from gateway.session_manager import ChatSession
+    from gateway.ui_keyboards import COMMAND_ALIASES, build_adaptive_bot_commands
+
+    session = ChatSession(chat_id=999)
+
+    # Initial order: help at 0, usage at 1, status at 2
+    cmds = build_adaptive_bot_commands(session)
+    assert cmds[0]["command"] == "help"
+    assert cmds[1]["command"] == "usage"
+
+    # Step 1: User runs /export at t=100
+    session.command_last_used["export"] = 100.0
+    cmds = build_adaptive_bot_commands(session)
+    assert cmds[0]["command"] == "help"
+    assert cmds[1]["command"] == "export"
+
+    # Step 2: User runs /projects at t=200 -> projects moves to front (right below help)
+    session.command_last_used["projects"] = 200.0
+    cmds = build_adaptive_bot_commands(session)
+    assert cmds[0]["command"] == "help"
+    assert cmds[1]["command"] == "projects"
+    assert cmds[2]["command"] == "export"
+
+    # Step 3: User runs alias /quota -> mapped to 'usage' at t=300
+    canonical = COMMAND_ALIASES.get("quota", "quota")
+    assert canonical == "usage"
+    session.command_last_used[canonical] = 300.0
+    cmds = build_adaptive_bot_commands(session)
+    assert cmds[0]["command"] == "help"
+    assert cmds[1]["command"] == "usage"
+    assert cmds[2]["command"] == "projects"
+    assert cmds[3]["command"] == "export"
+
+    # Step 4: User runs /help at t=400 -> help stays at index 0, usage at index 1
+    session.command_last_used["help"] = 400.0
+    cmds = build_adaptive_bot_commands(session)
+    assert cmds[0]["command"] == "help"
+    assert cmds[1]["command"] == "usage"
+    assert cmds[2]["command"] == "projects"
+    assert cmds[3]["command"] == "export"
 
 
 def test_build_decision_and_action_keyboards():
