@@ -364,6 +364,7 @@ class AgyTelegramBot:
                     ),
                 )
                 await self.update_pinned_banner(chat_id)
+                await self.update_chat_command_menu(chat_id)
             except Exception as e:
                 logger.warning("Restart notification failed for chat %s: %s", chat_id, e)
 
