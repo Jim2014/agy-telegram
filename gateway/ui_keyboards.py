@@ -474,7 +474,7 @@ def build_ipc_accordion_keyboard(target_project: str) -> Dict[str, Any]:
     return {
         "inline_keyboard": [
             [
-                {"text": f"📌 取消置顶 [{target_project}]", "callback_data": f"unpin_ipc:{target_project}"}
+                {"text": "📌 Unpin", "callback_data": f"unpin_ipc:{target_project}"}
             ]
         ]
     }
