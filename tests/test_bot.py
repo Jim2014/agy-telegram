@@ -83,15 +83,19 @@ async def test_bot_new_project_command(mock_bot, tmp_path):
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/new proj1", "message_id": 11}})
     assert "Usage" in mock_bot.client.send_message.call_args[1]["text"]
 
-    # /new proj1 /tmp/proj1 -> created
+    # /new proj1 /tmp/proj1 -> created on disk automatically
+    assert not Path(p1).exists()
     mock_bot.client.send_message.reset_mock()
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": f"/new proj1 {p1}", "message_id": 12}})
-    assert "created and activated" in mock_bot.client.send_message.call_args[1]["text"]
+    text = mock_bot.client.send_message.call_args[1]["text"]
+    assert "created and activated" in text
+    assert "Directory created" in text
+    assert Path(p1).is_dir()
     session = mock_bot.session_manager.get_session(100)
     assert session.active_project == "proj1"
     assert session.active_path() == str(Path(p1).resolve())
 
-    # /new proj1 again -> treated as /open
+    # /new proj1 again -> treated as /open (with Existing directory notice)
     mock_bot.client.send_message.reset_mock()
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": f"/new proj1 {p1}_other", "message_id": 13}})
     assert "already exists" in mock_bot.client.send_message.call_args[1]["text"]

@@ -244,7 +244,8 @@ class AgyBridge:
                 effort=effort,
                 working_dir=effective_dir,
             )
-            logger.info("Executing agy command: %s (cwd=%s)", " ".join(cmd[:6]) + " ...", effective_dir)
+            if effective_dir:
+                Path(effective_dir).mkdir(parents=True, exist_ok=True)
 
             try:
                 process = await asyncio.create_subprocess_exec(

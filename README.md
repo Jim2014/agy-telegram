@@ -234,7 +234,7 @@ tail -f -n 50 runtime/watchdog.log
 | `/status` | 查看当前活跃项目、会话累计统计（轮次、累计 Token、思考 Token、会话存活时长、总运行耗时）、模型及系统状态 | `/status` |
 | `/projects` | 列出所有项目、活跃标记、工作区路径与最后活跃时间 | `/projects` |
 | `/open <name>` | 打开并切换到已有项目，恢复其历史会话与统计 | `/open myapp` |
-| `/new <name> <path>` | 创建新项目并设为当前活跃工作区（已存在则切换） | `/new myapp /Users/jim/myapp` |
+| `/new <name> <path>` | 创建新项目并设为当前活跃工作区（目录不存在则自动递归创建 `mkdir -p` 并提示；已存在则切换） | `/new myapp /Users/jim/myapp` |
 | `/model <name>` | 切换当前对话使用的模型（如 `/model gemini-3.7-flash` 或 `/model gemini-3.1-pro`） | `/model gemini-3.7-flash` |
 | `/effort <level>` | 调整推理强度：`low`、`medium`、`high` | `/effort high` |
 | `/dir` 或 `/ls [path]` | 扫描工作区目录并生成交互式折叠 HTML 文件树，支持一键点击复制 `/file` 与 `/file -h` 指令 | `/dir` 或 `/ls tests` |

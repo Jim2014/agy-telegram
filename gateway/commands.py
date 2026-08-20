@@ -98,13 +98,19 @@ async def handle_cmd_new(bot: Any, chat_id: int, arg: str) -> None:
     if name in session.projects:
         bot.session_manager.open_project(chat_id, name)
         path_val = session.active_path() or ""
+        path_note = ""
+        if path_val:
+            p_obj = Path(path_val)
+            if not p_obj.exists():
+                p_obj.mkdir(parents=True, exist_ok=True)
+                path_note = " <i>(Directory created)</i>"
         conv_id = session.conversation_id
         conv_text = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(New session)</i>"
         await bot._safe_send_message(
             chat_id=chat_id,
             text=(
                 f"📂 Project <b>{escape_html(name)}</b> already exists. Switched to it!\n"
-                f"• <b>Path:</b> <code>{escape_html(path_val)}</code>\n"
+                f"• <b>Path:</b> <code>{escape_html(path_val)}</code>{path_note}\n"
                 f"• <b>Conversation:</b> {conv_text}"
             ),
         )
@@ -119,16 +125,20 @@ async def handle_cmd_new(bot: Any, chat_id: int, arg: str) -> None:
         return
 
     path_str = parts[1].strip()
-    target_path = str(Path(path_str).expanduser().resolve())
+    target_path_obj = Path(path_str).expanduser().resolve()
+    dir_existed = target_path_obj.is_dir()
+    target_path_obj.mkdir(parents=True, exist_ok=True)
+    target_path = str(target_path_obj)
     bot.session_manager.create_project(chat_id, name, target_path)
     asyncio.create_task(bot.update_pinned_banner(chat_id))
 
+    dir_status = " <i>(Existing directory)</i>" if dir_existed else " <i>(Directory created)</i>"
     await bot._safe_send_message(
         chat_id=chat_id,
         text=(
             f"✨ <b>Project created and activated!</b>\n"
             f"• <b>Project:</b> <code>{escape_html(name)}</code>\n"
-            f"• <b>Path:</b> <code>{escape_html(target_path)}</code>\n"
+            f"• <b>Path:</b> <code>{escape_html(target_path)}</code>{dir_status}\n"
             f"• <b>Conversation:</b> <i>(New session)</i>"
         ),
     )
@@ -166,6 +176,12 @@ async def handle_cmd_open(bot: Any, chat_id: int, arg: str) -> None:
     bot.session_manager.open_project(chat_id, name)
     asyncio.create_task(bot.update_pinned_banner(chat_id))
     path_val = session.active_path() or ""
+    path_note = ""
+    if path_val:
+        p_obj = Path(path_val)
+        if not p_obj.exists():
+            p_obj.mkdir(parents=True, exist_ok=True)
+            path_note = " <i>(Directory created)</i>"
     conv_id = session.conversation_id
     conv_text = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(New session)</i>"
 
@@ -173,7 +189,7 @@ async def handle_cmd_open(bot: Any, chat_id: int, arg: str) -> None:
         chat_id=chat_id,
         text=(
             f"📂 <b>Opened project:</b> <code>{escape_html(name)}</code>\n"
-            f"• <b>Path:</b> <code>{escape_html(path_val)}</code>\n"
+            f"• <b>Path:</b> <code>{escape_html(path_val)}</code>{path_note}\n"
             f"• <b>Conversation:</b> {conv_text}"
         ),
     )

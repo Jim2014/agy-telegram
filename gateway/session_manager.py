@@ -131,7 +131,9 @@ class SessionManager:
         if name in session.projects:
             raise ValueError(f"Project '{name}' already exists")
 
-        resolved_path = str(Path(path).expanduser().resolve())
+        resolved_path_obj = Path(path).expanduser().resolve()
+        resolved_path_obj.mkdir(parents=True, exist_ok=True)
+        resolved_path = str(resolved_path_obj)
         session.projects[name] = {
             "name": name,
             "path": resolved_path,
@@ -300,7 +302,9 @@ class SessionManager:
         if name not in session.projects:
             raise KeyError(f"Project '{name}' does not exist")
 
-        resolved_path = str(Path(path).expanduser().resolve())
+        resolved_path_obj = Path(path).expanduser().resolve()
+        resolved_path_obj.mkdir(parents=True, exist_ok=True)
+        resolved_path = str(resolved_path_obj)
         session.projects[name]["path"] = resolved_path
         session.projects[name]["last_active_at"] = time.time()
         session.last_active_at = time.time()
