@@ -58,5 +58,4 @@ This document outlines the milestones and roadmap for integrating new Google Ant
 | **Milestone 3** | Long-Lived Session Process Pool | ✅ Completed | 2026-08-19 |
 | **Milestone 4** | Quota, Skills, Artifacts & Adaptive LRU Menu | ✅ Completed | 2026-08-19 |
 | **Milestone 5** | Interactive UI (Buttons, Expandable, Reactions) | ✅ Completed | 2026-08-19 |
-| **Milestone 6 (6.1, 6.2)** | Mini App Webview Viewer & Dynamic Placeholders | ✅ Completed | 2026-08-19 |
-| **Milestone 6** | Mini App Viewer, Placeholders & Pinned Banner | ⏳ Planned | - |
+| **Milestone 6** | Dynamic Placeholders, Clean HTML Delivery & Pinned Banner | ✅ Completed | 2026-08-19 |

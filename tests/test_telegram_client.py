@@ -296,5 +296,41 @@ async def test_telegram_client_set_message_reaction(monkeypatch):
     await client.close()
 
 
+@pytest.mark.asyncio
+async def test_telegram_client_pin_and_unpin_chat_message(monkeypatch):
+    client = TelegramClient("12345:TESTTOKEN")
+    captured_payload = {}
+
+    async def mock_post(url, **kwargs):
+        req = httpx.Request("POST", url)
+        captured_payload.update(kwargs.get("json", {}))
+        return httpx.Response(
+            200,
+            json={"ok": True, "result": True},
+            request=req,
+        )
+
+    mock_client = httpx.AsyncClient()
+    monkeypatch.setattr(mock_client, "post", mock_post)
+    client._client = mock_client
+
+    # 1. Test pinChatMessage
+    pin_res = await client.pin_chat_message(chat_id=100, message_id=500, disable_notification=True)
+    assert pin_res is True
+    assert captured_payload["chat_id"] == 100
+    assert captured_payload["message_id"] == 500
+    assert captured_payload["disable_notification"] is True
+
+    # 2. Test unpinChatMessage
+    captured_payload.clear()
+    unpin_res = await client.unpin_chat_message(chat_id=100, message_id=500)
+    assert unpin_res is True
+    assert captured_payload["chat_id"] == 100
+    assert captured_payload["message_id"] == 500
+
+    await client.close()
+
+
+
 
 

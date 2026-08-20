@@ -457,3 +457,41 @@ def test_expandable_blockquotes_in_streaming():
     assert "<b>[Progress]</b>" in msg
 
 
+def test_format_pinned_banner():
+    from gateway.message_formatter import format_pinned_banner
+    from gateway.session_manager import ChatSession
+
+    session = ChatSession(
+        chat_id=12345,
+        active_project="alpha-strategy",
+        projects={
+            "alpha-strategy": {
+                "name": "alpha-strategy",
+                "path": "/Users/jim/projects/alpha",
+                "conversation_id": "conv-12345678",
+                "total_tokens": 1500000,
+                "thinking_tokens": 120000,
+                "turns": 15,
+                "total_duration_seconds": 95.5,
+            }
+        },
+        model="gemini-3.7-flash",
+        effort="high",
+    )
+
+    # 1. Idle state
+    banner_idle = format_pinned_banner(session, is_busy=False)
+    assert "📌 <b>agy Workspace Hub</b>" in banner_idle
+    assert "<code>alpha-strategy</code>" in banner_idle
+    assert "🟢 <b>Ready</b>" in banner_idle
+    assert "/Users/jim/projects/alpha" in banner_idle
+    assert "gemini-3.7-flash" in banner_idle
+    assert "1.50M" in banner_idle
+    assert "15 turns" in banner_idle
+
+    # 2. Busy state
+    banner_busy = format_pinned_banner(session, is_busy=True)
+    assert "⚡ <b>Running...</b>" in banner_busy
+
+
+

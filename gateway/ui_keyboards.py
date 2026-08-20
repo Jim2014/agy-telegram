@@ -356,6 +356,23 @@ def build_reply_keyboard(
     }
 
 
+def build_pinned_banner_keyboard() -> Dict[str, Any]:
+    """
+    Build quick-access inline keyboard for the pinned status banner.
+    """
+    buttons = [
+        [
+            {"text": "📊 Status", "callback_data": "status:show"},
+            {"text": "📁 Projects", "callback_data": "projects:list"},
+        ],
+        [
+            {"text": "🪙 Quota", "callback_data": "usage:show"},
+            {"text": "📖 Help", "callback_data": "help:show"},
+        ],
+    ]
+    return {"inline_keyboard": buttons}
+
+
 def build_webapp_viewer_button(
     url: str,
     title: str = "🌐 在 Telegram 中即开查看",

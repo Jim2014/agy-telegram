@@ -28,6 +28,7 @@ class ChatSession:
     command_last_used: Dict[str, float] = field(default_factory=dict)
     pending_decisions: List[str] = field(default_factory=list)
     pending_actions: List[Dict[str, str]] = field(default_factory=list)
+    pinned_message_id: Optional[int] = None
 
     @property
     def conversation_id(self) -> Optional[str]:
@@ -59,6 +60,7 @@ class ChatSession:
             "projects": self.projects,
             "command_stats": self.command_stats,
             "command_last_used": self.command_last_used,
+            "pinned_message_id": self.pinned_message_id,
         }
 
     @classmethod
@@ -89,11 +91,11 @@ class ChatSession:
             projects=projects,
             model=data.get("model"),
             effort=data.get("effort"),
-            is_busy=False,
-            created_at=data.get("created_at", time.time()),
-            last_active_at=data.get("last_active_at", time.time()),
+            created_at=float(data.get("created_at", time.time())),
+            last_active_at=float(data.get("last_active_at", time.time())),
             command_stats=data.get("command_stats", {}),
             command_last_used=data.get("command_last_used", {}),
+            pinned_message_id=data.get("pinned_message_id"),
         )
 
 

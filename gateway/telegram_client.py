@@ -433,6 +433,41 @@ class TelegramClient:
             logger.debug("Failed to set message reaction '%s' for msg %s: %s", reaction, message_id, e)
             return False
 
+    async def pin_chat_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        disable_notification: bool = True,
+    ) -> bool:
+        """Pin a message at the top of the chat."""
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "disable_notification": disable_notification,
+        }
+        try:
+            res = await self._post("pinChatMessage", payload)
+            return bool(res)
+        except Exception as e:
+            logger.warning("Failed to pin message %s in chat %s: %s", message_id, chat_id, e)
+            return False
+
+    async def unpin_chat_message(
+        self,
+        chat_id: int,
+        message_id: Optional[int] = None,
+    ) -> bool:
+        """Unpin a message from the top of the chat."""
+        payload: Dict[str, Any] = {"chat_id": chat_id}
+        if message_id is not None:
+            payload["message_id"] = message_id
+        try:
+            res = await self._post("unpinChatMessage", payload)
+            return bool(res)
+        except Exception as e:
+            logger.warning("Failed to unpin message in chat %s: %s", chat_id, e)
+            return False
+
 
 if __name__ == "__main__":
     async def main() -> None:

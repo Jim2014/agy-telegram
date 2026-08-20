@@ -25,6 +25,9 @@ def mock_bot(tmp_path):
     bot.client.send_chat_action = AsyncMock(return_value=True)
     bot.client.answer_callback_query = AsyncMock(return_value=True)
     bot.client.edit_message_reply_markup = AsyncMock(return_value=True)
+    bot.client.pin_chat_message = AsyncMock(return_value=True)
+    bot.client.unpin_chat_message = AsyncMock(return_value=True)
+    bot.client.set_message_reaction = AsyncMock(return_value=True)
     return bot
 
 
@@ -1125,6 +1128,36 @@ async def test_bot_prompt_generates_action_keyboard(mock_bot):
     buttons = reply_markup["inline_keyboard"]
     assert len(buttons) >= 1
     assert buttons[0][0]["callback_data"] == "act:0"
+
+
+@pytest.mark.asyncio
+async def test_bot_update_pinned_banner_and_pin_command(mock_bot):
+    session = mock_bot.session_manager.get_session(100)
+    mock_bot.session_manager.create_project(100, "pin-test", "/tmp/pin-test")
+
+    # 1. Update pinned banner when no pinned message exists -> sends message and pins it
+    mock_bot.client.send_message.reset_mock()
+    mock_bot.client.pin_chat_message.reset_mock()
+    msg_id = await mock_bot.update_pinned_banner(100)
+    assert msg_id == 999  # default mock message_id
+    assert session.pinned_message_id == 999
+    assert mock_bot.client.pin_chat_message.called
+    assert mock_bot.client.pin_chat_message.call_args[1]["disable_notification"] is True
+
+    # 2. Update pinned banner when pinned message exists -> edits existing message
+    mock_bot.client.edit_message_text.reset_mock()
+    mock_bot.client.send_message.reset_mock()
+    msg_id_2 = await mock_bot.update_pinned_banner(100)
+    assert msg_id_2 == 999
+    assert mock_bot.client.edit_message_text.called
+    assert mock_bot.client.send_message.call_count == 0
+
+    # 3. Test /pin slash command
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/pin", "message_id": 88}})
+    assert mock_bot.client.send_message.called
+    assert "Pinned workspace banner updated" in mock_bot.client.send_message.call_args[1]["text"]
+
 
 
 

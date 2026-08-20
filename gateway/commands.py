@@ -119,6 +119,7 @@ async def handle_cmd_new(bot: Any, chat_id: int, arg: str) -> None:
     path_str = parts[1].strip()
     target_path = str(Path(path_str).expanduser().resolve())
     bot.session_manager.create_project(chat_id, name, target_path)
+    asyncio.create_task(bot.update_pinned_banner(chat_id))
 
     await bot._safe_send_message(
         chat_id=chat_id,
@@ -161,6 +162,7 @@ async def handle_cmd_open(bot: Any, chat_id: int, arg: str) -> None:
         return
 
     bot.session_manager.open_project(chat_id, name)
+    asyncio.create_task(bot.update_pinned_banner(chat_id))
     path_val = session.active_path() or ""
     conv_id = session.conversation_id
     conv_text = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(New session)</i>"
@@ -313,6 +315,7 @@ async def handle_cmd_model(bot: Any, chat_id: int, arg: str = "", edit_message_i
             bot.session_manager.set_model(chat_id, None)
         else:
             bot.session_manager.set_model(chat_id, val)
+        asyncio.create_task(bot.update_pinned_banner(chat_id))
 
     cur_model = session.model or bot.config.default_model or "gemini-3.7-flash"
     cur_effort = session.effort or bot.config.default_effort or "high"
@@ -337,6 +340,7 @@ async def handle_cmd_effort(bot: Any, chat_id: int, arg: str = "", edit_message_
             )
             return
         bot.session_manager.set_effort(chat_id, val)
+        asyncio.create_task(bot.update_pinned_banner(chat_id))
 
     cur_model = session.model or bot.config.default_model or "gemini-3.7-flash"
     cur_effort = session.effort or bot.config.default_effort or "high"
@@ -347,6 +351,23 @@ async def handle_cmd_effort(bot: Any, chat_id: int, arg: str = "", edit_message_
         await bot._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
     else:
         await bot._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+
+
+async def handle_cmd_pin(bot: Any, chat_id: int, reply_to_id: Optional[int] = None) -> None:
+    """Update or re-pin the project hub status banner at top of chat (/pin, /banner)."""
+    msg_id = await bot.update_pinned_banner(chat_id, force_repin=True)
+    if msg_id:
+        await bot._safe_send_message(
+            chat_id=chat_id,
+            text="📌 <b>Pinned project banner updated and pinned to top of chat.</b>",
+            reply_to_message_id=reply_to_id,
+        )
+    else:
+        await bot._safe_send_message(
+            chat_id=chat_id,
+            text="⚠️ Failed to pin banner. Please check bot permissions in chat.",
+            reply_to_message_id=reply_to_id,
+        )
 
 
 async def handle_cmd_dir(bot: Any, chat_id: int, arg: str = "", reply_to_id: Optional[int] = None) -> None:

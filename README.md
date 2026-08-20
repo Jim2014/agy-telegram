@@ -203,9 +203,7 @@ tail -f -n 50 runtime/watchdog.log
 - **⚡ LRU 智能频次重排**：网关后台动态统计当前 Chat 对各命令的使用频次与最近使用时间，最常用的命令会自动上浮至 Telegram 弹窗前列。
 - **📱 移动端精简展示**：Telegram `/` 联想菜单仅展示最常用的 Top 8 条命令，避免移动端长屏滚动烦恼；全部 17 条命令均可在输入框直接键入或通过 `/help` 面板一键点击。
 
-### 🔘 交互式选项菜单 (Inline Keyboard Buttons)
-
-为了提高移动端操作效率，网关全面支持交互式按钮点击：
+- **📌 顶部常驻工作区看板 (Pinned Status Banner)**：在聊天顶部自动置顶当前工作区看板（项目名、路径、模型、Token 统计、存活时长与状态），每次切换项目或每轮任务完成时静默自动刷新，手机抬头即见，自带 `[ 📊 Status ]`、`[ 📁 Projects ]`、`[ 🪙 Quota ]`、`[ 📖 Help ]` 快捷入口。
 - **/help 命令中心**：展示所有快捷功能入口（`[ 📊 Status ]`、`[ 🪙 Quota & Usage ]`、`[ 📁 Projects ]`、`[ 🧠 Model & Effort ]`、`[ 🧩 Skills & Tools ]`、`[ 📦 Artifacts ]`、`[ 📁 File Tree ]`、`[ 📄 Export ]`）。
 - **🔘 对话决策与后续操作选项 (Decision Flow & Action Buttons)**：
   - 当 agy 调用 `ask_question` 工具或在末尾返回建议操作时，直接在消息下方渲染交互式行内按钮（如 `[ 🧪 运行单元测试 ]`、`[ 📝 查看 Diff ]`、`[ 🚀 提交变更 ]`），点击一键执行，无需在手机上打字！
@@ -227,6 +225,7 @@ tail -f -n 50 runtime/watchdog.log
 | **直接发送文本** | 处于空闲时启动新轮次；处于运行中时**自动作为 Steering 注入当前会话** | `请帮我查看当前目录下的文件` |
 | **🎙️ 发送语音 / 音频** | 自动下载至本地 `runtime/voice/`，将路径与音频信息传给 agy 解析并执行；运行中发送则自动 Steering | 🎙️ 发送一段语音指令 |
 | **📎 发送文件 / 图片** | 自动下载至本地 `runtime/documents/`，将路径与文件元数据传给 agy 检查与处理；支持中途 Steering | 📎 发送代码/文档/图片附件 |
+| `/pin` 或 `/banner` | 重新生成并置顶当前工作区实时状态看板至 Telegram 聊天窗口顶部 | `/pin` |
 | `/help` | 查看帮助说明与交互式命令中心仪表盘（永远置顶） | `/help` |
 | `/usage` 或 `/quota` | **0 Token 实时查询** Google Antigravity 周配额、5小时限制剩余率与重置时间、AI 积分 | `/usage` |
 | `/skills` 或 `/plugins` | 查看当前工作区已注册的所有 Agent 技能与插件工具清单 | `/skills` |

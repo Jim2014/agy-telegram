@@ -49,6 +49,7 @@ from gateway.message_formatter import (
     extract_agy_action_blocks,
     extract_agy_file_blocks,
     format_final_result,
+    format_pinned_banner,
     format_streaming_message,
     format_tool_summary,
     generate_standalone_html,
@@ -62,6 +63,7 @@ from gateway.ui_keyboards import (
     build_actions_keyboard,
     build_adaptive_bot_commands,
     build_decision_keyboard,
+    build_pinned_banner_keyboard,
     build_reply_keyboard,
     build_webapp_viewer_button,
 )
@@ -162,6 +164,54 @@ class AgyTelegramBot:
             logger.warning("Telegram edit_message_text failed for chat %s, msg %s: %s", chat_id, message_id, e)
             return None
 
+    async def update_pinned_banner(
+        self,
+        chat_id: int,
+        force_repin: bool = False,
+        is_busy: bool = False,
+    ) -> Optional[int]:
+        """
+        Update or create the pinned status banner message at the top of the chat.
+        Always silent (disable_notification=True).
+        """
+        session = self.session_manager.get_session(chat_id)
+        banner_text = format_pinned_banner(
+            session=session,
+            default_model=self.config.default_model,
+            default_effort=self.config.default_effort,
+            is_busy=is_busy,
+        )
+        banner_markup = build_pinned_banner_keyboard()
+
+        # If already pinned and not forcing repin, try editing existing message
+        if session.pinned_message_id and not force_repin:
+            res = await self._safe_edit_message_text(
+                chat_id=chat_id,
+                message_id=session.pinned_message_id,
+                text=banner_text,
+                reply_markup=banner_markup,
+            )
+            if res is not None:
+                return session.pinned_message_id
+
+        # Send new banner message and pin it
+        new_msg = await self._safe_send_message(
+            chat_id=chat_id,
+            text=banner_text,
+            reply_markup=banner_markup,
+        )
+        if new_msg and "message_id" in new_msg:
+            msg_id = new_msg["message_id"]
+            session.pinned_message_id = msg_id
+            self.session_manager.save()
+            try:
+                await self.client.pin_chat_message(chat_id=chat_id, message_id=msg_id, disable_notification=True)
+            except Exception as e:
+                logger.debug("Failed to pin banner in chat %s: %s", chat_id, e)
+            return msg_id
+
+        return None
+
     async def _safe_send_document(
         self,
         chat_id: int,
@@ -255,6 +305,7 @@ class AgyTelegramBot:
                         f"• {n} project(s) saved — use <code>/status</code> or <code>/open</code> to resume."
                     ),
                 )
+                await self.update_pinned_banner(chat_id)
             except Exception as e:
                 logger.warning("Restart notification failed for chat %s: %s", chat_id, e)
 
@@ -446,6 +497,13 @@ class AgyTelegramBot:
             await self.handle_cmd_export(chat_id, message_id)
         elif clean_cmd == "/steer":
             await self.handle_cmd_steer(chat_id, arg, message_id)
+        elif clean_cmd in ("/pin", "/banner"):
+            await self.update_pinned_banner(chat_id, force_repin=True)
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text="📌 <b>Pinned workspace banner updated and pinned to top of chat.</b>",
+                reply_to_message_id=message_id,
+            )
         elif clean_cmd == "/stop":
             await self.handle_cmd_stop(chat_id)
         else:
@@ -569,6 +627,7 @@ class AgyTelegramBot:
 
         session.pending_decisions = []
         session.pending_actions = []
+        asyncio.create_task(self.update_pinned_banner(chat_id, is_busy=True))
 
         if reply_to_id:
             await self._safe_set_message_reaction(chat_id, reply_to_id, "👀")
@@ -899,6 +958,7 @@ class AgyTelegramBot:
             if bridge and not bridge.is_running():
                 self.active_bridges.pop(chat_id, None)
             self.session_manager.set_busy(chat_id, False)
+            asyncio.create_task(self.update_pinned_banner(chat_id, is_busy=False))
 
 
 if __name__ == "__main__":

@@ -456,6 +456,49 @@ def split_text_chunks(text: str, chunk_size: int = MAX_TELEGRAM_MESSAGE_LEN, **k
     return chunks
 
 
+def format_pinned_banner(
+    session: Any,
+    default_model: str = "gemini-3.7-flash",
+    default_effort: str = "high",
+    is_busy: bool = False,
+) -> str:
+    """
+    Format a high-density, concise pinned status card for the Telegram chat header.
+    """
+    active_proj = getattr(session, "active_project", None) or "(none)"
+    active_path = session.active_path() if hasattr(session, "active_path") else None
+    active_path_str = active_path or "(no workspace directory)"
+    model = getattr(session, "model", None) or default_model
+    effort = getattr(session, "effort", None) or default_effort
+
+    # Statistics
+    stats: Dict[str, Any] = {}
+    if hasattr(session, "projects") and isinstance(session.projects, dict):
+        stats = session.projects.get(active_proj, {}) or {}
+    elif hasattr(session, "get_project_stats"):
+        stats = session.get_project_stats() or {}
+    tokens = stats.get("total_tokens", 0)
+    thinking = stats.get("thinking_tokens", 0)
+    turns = stats.get("turns", 0)
+    total_cpu = stats.get("total_duration_seconds", 0.0)
+
+    # Session uptime
+    created_at = getattr(session, "created_at", time.time())
+    uptime_sec = max(0.0, time.time() - created_at)
+
+    status_badge = "⚡ <b>Running...</b>" if is_busy else "🟢 <b>Ready</b>"
+
+    return (
+        f"📌 <b>agy Workspace Hub</b>\n\n"
+        f"• <b>Project:</b> <code>{escape_html(active_proj)}</code> ({status_badge})\n"
+        f"• <b>Directory:</b> <code>{escape_html(active_path_str)}</code>\n"
+        f"• <b>Model:</b> <code>{escape_html(model)}</code> (effort: <code>{escape_html(effort)}</code>)\n"
+        f"• <b>Usage:</b> 🪙 {format_tokens(tokens, thinking)} | ⏱️ {format_duration(uptime_sec)}\n"
+        f"• <b>Activity:</b> {turns} turns executed | {format_duration(total_cpu)} runtime\n\n"
+        f"💡 <i>Quick shortcuts below or message agy anytime.</i>"
+    )
+
+
 def should_export_as_file(prompt: str, response_text: str) -> bool:
     """
     Determine whether the response should be automatically exported as a standalone HTML file.

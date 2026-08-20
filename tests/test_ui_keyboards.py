@@ -141,4 +141,18 @@ def test_build_reply_keyboard_and_webapp_button():
     assert wb_http["url"] == "http://127.0.0.1:8765/view/123/doc.html"
 
 
+def test_build_pinned_banner_keyboard():
+    from gateway.ui_keyboards import build_pinned_banner_keyboard
+
+    kb = build_pinned_banner_keyboard()
+    assert "inline_keyboard" in kb
+    rows = kb["inline_keyboard"]
+    assert len(rows) == 2
+    assert rows[0][0]["text"] == "📊 Status"
+    assert rows[0][1]["text"] == "📁 Projects"
+    assert rows[1][0]["text"] == "🪙 Quota"
+    assert rows[1][1]["text"] == "📖 Help"
+
+
+
 
