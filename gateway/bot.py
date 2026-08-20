@@ -709,7 +709,7 @@ class AgyTelegramBot:
             if target_conv_id and target_conv_id == active_conv_id:
                 target_conv_id = None
 
-            # 1. Send initial pinned accordion card
+            # 1. Send or edit fixed single pinned accordion card
             log_ipc_event(active_proj, target, "DISPATCH", f"Task: {call.content[:100]} | hop={call.hop_count}")
             card_text = format_pinned_accordion_card(
                 target_project=target,
@@ -718,10 +718,25 @@ class AgyTelegramBot:
                 tools_log=[],
                 status_text="Starting background worker in workspace...",
             )
-            pin_msg = await self._safe_send_message(chat_id=chat_id, text=card_text)
-            pin_msg_id = pin_msg.get("message_id") if pin_msg else None
+            pin_msg_id = session.pinned_ipc_message_id
             if pin_msg_id:
-                await self.client.pin_chat_message(chat_id=chat_id, message_id=pin_msg_id, disable_notification=True)
+                edited = await self._safe_edit_message_text(chat_id=chat_id, message_id=pin_msg_id, text=card_text)
+                if edited is None:
+                    # Previous pin message was deleted or invalid; recreate and repin
+                    pin_msg = await self._safe_send_message(chat_id=chat_id, text=card_text)
+                    pin_msg_id = pin_msg.get("message_id") if pin_msg else None
+                    session.pinned_ipc_message_id = pin_msg_id
+                    self.session_manager.save()
+                    if pin_msg_id:
+                        await self.client.pin_chat_message(chat_id=chat_id, message_id=pin_msg_id, disable_notification=True)
+            else:
+                pin_msg = await self._safe_send_message(chat_id=chat_id, text=card_text)
+                pin_msg_id = pin_msg.get("message_id") if pin_msg else None
+                session.pinned_ipc_message_id = pin_msg_id
+                self.session_manager.save()
+                if pin_msg_id:
+                    await self.client.pin_chat_message(chat_id=chat_id, message_id=pin_msg_id, disable_notification=True)
+
 
             # 2. Run ephemeral worker in target workspace
             envelope_prompt = format_incoming_envelope(
@@ -1100,6 +1115,16 @@ class AgyTelegramBot:
                         clean_text, follow_files = extract_agy_file_blocks(clean_text)
                         if follow_files:
                             agy_files.extend(follow_files)
+                    elif ipc_results:
+                        blocks = []
+                        for r in ipc_results:
+                            if r.status == "SUCCESS" and r.response_content:
+                                blocks.append(f"<b>📬 [{escape_html(r.target_project)}] 协同结果：</b>\n{r.response_content}")
+                            elif r.status == "ERROR":
+                                blocks.append(f"<b>⚠️ [{escape_html(r.target_project)}] 执行失败：</b>\n<i>{escape_html(r.error_message)}</i>")
+                        if blocks:
+                            joined_blocks = "\n\n".join(blocks)
+                            clean_text = f"{clean_text}\n\n{joined_blocks}".strip() if clean_text else joined_blocks
 
             # 3. Auto-export long responses as standalone HTML document
             auto_export_content: Optional[str] = None
