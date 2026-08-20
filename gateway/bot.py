@@ -704,12 +704,8 @@ class AgyTelegramBot:
 
             target_proj_info = session.projects[target]
             target_path = target_proj_info.get("path") or self.config.agy_working_dir or os.getcwd()
-            target_conv_id = target_proj_info.get("conversation_id")
-            active_conv_id = session.projects.get(active_proj, {}).get("conversation_id")
-            if target_conv_id and target_conv_id == active_conv_id:
-                target_conv_id = None
 
-            # 1. Send or edit fixed single pinned accordion card
+            # 1. Send or edit fixed single pinned accordion card for this target project
             log_ipc_event(active_proj, target, "DISPATCH", f"Task: {call.content[:100]} | hop={call.hop_count}")
             card_text = format_pinned_accordion_card(
                 target_project=target,
@@ -721,8 +717,14 @@ class AgyTelegramBot:
             pin_msg_id = session.pinned_ipc_message_ids.get(target)
             if pin_msg_id:
                 edited = await self._safe_edit_message_text(chat_id=chat_id, message_id=pin_msg_id, text=card_text)
-                if edited is None:
-                    # Previous pin message for target was deleted or invalid; recreate and repin
+                if edited is not None:
+                    # Successfully edited existing card -> Repin to ensure it remains at the top even if user unpinned it
+                    try:
+                        await self.client.pin_chat_message(chat_id=chat_id, message_id=pin_msg_id, disable_notification=True)
+                    except Exception:
+                        pass
+                else:
+                    # Previous pin message for target was deleted; recreate and repin
                     pin_msg = await self._safe_send_message(chat_id=chat_id, text=card_text)
                     pin_msg_id = pin_msg.get("message_id") if pin_msg else None
                     session.pinned_ipc_message_ids[target] = pin_msg_id
@@ -737,9 +739,7 @@ class AgyTelegramBot:
                 if pin_msg_id:
                     await self.client.pin_chat_message(chat_id=chat_id, message_id=pin_msg_id, disable_notification=True)
 
-
-
-            # 2. Run ephemeral worker in target workspace
+            # 2. Run ephemeral worker in target workspace with clean isolated conversation
             envelope_prompt = format_incoming_envelope(
                 source=active_proj,
                 target=target,
@@ -758,7 +758,7 @@ class AgyTelegramBot:
                 async for event in bridge.run_ephemeral_worker(
                     prompt=envelope_prompt,
                     working_dir=target_path,
-                    conversation_id=target_conv_id,
+                    conversation_id=None,
                     model=effective_model,
                     effort=effective_effort,
                     timeout_seconds=self.config.agy_timeout_seconds,
