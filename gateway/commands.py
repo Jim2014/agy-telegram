@@ -27,6 +27,7 @@ from gateway.ui_keyboards import (
     build_projects_keyboard,
     build_skills_keyboard,
     build_usage_keyboard,
+    build_webapp_viewer_button,
 )
 
 logger = logging.getLogger(__name__)
@@ -408,7 +409,8 @@ async def handle_cmd_dir(bot: Any, chat_id: int, arg: str = "", reply_to_id: Opt
     if getattr(bot, "webapp_server", None):
         doc_id = f"tree_{chat_id}_{int(time.time())}"
         tree_url = bot.webapp_server.register_document(doc_id, html_doc, filename)
-        reply_markup = {"inline_keyboard": [[{"text": "🌐 在 Telegram 中即开文件树", "web_app": {"url": tree_url}}]]}
+        btn = build_webapp_viewer_button(tree_url, "🌐 在 Telegram 中即开文件树")
+        reply_markup = {"inline_keyboard": [[btn]]}
 
     doc_res = await bot._safe_send_document(
         chat_id=chat_id,
@@ -485,7 +487,8 @@ async def handle_cmd_file(bot: Any, chat_id: int, arg: str, reply_to_id: Optiona
             if getattr(bot, "webapp_server", None):
                 doc_id = f"file_{chat_id}_{int(time.time())}"
                 file_url = bot.webapp_server.register_document(doc_id, html_doc, out_filename)
-                file_markup = {"inline_keyboard": [[{"text": "🌐 在 Telegram 中即开查看", "web_app": {"url": file_url}}]]}
+                btn = build_webapp_viewer_button(file_url, "🌐 在 Telegram 中即开查看")
+                file_markup = {"inline_keyboard": [[btn]]}
 
             caption = f"🌐 <b>{escape_html(out_filename)}</b>\nHTML view of <code>{escape_html(target_file.name)}</code> ({size_str})"
             res = await bot._safe_send_document(
@@ -558,7 +561,8 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
     if getattr(bot, "webapp_server", None):
         doc_id = f"export_{chat_id}_{int(time.time())}"
         export_url = bot.webapp_server.register_document(doc_id, html_doc, filename)
-        export_markup = {"inline_keyboard": [[{"text": "🌐 在 Telegram 中即开查看报告", "web_app": {"url": export_url}}]]}
+        btn = build_webapp_viewer_button(export_url, "🌐 在 Telegram 中即开查看报告")
+        export_markup = {"inline_keyboard": [[btn]]}
 
     await bot._safe_send_chat_action(chat_id, "upload_document")
     await bot._safe_send_document(
