@@ -46,6 +46,7 @@ from gateway.ipc_router import (
     format_incoming_envelope,
     format_pinned_accordion_card,
     format_return_envelope,
+    log_ipc_event,
 )
 from gateway.media_handlers import (
     handle_document_message as mh_handle_document_message,
@@ -706,6 +707,7 @@ class AgyTelegramBot:
             target_conv_id = target_proj_info.get("conversation_id")
 
             # 1. Send initial pinned accordion card
+            log_ipc_event(active_proj, target, "DISPATCH", f"Task: {call.content[:100]} | hop={call.hop_count}")
             card_text = format_pinned_accordion_card(
                 target_project=target,
                 source_project=active_proj,
@@ -747,6 +749,7 @@ class AgyTelegramBot:
                         if event.conversation_id:
                             session.projects[target]["conversation_id"] = event.conversation_id
                             self.session_manager.save()
+                            log_ipc_event(target, active_proj, "INIT", f"Target conv_id={event.conversation_id}")
 
                     elif event.type == "tool":
                         t_sum = format_tool_summary(
@@ -760,6 +763,7 @@ class AgyTelegramBot:
                                 tools_log[-1] = t_sum
                             else:
                                 tools_log.append(t_sum)
+                        log_ipc_event(target, active_proj, "TOOL", f"{event.tool_name} [{event.tool_state}]")
 
                     elif event.type in ("text", "text_delta"):
                         target_accumulated_text += (event.text_delta or getattr(event, "content", "") or "")
@@ -804,6 +808,13 @@ class AgyTelegramBot:
             clean_target_text, _ = extract_agy_action_blocks(clean_target_text)
             clean_target_text, sub_calls = extract_ipc_calls(clean_target_text, default_source=target)
             final_body = sub_calls[0].content if sub_calls else clean_target_text
+
+            log_ipc_event(
+                target,
+                active_proj,
+                "COMPLETE" if not is_error else "FAILED",
+                f"Status: {'SUCCESS' if not is_error else 'ERROR'} | Duration: {dur:.2f}s | Summary: {final_body[:120]}",
+            )
 
             # 3. Update pinned card to final state (Completed 🟢 or Error 🔴)
             final_card = format_pinned_accordion_card(

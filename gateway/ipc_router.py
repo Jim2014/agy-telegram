@@ -177,3 +177,26 @@ def format_pinned_accordion_card(
 
     inner_content = "\n".join(body_lines)
     return f"{header}\n\n<blockquote expandable>\n{inner_content}\n</blockquote>"
+
+
+def log_ipc_event(
+    source: str,
+    target: str,
+    event_type: str,
+    details: str,
+    log_file: Optional[Path] = None,
+) -> None:
+    """Append a structured trace entry to runtime/ipc.log for auditing cross-project calls."""
+    from pathlib import Path
+
+    if log_file is None:
+        log_file = Path("runtime/ipc.log")
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        entry = f"[{ts}] [{event_type.upper()}] [{source} -> {target}] {details.strip()}\n"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception:
+        pass
+
