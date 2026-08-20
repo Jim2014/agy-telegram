@@ -67,6 +67,9 @@ class Config:
     log_file: str = "runtime/gateway.log"
     sessions_file: str = "runtime/sessions.json"
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    webapp_port: int = 8765
+    webapp_base_url: str = ""
+    webapp_enabled: bool = True
 
     @classmethod
     def load(cls, env_path: str | Path | None = None) -> Config:
@@ -125,6 +128,14 @@ class Config:
         log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
         log_file = os.getenv("LOG_FILE", "runtime/gateway.log").strip()
         sessions_file = os.getenv("SESSIONS_FILE", "runtime/sessions.json").strip()
+
+        try:
+            webapp_port = int(os.getenv("WEBAPP_PORT", "8765"))
+        except ValueError:
+            webapp_port = 8765
+        webapp_base_url = os.getenv("WEBAPP_BASE_URL", "").strip()
+        webapp_enabled = os.getenv("WEBAPP_ENABLED", "true").strip().lower() in ("true", "1", "yes")
+
         # System prompt loading (Priority: AGY_SYSTEM_PROMPT_FILE > AGY_SYSTEM_PROMPT > DEFAULT_SYSTEM_PROMPT)
         system_prompt = ""
         prompt_file_val = os.getenv("AGY_SYSTEM_PROMPT_FILE", "").strip()
@@ -159,6 +170,9 @@ class Config:
             log_file=log_file,
             sessions_file=sessions_file,
             system_prompt=system_prompt,
+            webapp_port=webapp_port,
+            webapp_base_url=webapp_base_url,
+            webapp_enabled=webapp_enabled,
         )
 
     def is_token_valid(self) -> bool:

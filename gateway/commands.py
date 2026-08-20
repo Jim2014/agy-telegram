@@ -404,11 +404,18 @@ async def handle_cmd_dir(bot: Any, chat_id: int, arg: str = "", reply_to_id: Opt
         f"💡 <i>Open the attached HTML to expand/collapse folders and tap any file to copy its <code>/file</code> command!</i>"
     )
 
+    reply_markup = None
+    if getattr(bot, "webapp_server", None):
+        doc_id = f"tree_{chat_id}_{int(time.time())}"
+        tree_url = bot.webapp_server.register_document(doc_id, html_doc, filename)
+        reply_markup = {"inline_keyboard": [[{"text": "🌐 在 Telegram 中即开文件树", "web_app": {"url": tree_url}}]]}
+
     doc_res = await bot._safe_send_document(
         chat_id=chat_id,
         document_content=html_doc,
         filename=filename,
         caption=caption,
+        reply_markup=reply_markup,
         reply_to_message_id=reply_to_id,
     )
 
@@ -416,6 +423,7 @@ async def handle_cmd_dir(bot: Any, chat_id: int, arg: str = "", reply_to_id: Opt
         await bot._safe_send_message(
             chat_id=chat_id,
             text=caption,
+            reply_markup=reply_markup,
             reply_to_message_id=reply_to_id,
         )
 
@@ -473,12 +481,19 @@ async def handle_cmd_file(bot: Any, chat_id: int, arg: str, reply_to_id: Optiona
         )
 
         if is_converted:
+            file_markup = None
+            if getattr(bot, "webapp_server", None):
+                doc_id = f"file_{chat_id}_{int(time.time())}"
+                file_url = bot.webapp_server.register_document(doc_id, html_doc, out_filename)
+                file_markup = {"inline_keyboard": [[{"text": "🌐 在 Telegram 中即开查看", "web_app": {"url": file_url}}]]}
+
             caption = f"🌐 <b>{escape_html(out_filename)}</b>\nHTML view of <code>{escape_html(target_file.name)}</code> ({size_str})"
             res = await bot._safe_send_document(
                 chat_id=chat_id,
                 document_content=html_doc,
                 filename=out_filename,
                 caption=caption,
+                reply_markup=file_markup,
                 reply_to_message_id=reply_to_id,
             )
         else:
@@ -539,12 +554,19 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
         },
     )
     filename = f"session_report_{active_proj}_{int(time.time())}.html"
+    export_markup = None
+    if getattr(bot, "webapp_server", None):
+        doc_id = f"export_{chat_id}_{int(time.time())}"
+        export_url = bot.webapp_server.register_document(doc_id, html_doc, filename)
+        export_markup = {"inline_keyboard": [[{"text": "🌐 在 Telegram 中即开查看报告", "web_app": {"url": export_url}}]]}
+
     await bot._safe_send_chat_action(chat_id, "upload_document")
     await bot._safe_send_document(
         chat_id=chat_id,
         document_content=html_doc,
         filename=filename,
         caption=f"📄 <b>{escape_html(filename)}</b>",
+        reply_markup=export_markup,
         reply_to_message_id=reply_to_id,
     )
 

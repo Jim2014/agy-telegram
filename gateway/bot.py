@@ -62,7 +62,10 @@ from gateway.ui_keyboards import (
     build_actions_keyboard,
     build_adaptive_bot_commands,
     build_decision_keyboard,
+    build_reply_keyboard,
+    build_webapp_viewer_button,
 )
+from gateway.webapp_server import WebAppServer
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,14 @@ class AgyTelegramBot:
         self.running = False
         self.bot_info: Dict[str, Any] = {}
         self.started_at = time.time()
+        self.webapp_server: Optional[WebAppServer] = (
+            WebAppServer(
+                port=getattr(config, "webapp_port", 8765),
+                base_url=getattr(config, "webapp_base_url", ""),
+            )
+            if getattr(config, "webapp_enabled", True)
+            else None
+        )
 
     async def setup_bot_commands(self) -> bool:
         """Register slash commands with Telegram Bot API so users see the command menu in chat."""
@@ -269,6 +280,12 @@ class AgyTelegramBot:
         self.running = True
         print("🚀 agy-telegram gateway is running! Press Ctrl+C to stop.\n")
 
+        if self.webapp_server:
+            try:
+                await self.webapp_server.start()
+            except Exception as e:
+                logger.warning("Failed to start WebAppServer: %s", e)
+
         await self._notify_restart()
 
         offset: Optional[int] = None
@@ -306,6 +323,13 @@ class AgyTelegramBot:
             except Exception as e:
                 logger.warning("Error stopping active bridge: %s", e)
         self.active_bridges.clear()
+
+        if self.webapp_server:
+            try:
+                await self.webapp_server.stop()
+            except Exception as e:
+                logger.warning("Error stopping WebAppServer: %s", e)
+
         await self.client.close()
 
     async def shutdown(self) -> None:
@@ -751,6 +775,21 @@ class AgyTelegramBot:
                 err_block = "\n".join([f"⚠️ <i>{escape_html(e)}</i>" for e in export_errors])
                 clean_text = f"{clean_text}\n\n{err_block}".strip() if clean_text else err_block
 
+            # Register documents with WebAppServer if available for instant in-Telegram viewing
+            webapp_buttons: List[Dict[str, Any]] = []
+            if self.webapp_server:
+                for idx, (af, html_data) in enumerate(valid_exports):
+                    doc_id = f"doc_{int(time.time())}_{idx}"
+                    web_url = self.webapp_server.register_document(doc_id, html_data, af.filename)
+                    short_title = af.title[:22] if af.title else af.filename
+                    webapp_buttons.append({"text": f"🌐 查看 {short_title}", "web_app": {"url": web_url}})
+
+                if auto_export_content:
+                    doc_id = f"auto_{int(time.time())}"
+                    web_url = self.webapp_server.register_document(doc_id, auto_export_content, auto_export_name)
+                    short_title = auto_export_title[:22] if auto_export_title else "Report"
+                    webapp_buttons.append({"text": f"🌐 查看 {short_title}", "web_app": {"url": web_url}})
+
             # Extract [AGY_ACTIONS] suggested next steps from clean_text
             clean_text, action_items = extract_agy_action_blocks(clean_text)
             actions_markup: Optional[Dict[str, Any]] = None
@@ -759,6 +798,12 @@ class AgyTelegramBot:
                 actions_markup = build_actions_keyboard(action_items)
             elif session.pending_decisions:
                 actions_markup = build_decision_keyboard(session.pending_decisions)
+
+            if webapp_buttons:
+                if actions_markup is None:
+                    actions_markup = {"inline_keyboard": []}
+                for wb in webapp_buttons:
+                    actions_markup["inline_keyboard"].insert(0, [wb])
 
             final_formatted = format_final_result(
                 response_text=clean_text,

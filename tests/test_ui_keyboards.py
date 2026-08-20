@@ -119,3 +119,20 @@ def test_build_decision_and_action_keyboards():
     assert "Run Tests" in abuttons[0][0]["text"]
 
 
+def test_build_reply_keyboard_and_webapp_button():
+    from gateway.ui_keyboards import build_reply_keyboard, build_webapp_viewer_button
+
+    # 1. Reply keyboard with placeholder
+    rk = build_reply_keyboard(placeholder="🎯 Type to steer...", is_busy=True)
+    assert rk["resize_keyboard"] is True
+    assert rk["is_persistent"] is True
+    assert rk["input_field_placeholder"] == "🎯 Type to steer..."
+    assert len(rk["keyboard"][0]) == 4
+
+    # 2. WebApp viewer button
+    wb = build_webapp_viewer_button("https://webapp.test/view/123/doc.html", "🌐 View Diff")
+    assert wb["text"] == "🌐 View Diff"
+    assert wb["web_app"]["url"] == "https://webapp.test/view/123/doc.html"
+
+
+

@@ -332,6 +332,38 @@ def build_actions_keyboard(
     return {"inline_keyboard": keyboard}
 
 
+def build_reply_keyboard(
+    placeholder: str = "💬 Message agy or type /help...",
+    is_busy: bool = False,
+) -> Dict[str, Any]:
+    """
+    Build a persistent reply keyboard with dynamic input field placeholder.
+    Provides quick tap shortcuts without obscuring message history.
+    """
+    buttons = [
+        [
+            {"text": "📊 Status"},
+            {"text": "🪙 Quota"},
+            {"text": "📁 Projects"},
+            {"text": "📖 Help"},
+        ]
+    ]
+    return {
+        "keyboard": buttons,
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "input_field_placeholder": placeholder[:64],
+    }
+
+
+def build_webapp_viewer_button(
+    url: str,
+    title: str = "🌐 在 Telegram 中即开查看",
+) -> Dict[str, Any]:
+    """Build an inline button that launches Telegram WebApp popup."""
+    return {"text": title, "web_app": {"url": url}}
+
+
 if __name__ == "__main__":
     msg, kb = build_model_keyboard("gemini-3.7-flash", "high")
     print("build_model_keyboard output preview:\n", msg)
