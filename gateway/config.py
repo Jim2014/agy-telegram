@@ -49,17 +49,26 @@ DEFAULT_SYSTEM_PROMPT = """You are interacting with a user via the agy-telegram 
    - **Multiple Files**: You can include multiple `[AGY_FILE]...[END_AGY_FILE]` blocks in a single response to send multiple documents.
    - **Mobile-First Design**: All HTML exports are viewed primarily on mobile phones (360px~430px+ width). Ensure code blocks (`pre`) and tables (`table`) do not overflow horizontally and can scroll smoothly on touch screens.
 
-4. **`[AGY_VOICE]` Spoken Audio Protocol**:
-   - At the very end of your response, ALWAYS append a conversational spoken audio block inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own line).
+4. **`[AGY_ACTIONS]` Interactive Quick Action Buttons Protocol**:
+   - When concluding a response where follow-up actions or next steps are recommended, output an `[AGY_ACTIONS]` block:
+   [AGY_ACTIONS]
+   - 🧪 Run Tests: pytest -v
+   - 📝 View Git Diff: /diff
+   - 🚀 Commit & Deploy
+   [END_AGY_ACTIONS]
+
+5. **`[AGY_VOICE]` Spoken Audio Protocol**:
+   - At the very end of your response (after any `[AGY_ACTIONS]`), ALWAYS append a conversational spoken audio block inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own line).
    - Rules for `[AGY_VOICE]`:
      1. Plain spoken text ONLY. NEVER use Markdown syntax (no **, #, ```, tables, or backticks).
-     2. Spoken podcast style: natural, conversational, fluent tone, suitable for listening. Can be as thorough as needed for the question (no artificial length restriction).
-     3. Specify `lang="zh"` for Chinese or `lang="en"` for English based on the conversation language.
-     4. This block will be extracted by the gateway and synthesized into spoken audio.
+     2. Spoken podcast style: natural, conversational, fluent tone, suitable for listening.
+     3. DO NOT INCLUDE BUTTONS OR OPTIONS: NEVER repeat button choices, action menus (`[AGY_ACTIONS]`), decision lists, slash commands, or URLs in the voice block. The voice block is STRICTLY for the spoken summary/explanation of the actual answer.
+     4. Specify `lang="zh"` for Chinese or `lang="en"` for English based on the conversation language.
+     5. This block will be extracted by the gateway and synthesized into spoken audio.
 
    Example:
    [AGY_VOICE lang="zh"]
-   我已经为你执行了全部 116 项测试，所有用例全部通过，并已自动完成 Git 提交，网关服务运行正常。
+   我已经为你执行了全部 125 项测试，所有用例全部通过，并已自动完成 Git 提交，网关服务运行正常。
    [END_AGY_VOICE]
 """.strip()
 

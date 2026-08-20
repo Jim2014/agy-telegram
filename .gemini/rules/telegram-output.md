@@ -35,7 +35,7 @@ title: <Document Title>
   - **Raw HTML**: Complete standalone `<!DOCTYPE html>...</html>` or HTML fragment.
 
 ## 4. [AGY_ACTIONS] Interactive Quick Action Buttons Protocol
-When concluding a response where follow-up actions, next steps, or decision choices are recommended, you can output an `[AGY_ACTIONS]` block at the very end of your response. The gateway will automatically convert these into interactive clickable Telegram buttons:
+When concluding a response where follow-up actions, next steps, or decision choices are recommended, output an `[AGY_ACTIONS]` block before `[AGY_VOICE]`:
 
 ```text
 [AGY_ACTIONS]
@@ -51,18 +51,19 @@ When concluding a response where follow-up actions, next steps, or decision choi
 - Provide 2 to 4 actionable next steps.
 
 ## 5. [AGY_VOICE] Spoken Podcast Audio Protocol
-At the very end of your response, ALWAYS append a conversational spoken audio block inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own standalone line):
+At the very end of your response (AFTER any `[AGY_ACTIONS]`), append a conversational spoken audio block inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own standalone line):
 
 ```text
 [AGY_VOICE lang="zh"]
-我已经为你跑完了全部 123 项测试，所有用例全部通过，并已自动完成 Git 提交，网关服务运行正常。
+我已经为你跑完了全部 125 项测试，所有用例全部通过，并已自动完成 Git 提交，网关服务运行正常。
 [END_AGY_VOICE]
 ```
 
 ### Voice Protocol Rules:
-1. **Plain Text ONLY**: NEVER use Markdown syntax (no `**`, `#`, ````, tables, or backticks).
-2. **Spoken Podcast Style**: Natural, conversational, fluent tone, suitable for listening. No artificial length restriction — answer thoroughly or summarize as appropriate for the prompt.
-3. **Language Code**: Specify `lang="zh"` for Chinese or `lang="en"` for English based on the conversation language.
-4. **Stripped by Gateway**: The gateway automatically extracts and strips this block from visible text and synthesizes it into spoken audio.
+1. **Plain Spoken Text ONLY**: NEVER use Markdown syntax (no `**`, `#`, ````, tables, or backticks).
+2. **Spoken Podcast Style**: Natural, conversational, fluent tone, suitable for listening.
+3. **DO NOT INCLUDE BUTTONS OR OPTIONS**: NEVER repeat button choices, action menus (`[AGY_ACTIONS]`), decision lists, slash commands, or URLs in the voice block. The voice block is STRICTLY for the spoken summary/explanation of the actual answer.
+4. **Language Code**: Specify `lang="zh"` for Chinese or `lang="en"` for English based on the conversation language.
+5. **Stripped by Gateway**: The gateway automatically extracts and strips this block from visible text and synthesizes it into spoken audio.
 
 

@@ -1103,9 +1103,16 @@ def extract_agy_voice_block(text: str) -> Tuple[str, Optional[AgyVoiceBlock]]:
         lang = m.group(1) or "zh"
         body = m.group(2).strip()
         if body:
-            # Strip any accidental markdown backticks or bold/italic markers
-            clean_body = re.sub(r"[`*_#~]", "", body)
-            voice_block = AgyVoiceBlock(text=clean_body.strip(), lang=lang.lower()[:2])
+            # Strip any accidental action blocks or options leaking into voice
+            clean_body = re.sub(r"\[AGY_ACTIONS\].*?\[END_AGY_ACTIONS\]", "", body, flags=re.DOTALL | re.IGNORECASE)
+            clean_body = re.sub(r"\[AGY_FILE\].*?\[END_AGY_FILE\]", "", clean_body, flags=re.DOTALL | re.IGNORECASE)
+            clean_body = re.sub(r"^[\*\-\+•]\s*.*$", "", clean_body, flags=re.MULTILINE)
+            # Strip markdown formatting symbols
+            clean_body = re.sub(r"[`*_#~]", "", clean_body)
+            # Normalize whitespace
+            clean_body = re.sub(r"\s+", " ", clean_body).strip()
+            if clean_body:
+                voice_block = AgyVoiceBlock(text=clean_body, lang=lang.lower()[:2])
         return ""
 
     cleaned = AGY_VOICE_PATTERN.sub(repl_voice, text)

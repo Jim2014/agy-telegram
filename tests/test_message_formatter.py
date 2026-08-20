@@ -537,6 +537,27 @@ All tests passed successfully and changes have been committed.
     assert cleaned_none == raw_none
     assert voice_none is None
 
+    # 4. Text with leaked action options inside voice block
+    raw_leaked = """
+Main response text.
+
+[AGY_VOICE lang="zh"]
+总结已完成。
+[AGY_ACTIONS]
+- 🚀 开始测试
+- 📝 查看变更
+[END_AGY_ACTIONS]
+- 选项A
+- 选项B
+[END_AGY_VOICE]
+"""
+    cleaned_leaked, voice_leaked = extract_agy_voice_block(raw_leaked)
+    assert voice_leaked is not None
+    assert voice_leaked.text == "总结已完成。"
+    assert "选项" not in voice_leaked.text
+    assert "AGY_ACTIONS" not in voice_leaked.text
+
+
 
 
 
