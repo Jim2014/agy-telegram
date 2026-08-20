@@ -159,7 +159,7 @@ def test_build_voice_keyboard_and_play_button():
 
     # 1. Voice keyboard with autogen active
     text, kb = build_voice_keyboard("autogen")
-    assert "语音播报设置" in text
+    assert "Voice Broadcast Settings" in text
     assert "inline_keyboard" in kb
     rows = kb["inline_keyboard"]
     assert len(rows) == 4
@@ -168,7 +168,7 @@ def test_build_voice_keyboard_and_play_button():
 
     # 2. Voice play button
     btn = build_voice_play_button("v_123_456")
-    assert btn["text"] == "🔊 播放语音"
+    assert btn["text"] == "🔊 Play Audio"
     assert btn["callback_data"] == "voice:v_123_456"
 
 

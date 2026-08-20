@@ -378,7 +378,7 @@ def build_pinned_banner_keyboard() -> Dict[str, Any]:
 
 def build_webapp_viewer_button(
     url: str,
-    title: str = "🌐 在 Telegram 中即开查看",
+    title: str = "🌐 Open in Telegram",
 ) -> Dict[str, Any]:
     """
     Build an inline button that launches Telegram WebApp popup.
@@ -396,34 +396,34 @@ def build_voice_keyboard(current_mode: str) -> Tuple[str, Dict[str, Any]]:
     """
     mode = current_mode.lower() if current_mode else "autogen"
     modes = [
-        ("disable", "🔴 禁用 (Disable)"),
-        ("autogen", "🔊 按需播放 (Autogen)"),
-        ("autoplay", "⚡ 自动播放 (Autoplay)"),
+        ("disable", "🔴 Disable", "Disable audio generation entirely"),
+        ("autogen", "🔊 On-Demand (Autogen)", "Append [🔊 Play Audio] button below reply"),
+        ("autoplay", "⚡ Auto-Play (Autoplay)", "Automatically send native voice note after reply"),
     ]
     buttons = []
-    for m_id, label in modes:
+    for m_id, label, _ in modes:
         prefix = "🔘 " if m_id == mode else "⚪ "
         buttons.append([{"text": f"{prefix}{label}", "callback_data": f"tts:{m_id}"}])
 
-    buttons.append([{"text": "📖 返回帮助", "callback_data": "help:show"}])
+    buttons.append([{"text": "📖 Back to Help", "callback_data": "help:show"}])
 
     text = (
-        "🎙️ <b>语音播报设置 (Voice Broadcast Settings)</b>\n\n"
-        f"• <b>当前模式:</b> <code>{mode}</code>\n"
-        "• <b>引擎:</b> Edge-TTS (微软神经网络音色) + macOS 离线双保底\n"
-        "• <b>语言自适应:</b> 自动识别中英文 (中文晓晓 / 英文 Jenny)\n\n"
-        "<b>可用模式说明:</b>\n"
-        "• <b>禁用 (Disable):</b> 完全关闭语音摘要生成\n"
-        "• <b>按需播放 (Autogen):</b> 回答末尾添加 <code>[ 🔊 播放语音 ]</code> 按钮，点击即听\n"
-        "• <b>自动播放 (Autoplay):</b> 每次生成文本回答后，立即自动发送原生语音条\n\n"
-        "💡 <i>点击下方按钮切换配置，或在聊天中发送 <code>/voice &lt;disable|autogen|autoplay&gt;</code></i>"
+        "🎙️ <b>Voice Broadcast Settings</b>\n\n"
+        f"• <b>Current Mode:</b> <code>{mode}</code>\n"
+        "• <b>Synthesizer:</b> Edge-TTS (Neural Voices) + macOS Offline Fallback\n"
+        "• <b>Language Adaptation:</b> Automatic (Xiaoxiao for Chinese / Jenny for English)\n\n"
+        "<b>Available Modes:</b>\n"
+        "• <b>Disable:</b> Turn off voice audio generation completely.\n"
+        "• <b>Autogen (On-Demand):</b> Append a <code>[ 🔊 Play Audio ]</code> button below replies to listen on demand.\n"
+        "• <b>Autoplay (Auto-Send):</b> Automatically synthesize and send a native Telegram voice note after each text reply.\n\n"
+        "💡 <i>Tap an option below or run <code>/voice &lt;disable|autogen|autoplay&gt;</code> in chat.</i>"
     )
     return text, {"inline_keyboard": buttons}
 
 
 def build_voice_play_button(voice_id: str) -> Dict[str, Any]:
     """Build an inline button to play/send the voice summary."""
-    return {"text": "🔊 播放语音", "callback_data": f"voice:{voice_id}"}
+    return {"text": "🔊 Play Audio", "callback_data": f"voice:{voice_id}"}
 
 
 if __name__ == "__main__":

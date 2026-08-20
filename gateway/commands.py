@@ -1024,7 +1024,7 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
         voice_id = data[6:].strip()
         voice_info = session.pending_voice_data.get(voice_id)
         if voice_info:
-            await bot._safe_answer_callback_query(cq_id, text="🔊 正在发送语音...")
+            await bot._safe_answer_callback_query(cq_id, text="🔊 Sending audio note...")
             if hasattr(bot, "_generate_and_send_voice"):
                 asyncio.create_task(
                     bot._generate_and_send_voice(
@@ -1036,7 +1036,7 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
                     )
                 )
         else:
-            await bot._safe_answer_callback_query(cq_id, text="⚠️ 语音已过期或不可用", show_alert=True)
+            await bot._safe_answer_callback_query(cq_id, text="⚠️ Audio note expired or unavailable", show_alert=True)
 
     elif data == "dir:show":
         await bot._safe_answer_callback_query(cq_id)

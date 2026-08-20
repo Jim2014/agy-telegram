@@ -41,8 +41,8 @@ You MUST strictly follow this standard engineering cycle for any code modificati
 3. **Documentation & Roadmap**:
    - Update `README.md` and `ROADMAP.md` whenever code, architecture, or slash commands are modified.
 
-4. **Language Standards**:
-   - All code comments, docstrings, variable/function names, bot UI/menu messages, git commit messages, and project documentation must be in **English** (unless the user explicitly requests Chinese documentation).
+4. **Mandatory 100% English Standards**:
+   - All code comments, docstrings, variable/function names, bot UI/menu messages, interactive buttons, flash alerts, git commit messages, and project documentation MUST be in **English** at all times (see `.gemini/rules/language-standards.md`). Never hardcode Chinese or non-English strings in UI keyboards or bot messages.
 
 5. **Automated Git Commit & Service Restart**:
    - Automatically commit code changes to git after code completion and after all builds and tests pass, before restarting services or concluding the task.

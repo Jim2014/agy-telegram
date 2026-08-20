@@ -1168,7 +1168,7 @@ async def test_bot_voice_command_and_voice_summary_flow(mock_bot, monkeypatch):
     mock_bot.client.send_message.reset_mock()
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/voice", "message_id": 101}})
     assert mock_bot.client.send_message.called
-    assert "语音播报设置" in mock_bot.client.send_message.call_args[1]["text"]
+    assert "Voice Broadcast Settings" in mock_bot.client.send_message.call_args[1]["text"]
 
     # 2. Test /voice autoplay setting
     mock_bot.client.send_message.reset_mock()
@@ -1201,7 +1201,7 @@ async def test_bot_voice_command_and_voice_summary_flow(mock_bot, monkeypatch):
     markup = edit_call.get("reply_markup")
     assert markup is not None
     buttons = markup["inline_keyboard"]
-    assert any("🔊 播放语音" in btn["text"] for row in buttons for btn in row)
+    assert any("🔊 Play Audio" in btn["text"] for row in buttons for btn in row)
 
 
 
