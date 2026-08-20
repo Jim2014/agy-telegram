@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import html
 from pathlib import Path
 import re
@@ -437,6 +438,28 @@ def format_final_result(
 
     footer = f"\n\n———\n{' | '.join(footer_parts)}" if footer_parts else ""
     return balance_telegram_html(formatted_body.strip() + footer)
+
+
+def format_local_reset_time(iso_str: str) -> str:
+    """
+    Parse UTC/ISO-8601 timestamp string from Google Antigravity and convert to system local timezone.
+    Returns formatted string e.g. 'YYYY-MM-DD HH:MM (CDT)' or fallback string.
+    """
+    if not iso_str:
+        return ""
+    try:
+        clean_iso = iso_str.strip()
+        if clean_iso.endswith("Z"):
+            clean_iso = clean_iso[:-1] + "+00:00"
+        dt_utc = datetime.fromisoformat(clean_iso)
+        if dt_utc.tzinfo is None:
+            dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+        dt_local = dt_utc.astimezone()
+        tz_name = dt_local.tzname() or ""
+        tz_suffix = f" ({tz_name})" if tz_name else ""
+        return dt_local.strftime("%Y-%m-%d %H:%M") + tz_suffix
+    except Exception:
+        return iso_str[:16].replace("T", " ")
 
 
 def split_text_chunks(text: str, chunk_size: int = MAX_TELEGRAM_MESSAGE_LEN, **kwargs: Any) -> List[str]:

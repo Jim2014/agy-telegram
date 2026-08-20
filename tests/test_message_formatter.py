@@ -558,6 +558,24 @@ Main response text.
     assert "AGY_ACTIONS" not in voice_leaked.text
 
 
+def test_format_local_reset_time():
+    from gateway.message_formatter import format_local_reset_time
+
+    # Valid UTC ISO string with Z
+    res = format_local_reset_time("2026-08-20T04:15:00Z")
+    assert res != ""
+    assert "2026" in res
+    assert ":" in res
+
+    # Empty or None string
+    assert format_local_reset_time("") == ""
+    assert format_local_reset_time(None) == ""
+
+    # Invalid timestamp fallback
+    assert format_local_reset_time("invalid-date") == "invalid-date"
+
+
+
 
 
 

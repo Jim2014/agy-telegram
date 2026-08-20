@@ -16,6 +16,7 @@ from gateway.file_renderers import render_file_to_html
 from gateway.message_formatter import (
     escape_html,
     format_duration,
+    format_local_reset_time,
     format_tokens,
     generate_standalone_html,
 )
@@ -701,7 +702,8 @@ async def handle_cmd_usage(
                 pct_str = f"{rem_frac * 100:.1f}%"
                 bar = _format_progress_bar(rem_frac)
                 reset_t = b.get("reset_time", "")
-                reset_hint = f" <i>(Resets: {escape_html(reset_t[:16].replace('T', ' '))})</i>" if reset_t else ""
+                local_reset_str = format_local_reset_time(reset_t)
+                reset_hint = f" <i>(Resets: {escape_html(local_reset_str)})</i>" if local_reset_str else ""
                 lines.append(f"• {escape_html(b_name)}: <code>{bar} {pct_str}</code>{reset_hint}")
             lines.append("")
 
