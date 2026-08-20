@@ -53,10 +53,11 @@ class AgyBridge:
         self.idle_timeout_seconds = idle_timeout_seconds
         self.keep_alive = keep_alive
         self._current_process: Optional[asyncio.subprocess.Process] = None
+        self._reader_task: Optional[asyncio.Task] = None
+        self._event_queue: asyncio.Queue[Optional[AgyEvent]] = asyncio.Queue()
         self._is_stopped = False
         self._pending_turns = 0
         self._lock = asyncio.Lock()
-        self._turn_lock = asyncio.Lock()
         self._steer_history: List[str] = []
         self._idle_task: Optional[asyncio.Task] = None
         self._current_conv_id: Optional[str] = None
@@ -124,6 +125,41 @@ class AgyBridge:
 
         return cmd
 
+    async def _stdout_reader(self, proc: asyncio.subprocess.Process) -> None:
+        """
+        Dedicated single-coroutine reader that reads stdout from the subprocess.
+        Pushes parsed AgyEvents to self._event_queue to eliminate any possible
+        'readuntil() called while another coroutine is already waiting' collisions.
+        """
+        try:
+            while not self._is_stopped:
+                line_bytes = await proc.stdout.readline()
+                if not line_bytes:
+                    if proc.returncode is not None or (hasattr(proc.stdin, "is_closing") and proc.stdin.is_closing()):
+                        break
+                    await asyncio.sleep(0.01)
+                    if proc.returncode is not None:
+                        break
+                    continue
+
+                line_str = line_bytes.decode("utf-8", errors="replace").strip()
+                if not line_str:
+                    continue
+
+                event = self._parse_line(line_str)
+                if event:
+                    if event.type == "init" and event.conversation_id:
+                        self._current_conv_id = event.conversation_id
+                    elif event.type == "result" and event.conversation_id:
+                        self._current_conv_id = event.conversation_id
+                    await self._event_queue.put(event)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("Stdout reader encountered error: %s", e)
+        finally:
+            await self._event_queue.put(None)
+
     async def steer(self, message: str) -> bool:
         """Inject a steering message into the active agy session over stdin."""
         msg_str = message.strip()
@@ -163,12 +199,18 @@ class AgyBridge:
         system_prompt: Optional[str] = None,
     ) -> AsyncIterator[AgyEvent]:
         """Run agy CLI with stream-json input/output and yield streaming AgyEvent instances."""
-        async with self._turn_lock:
-            self._is_stopped = False
-            self._steer_history.clear()
-            self._cancel_idle_timer()
+        self._is_stopped = False
+        self._steer_history.clear()
+        self._cancel_idle_timer()
 
-            effective_dir = working_dir or self.default_working_dir
+        # Drain any leftover items from prior runs
+        while not self._event_queue.empty():
+            try:
+                self._event_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+        effective_dir = working_dir or self.default_working_dir
         can_reuse = (
             self.is_running()
             and self._current_process is not None
@@ -178,6 +220,8 @@ class AgyBridge:
             and self._current_working_dir == effective_dir
             and self._current_model == model
             and self._current_effort == effort
+            and self._reader_task is not None
+            and not self._reader_task.done()
         )
 
         if can_reuse:
@@ -215,6 +259,7 @@ class AgyBridge:
                 self._current_working_dir = effective_dir
                 self._current_model = model
                 self._current_effort = effort
+                self._reader_task = asyncio.create_task(self._stdout_reader(process))
             except FileNotFoundError:
                 err_msg = f"agy binary not found at: {self.agy_bin}"
                 logger.error(err_msg)
@@ -247,30 +292,16 @@ class AgyBridge:
                 await process.stdin.drain()
 
         try:
-            # Stream lines from stdout
+            # Stream events from dedicated event queue
             while True:
-                line_bytes = await asyncio.wait_for(
-                    process.stdout.readline(),
+                event = await asyncio.wait_for(
+                    self._event_queue.get(),
                     timeout=self.timeout_seconds,
                 )
-                if not line_bytes:
+                if event is None:
                     break
 
-                line_str = line_bytes.decode("utf-8", errors="replace").strip()
-                if not line_str:
-                    continue
-
-                event = self._parse_line(line_str)
-                if not event:
-                    continue
-
-                if event.type == "init" and event.conversation_id:
-                    self._current_conv_id = event.conversation_id
-
                 if event.type == "result":
-                    if event.conversation_id:
-                        self._current_conv_id = event.conversation_id
-
                     async with self._lock:
                         self._pending_turns -= 1
                         has_more_turns = (self._pending_turns > 0)
@@ -417,6 +448,9 @@ class AgyBridge:
         """Interrupt and terminate the running agy process."""
         self._cancel_idle_timer()
         self._is_stopped = True
+        if self._reader_task and not self._reader_task.done():
+            self._reader_task.cancel()
+        self._reader_task = None
         proc = self._current_process
         if proc and proc.returncode is None:
             logger.info("Stopping running agy subprocess (PID: %s)...", proc.pid)
