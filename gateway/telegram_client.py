@@ -267,8 +267,11 @@ class TelegramClient:
         caption: Optional[str] = None,
         parse_mode: Optional[str] = "HTML",
         reply_to_message_id: Optional[int] = None,
+        reply_markup: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Send document file to Telegram via multipart/form-data upload."""
+        import json
+
         client = await self.get_client()
         url = f"{self.base_url}/sendDocument"
 
@@ -288,6 +291,8 @@ class TelegramClient:
             data["parse_mode"] = parse_mode
         if reply_to_message_id:
             data["reply_to_message_id"] = str(reply_to_message_id)
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
 
         mime_type = "text/html"
         if filename.endswith(".diff") or filename.endswith(".patch"):
@@ -310,11 +315,10 @@ class TelegramClient:
             err_code = res_json.get("error_code", resp.status_code)
             desc = res_json.get("description", "Unknown error")
             if parse_mode and ("can't parse entities" in desc.lower() or "tag" in desc.lower()):
-                logger.debug("HTML parse failed for sendDocument caption, retrying plain text: %s", desc)
+                logger.debug("HTML parse failed for sendDocument, retrying plain text: %s", desc)
                 data.pop("parse_mode", None)
-                files_retry = {"document": (filename, file_bytes, mime_type)}
-                resp2 = await client.post(url, data=data, files=files_retry, timeout=60.0)
-                res_json = resp2.json()
+                resp = await client.post(url, data=data, files=files, timeout=60.0)
+                res_json = resp.json()
                 if res_json.get("ok"):
                     return res_json.get("result", {})
             raise TelegramAPIError(err_code, desc)

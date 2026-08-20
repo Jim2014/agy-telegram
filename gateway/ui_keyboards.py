@@ -360,8 +360,13 @@ def build_webapp_viewer_button(
     url: str,
     title: str = "🌐 在 Telegram 中即开查看",
 ) -> Dict[str, Any]:
-    """Build an inline button that launches Telegram WebApp popup."""
-    return {"text": title, "web_app": {"url": url}}
+    """
+    Build an inline button that launches Telegram WebApp popup.
+    Telegram API strictly requires HTTPS for web_app buttons; falls back to standard url for HTTP.
+    """
+    if url.startswith("https://"):
+        return {"text": title, "web_app": {"url": url}}
+    return {"text": title, "url": url}
 
 
 if __name__ == "__main__":

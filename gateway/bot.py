@@ -782,13 +782,13 @@ class AgyTelegramBot:
                     doc_id = f"doc_{int(time.time())}_{idx}"
                     web_url = self.webapp_server.register_document(doc_id, html_data, af.filename)
                     short_title = af.title[:22] if af.title else af.filename
-                    webapp_buttons.append({"text": f"🌐 查看 {short_title}", "web_app": {"url": web_url}})
+                    webapp_buttons.append(build_webapp_viewer_button(web_url, f"🌐 查看 {short_title}"))
 
                 if auto_export_content:
                     doc_id = f"auto_{int(time.time())}"
                     web_url = self.webapp_server.register_document(doc_id, auto_export_content, auto_export_name)
                     short_title = auto_export_title[:22] if auto_export_title else "Report"
-                    webapp_buttons.append({"text": f"🌐 查看 {short_title}", "web_app": {"url": web_url}})
+                    webapp_buttons.append(build_webapp_viewer_button(web_url, f"🌐 查看 {short_title}"))
 
             # Extract [AGY_ACTIONS] suggested next steps from clean_text
             clean_text, action_items = extract_agy_action_blocks(clean_text)

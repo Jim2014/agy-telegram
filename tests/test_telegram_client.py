@@ -109,10 +109,13 @@ async def test_telegram_client_send_document(monkeypatch):
         document_content="<html><body>Hello</body></html>",
         filename="report.html",
         caption="📄 Report",
+        reply_markup={"inline_keyboard": [[{"text": "Btn", "url": "https://test"}]]},
     )
     assert res["message_id"] == 77
     assert captured_data["data"]["chat_id"] == "123"
     assert captured_data["data"]["caption"] == "📄 Report"
+    assert "reply_markup" in captured_data["data"]
+    assert "https://test" in captured_data["data"]["reply_markup"]
     assert "document" in captured_data["files"]
     assert captured_data["files"]["document"][0] == "report.html"
     await client.close()

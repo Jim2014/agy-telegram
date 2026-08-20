@@ -129,10 +129,16 @@ def test_build_reply_keyboard_and_webapp_button():
     assert rk["input_field_placeholder"] == "🎯 Type to steer..."
     assert len(rk["keyboard"][0]) == 4
 
-    # 2. WebApp viewer button
-    wb = build_webapp_viewer_button("https://webapp.test/view/123/doc.html", "🌐 View Diff")
-    assert wb["text"] == "🌐 View Diff"
-    assert wb["web_app"]["url"] == "https://webapp.test/view/123/doc.html"
+    # 2. WebApp viewer button (HTTPS -> web_app)
+    wb_https = build_webapp_viewer_button("https://webapp.test/view/123/doc.html", "🌐 View Diff")
+    assert wb_https["text"] == "🌐 View Diff"
+    assert wb_https["web_app"]["url"] == "https://webapp.test/view/123/doc.html"
+
+    # 3. WebApp viewer button fallback (HTTP -> url)
+    wb_http = build_webapp_viewer_button("http://127.0.0.1:8765/view/123/doc.html", "🌐 View Tree")
+    assert wb_http["text"] == "🌐 View Tree"
+    assert "web_app" not in wb_http
+    assert wb_http["url"] == "http://127.0.0.1:8765/view/123/doc.html"
 
 
 
