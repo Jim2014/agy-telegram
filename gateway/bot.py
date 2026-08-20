@@ -746,7 +746,7 @@ class AgyTelegramBot:
                     if event.type == "init":
                         if event.conversation_id:
                             session.projects[target]["conversation_id"] = event.conversation_id
-                            self.session_manager.save_sessions()
+                            self.session_manager.save()
 
                     elif event.type == "tool":
                         t_sum = format_tool_summary(

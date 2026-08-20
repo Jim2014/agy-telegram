@@ -448,6 +448,8 @@ class SessionManager:
         except Exception as e:
             logger.warning("Failed to save sessions to %s: %s", self.persistence_file, e)
 
+    save_sessions = save
+
 
 if __name__ == "__main__":
     test_file = Path("runtime/test_sessions_tmp.json")
