@@ -39,7 +39,12 @@
     - **看门狗崩溃自动拉起 (Watchdog Supervisor)**：提供独立的看门狗守护进程（`runtime/watchdog.sh` / `./restart.sh watch`），周期巡检进程状态，意外退出后 10 秒内自动拉起。
     - 保留 `/stop` 供强制中断正在执行的 agy 子进程。
     - 自动处理 Telegram 4096 字符截断、限频 (Throttling) 与 HTML 标签容错降级。
-    - 全套单元测试（99 项全覆盖）、网络抗逆测试与 agy 冒烟测试。详细演进规划请参考 [ROADMAP.md](ROADMAP.md)。
+    - 全套单元测试（136 项全覆盖）、网络抗逆测试与 agy 冒烟测试。详细演进规划请参考 [ROADMAP.md](ROADMAP.md)。
+11. **跨项目多智能体通信协议 (`AGY_IPC`) 与专属置顶卡片管理**:
+    - **跨工作区去中心化协同**：支持智能体通过 `[AGY_IPC to="<target>"]...[END_AGY_IPC]` 发起跨目录/跨项目任务派发与信封包装（`[AGY_INCOMING]`），结果自动回流主对话。
+    - **专属独立置顶折叠卡片**：Telegram 顶部为每个目标项目维护独立固定的原生折叠卡片（`<blockquote expandable>`），流式追踪工具执行与耗时。
+    - **一键交互式 Unpin 按钮**：卡片附带 `[ 📌 Unpin ]` 按钮，点击一键调用 Telegram Bot API 取消置顶并同步网关状态。
+    - **独立审计日志**：在 `runtime/ipc.log` 完整记录跨项目 `DISPATCH`、`INIT`、`TOOL` 与 `COMPLETE` 全生命周期。
 
 ---
 
