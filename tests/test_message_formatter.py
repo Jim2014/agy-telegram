@@ -447,12 +447,12 @@ Here is the implementation of the strategy.
     assert actions[2].action == "🚀 Commit & Push"
 
 
-def test_expandable_blockquotes_in_streaming():
+def test_blockquotes_in_streaming():
     from gateway.message_formatter import format_streaming_message
 
     tools = ["⚙️ run_command: pytest...", "✅ run_command (1.2s)"]
     msg = format_streaming_message(tool_events=tools, current_text="Building...")
-    assert "<blockquote expandable>" in msg
+    assert "<blockquote>" in msg
     assert "</blockquote>" in msg
     assert "<b>[Progress]</b>" in msg
 

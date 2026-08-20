@@ -361,17 +361,22 @@ def format_streaming_message(
 ) -> str:
     """
     Build a live streaming preview message combining recent tool activities
-    and formatted generated text.
+    and formatted generated text (expanded by default).
     """
     if not current_text and "accumulated_text" in kwargs:
         current_text = kwargs["accumulated_text"]
     sections: List[str] = []
 
-    # Include recent tool events in an expandable blockquote for compact mobile display
+    # Include recent tool events in an expanded blockquote (default open, up to 8 recent steps)
     if tool_events:
-        recent_tools = tool_events[-5:]
+        max_tools = 8
+        if len(tool_events) > max_tools:
+            omitted = len(tool_events) - max_tools
+            recent_tools = [f"<i>... ({omitted} earlier steps omitted)</i>"] + tool_events[-max_tools:]
+        else:
+            recent_tools = tool_events
         tools_block = "\n".join(recent_tools)
-        sections.append(f"<blockquote expandable><b>[Progress]</b>\n{tools_block}</blockquote>")
+        sections.append(f"<blockquote><b>[Progress]</b>\n{tools_block}</blockquote>")
 
     # Convert ongoing markdown text to Telegram HTML
     formatted_body = markdown_to_telegram_html(current_text) if current_text else "<i>(thinking...)</i>"
@@ -385,7 +390,8 @@ def format_streaming_message(
     # If exceeding max_len, trim the body text from top
     header = ""
     if tool_events:
-        header = f"<blockquote expandable><b>[Progress]</b>\n" + "\n".join(tool_events[-3:]) + "</blockquote>\n\n[...earlier text omitted...]\n"
+        recent = tool_events[-5:]
+        header = f"<blockquote><b>[Progress]</b>\n" + "\n".join(recent) + "</blockquote>\n\n[...earlier text omitted...]\n"
 
     available_space = max_len - len(header) - len(cursor_char) - 20
     if available_space < 100:
