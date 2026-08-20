@@ -219,3 +219,24 @@ def test_turn_and_session_stats(tmp_path):
     assert stats_reset["total_tokens"] == 0
     assert stats_reset["thinking_tokens"] == 0
     assert stats_reset["total_duration_seconds"] == 0.0
+
+
+def test_command_usage_tracking(tmp_path):
+    persist_file = tmp_path / "cmd_stats.json"
+    mgr = SessionManager(persistence_file=persist_file)
+
+    mgr.record_command_usage(400, "/usage")
+    mgr.record_command_usage(400, "usage")
+    mgr.record_command_usage(400, "/skills")
+
+    s = mgr.get_session(400)
+    assert s.command_stats["usage"] == 2
+    assert s.command_stats["skills"] == 1
+    assert "usage" in s.command_last_used
+
+    # Persistence verification
+    mgr2 = SessionManager(persistence_file=persist_file)
+    s2 = mgr2.get_session(400)
+    assert s2.command_stats["usage"] == 2
+    assert s2.command_stats["skills"] == 1
+

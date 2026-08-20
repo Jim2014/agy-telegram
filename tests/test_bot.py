@@ -955,6 +955,95 @@ async def test_bot_voice_unauthorized(mock_bot):
     assert "Access Denied" in sent_text
 
 
+@pytest.mark.asyncio
+async def test_bot_usage_skills_artifacts_commands(mock_bot, monkeypatch, tmp_path):
+    """Test /usage, /skills, /artifacts commands and their callback interactions."""
+    import gateway.commands as commands_module
+
+    # Mock _run_agy_readonly_cmd
+    async def mock_readonly(agy_bin, slash_cmd):
+        if slash_cmd == "/usage":
+            return {
+                "command": {
+                    "data": {
+                        "groups": [
+                            {
+                                "name": "Gemini Models",
+                                "buckets": [
+                                    {"name": "Weekly Limit", "remaining_fraction": 0.75, "reset_time": "2026-08-25T01:00:00Z"},
+                                    {"name": "5-Hour Limit", "remaining_fraction": 0.90, "reset_time": "2026-08-20T03:00:00Z"},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        elif slash_cmd == "/credits":
+            return {"command": {"data": {"remaining_credits": 10}}}
+        elif slash_cmd == "/skills":
+            return {
+                "command": {
+                    "data": {
+                        "skills": [
+                            {"name": "agy-customizations", "description": "Customization guide"},
+                            {"name": "firebase:firestore", "description": "Firestore DB", "plugin": "firebase"},
+                        ]
+                    }
+                }
+            }
+        return None
+
+    monkeypatch.setattr(commands_module, "_run_agy_readonly_cmd", mock_readonly)
+
+    # 1. /usage
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/usage", "message_id": 1001}})
+    usage_text = mock_bot.client.send_message.call_args[1]["text"]
+    assert "Quota Monitor" in usage_text
+    assert "Gemini Models" in usage_text
+    assert "75.0%" in usage_text
+    assert "10 credits" in usage_text
+
+    # 2. /skills
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/skills", "message_id": 1002}})
+    skills_text = mock_bot.client.send_message.call_args[1]["text"]
+    assert "Skills & Plugin Tools" in skills_text
+    assert "agy-customizations" in skills_text
+    assert "firebase" in skills_text
+
+    # 3. /artifacts (empty)
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/artifacts", "message_id": 1003}})
+    art_text = mock_bot.client.send_message.call_args[1]["text"]
+    assert "Conversation Artifacts & Reports" in art_text
+
+    # 4. /artifacts with mock file
+    fake_art = tmp_path / "runtime" / "artifacts" / "test_summary.html"
+    fake_art.parent.mkdir(parents=True, exist_ok=True)
+    fake_art.write_text("<h1>Report</h1>")
+    session = mock_bot.session_manager.get_session(100)
+    session.projects["default"] = {"name": "default", "path": str(tmp_path)}
+    session.active_project = "default"
+
+    mock_bot.client.send_document.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/artifacts 1", "message_id": 1004}})
+    mock_bot.client.send_document.assert_called_once()
+    assert "test_summary.html" in mock_bot.client.send_document.call_args[1]["filename"]
+
+    # 5. Callback query: usage:show
+    mock_bot.client.edit_message_text.reset_mock()
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_u1",
+            "message": {"chat": {"id": 100}, "message_id": 1001},
+            "data": "usage:show",
+        }
+    })
+    mock_bot.client.edit_message_text.assert_called_once()
+
+
+
 
 
 

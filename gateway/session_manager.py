@@ -24,6 +24,8 @@ class ChatSession:
     is_busy: bool = False
     created_at: float = field(default_factory=time.time)
     last_active_at: float = field(default_factory=time.time)
+    command_stats: Dict[str, int] = field(default_factory=dict)
+    command_last_used: Dict[str, float] = field(default_factory=dict)
 
     @property
     def conversation_id(self) -> Optional[str]:
@@ -53,6 +55,8 @@ class ChatSession:
             "created_at": self.created_at,
             "last_active_at": self.last_active_at,
             "projects": self.projects,
+            "command_stats": self.command_stats,
+            "command_last_used": self.command_last_used,
         }
 
     @classmethod
@@ -86,6 +90,8 @@ class ChatSession:
             is_busy=False,
             created_at=data.get("created_at", time.time()),
             last_active_at=data.get("last_active_at", time.time()),
+            command_stats=data.get("command_stats", {}),
+            command_last_used=data.get("command_last_used", {}),
         )
 
 
@@ -358,6 +364,17 @@ class SessionManager:
             logger.info("Loaded %d sessions from %s", len(self._sessions), target_file)
         except Exception as e:
             logger.warning("Failed to load sessions from %s: %s", target_file, e)
+
+    def record_command_usage(self, chat_id: int, command: str) -> None:
+        """Record command usage frequency and timestamp for adaptive menu ordering."""
+        clean_cmd = command.strip().lstrip("/").lower().split("@")[0]
+        if not clean_cmd:
+            return
+        session = self.get_session(chat_id)
+        session.command_stats[clean_cmd] = session.command_stats.get(clean_cmd, 0) + 1
+        session.command_last_used[clean_cmd] = time.time()
+        session.last_active_at = time.time()
+        self.save()
 
     def save(self) -> None:
         """Save sessions to persistence file."""

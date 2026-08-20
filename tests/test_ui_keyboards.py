@@ -50,3 +50,46 @@ def test_build_effort_keyboard():
     buttons = markup["inline_keyboard"]
     effort_row = buttons[0]
     assert any(b["callback_data"] == "effort:medium" for b in effort_row)
+
+
+def test_build_adaptive_bot_commands():
+    from gateway.session_manager import ChatSession
+    from gateway.ui_keyboards import (
+        build_adaptive_bot_commands,
+        build_artifacts_keyboard,
+        build_help_keyboard,
+        build_skills_keyboard,
+        build_usage_keyboard,
+    )
+
+    # 1. Empty session -> default commands with help at index 0
+    cmds = build_adaptive_bot_commands(None, max_commands=8)
+    assert len(cmds) == 8
+    assert cmds[0]["command"] == "help"
+
+    # 2. Session with heavy usage of 'artifacts' and 'skills' -> they should bubble up right after help!
+    session = ChatSession(
+        chat_id=123,
+        command_stats={"artifacts": 50, "skills": 45, "usage": 30},
+        command_last_used={"artifacts": 1700000000.0, "skills": 1700000000.0, "usage": 1700000000.0},
+    )
+    adaptive_cmds = build_adaptive_bot_commands(session, max_commands=8)
+    assert len(adaptive_cmds) == 8
+    assert adaptive_cmds[0]["command"] == "help"
+    assert adaptive_cmds[1]["command"] == "artifacts"
+    assert adaptive_cmds[2]["command"] == "skills"
+    assert adaptive_cmds[3]["command"] == "usage"
+
+    # 3. Test new keyboards
+    hk = build_help_keyboard()
+    assert any(any(b["callback_data"] == "usage:show" for b in row) for row in hk["inline_keyboard"])
+
+    uk = build_usage_keyboard()
+    assert any(any(b["callback_data"] == "usage:refresh" for b in row) for row in uk["inline_keyboard"])
+
+    sk = build_skills_keyboard()
+    assert any(any(b["callback_data"] == "skills:show" for b in row) for row in sk["inline_keyboard"])
+
+    ak = build_artifacts_keyboard([{"name": "test_report.html"}])
+    assert any(any(b["callback_data"] == "artifact:dl:0" for b in row) for row in ak["inline_keyboard"])
+

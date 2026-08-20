@@ -196,20 +196,23 @@ tail -f -n 50 runtime/watchdog.log
 
 ---
 
-## Telegram 命令与交互指南
+### 🤖 自适应斜杠菜单与命令中心 (Adaptive LRU Command Menu)
 
-### 🤖 底部菜单与斜杠命令补全 (Bot Command Menu)
-
-网关启动时会自动调用 Telegram Bot API 的 `setMyCommands` 与 `setChatMenuButton`：
-- **聊天框左下角「Menu / 菜单」按钮**：点击即可呼出所有支持的斜杠命令与说明弹窗。
-- **输入框 `/` 快捷联想**：在输入框键入 `/` 即可实时查看命令列表与自动补全。
+网关采用**自适应 LRU / 频次排序与置顶设计**，确保移动端菜单始终清爽、常用命令优先：
+- **📌 `/help` 永远置顶**：无论如何排序，`/help` 始终位于第 0 位，点击可呼出集成所有子系统的**交互式命令中心仪表盘**（带快捷一键点击按钮）。
+- **⚡ LRU 智能频次重排**：网关后台动态统计当前 Chat 对各命令的使用频次与最近使用时间，最常用的命令会自动上浮至 Telegram 弹窗前列。
+- **📱 移动端精简展示**：Telegram `/` 联想菜单仅展示最常用的 Top 8 条命令，避免移动端长屏滚动烦恼；全部 17 条命令均可在输入框直接键入或通过 `/help` 面板一键点击。
 
 ### 🔘 交互式选项菜单 (Inline Keyboard Buttons)
 
 为了提高移动端操作效率，网关全面支持交互式按钮点击：
-- **/projects 项目菜单**：直接附带每个项目的点击按钮（如 `[ 🌟 myapp ]`、`[ 📂 backend ]`）及 `[ 🔄 Refresh ]`，点击即可一键切换当前工作区，无需手动复制或输入命令。
-- **/effort 推理强度**：展示当前激活状态并附带 `[ 🟢 Low ]`、`[ 🟡 Medium ]`、`[ 🔴 High ]` 快速选择按钮，点击即时生效。
-- **/model 模型切换**：展示当前激活模型与所有模型选项，附带 `[ ⚡ Gemini 3.7 Flash ]`、`[ 🧠 Gemini 3.1 Pro ]` 按钮快速切换。
+- **/help 命令中心**：展示所有快捷功能入口（`[ 📊 Status ]`、`[ 🪙 Quota & Usage ]`、`[ 📁 Projects ]`、`[ 🧠 Model & Effort ]`、`[ 🧩 Skills & Tools ]`、`[ 📦 Artifacts ]`、`[ 📁 File Tree ]`、`[ 📄 Export ]`）。
+- **/usage 配额看板**：直观展示 Gemini 7天周限制与 5小时速率限制剩余百分比（进度条格式）、重置倒计时与 AI 积分余额，附带 `[ 🔄 Refresh Quota ]` 与 `[ 🧠 Switch Model ]`。
+- **/skills 技能库**：分类展示当前 Agent 具备的 Builtin 及各插件（Firebase, Web Guidance, Xcode, AGY SDK 等）技能总览。
+- **/artifacts 产物管理**：列出会话生成的 HTML 报告、图表与 `scratch/` 脚本，附带 `[ 📥 一键下载 ]` 按钮。
+- **/projects 项目菜单**：附带每个项目的点击按钮（如 `[ 🌟 myapp ]`、`[ 📂 backend ]`）及 `[ 🔄 Refresh ]`，一键切换工作区。
+- **/effort 推理强度**：附带 `[ 🟢 Low ]`、`[ 🟡 Medium ]`、`[ 🔴 High ]` 快速选择按钮，即时生效。
+- **/model 模型切换**：展示当前激活模型与所有模型选项，附带 `[ ⚡ Gemini 3.7 Flash ]`、`[ 🧠 Gemini 3.1 Pro ]` 按钮。
 
 ### 支持的命令列表
 
@@ -220,7 +223,10 @@ tail -f -n 50 runtime/watchdog.log
 | **直接发送文本** | 处于空闲时启动新轮次；处于运行中时**自动作为 Steering 注入当前会话** | `请帮我查看当前目录下的文件` |
 | **🎙️ 发送语音 / 音频** | 自动下载至本地 `runtime/voice/`，将路径与音频信息传给 agy 解析并执行；运行中发送则自动 Steering | 🎙️ 发送一段语音指令 |
 | **📎 发送文件 / 图片** | 自动下载至本地 `runtime/documents/`，将路径与文件元数据传给 agy 检查与处理；支持中途 Steering | 📎 发送代码/文档/图片附件 |
-| `/help` | 查看帮助说明与命令列表 | `/help` |
+| `/help` | 查看帮助说明与交互式命令中心仪表盘（永远置顶） | `/help` |
+| `/usage` 或 `/quota` | **0 Token 实时查询** Google Antigravity 周配额、5小时限制剩余率与重置时间、AI 积分 | `/usage` |
+| `/skills` 或 `/plugins` | 查看当前工作区已注册的所有 Agent 技能与插件工具清单 | `/skills` |
+| `/artifacts [序号]` | 浏览当前会话产生的独立报告、代码 diff 与调试脚本，或指定序号直接下载 | `/artifacts` 或 `/artifacts 1` |
 | `/status` | 查看当前活跃项目、会话累计统计（轮次、累计 Token、思考 Token、会话存活时长、总运行耗时）、模型及系统状态 | `/status` |
 | `/projects` | 列出所有项目、活跃标记、工作区路径与最后活跃时间 | `/projects` |
 | `/open <name>` | 打开并切换到已有项目，恢复其历史会话与统计 | `/open myapp` |
@@ -304,16 +310,16 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-测试覆盖范围（97 项全部通过）：
+测试覆盖范围（102 项全部通过）：
 - `test_config.py`: 配置解析、Token 格式验证、白名单过滤、默认 runtime 路径、默认系统提示词内容校验、环境变量及文件覆盖测试
-- `test_session_manager.py`: 会话 CRUD、持久化与恢复、并发状态保护、Legacy 迁移、累计 Token 与耗时统计
-- `test_ui_keyboards.py`: 多项目内联键盘、模型选择菜单、推理强度切换菜单渲染
+- `test_session_manager.py`: 会话 CRUD、持久化与恢复、并发状态保护、Legacy 迁移、累计 Token 与耗时统计、命令使用频次与 LRU 追踪
+- `test_ui_keyboards.py`: 多项目内联键盘、模型选择菜单、推理强度切换菜单渲染、自适应 LRU 命令菜单生成（`/help` 置顶、Top 8 截断）、配额/技能/产物/帮助命令中心面板
 - `test_message_formatter.py`: HTML 实体转义、Markdown 转 Telegram HTML、代码高亮、标签自闭合、表格转换、独立移动 HTML 文档导出、文件导出条件判断、`sanitize_filename`、`detect_content_mode`、`parse_agy_file_block`、`extract_agy_file_blocks`、`render_agy_file` 三种模式（Markdown / Raw HTML / File Path）、移动端视口与响应式元素验证
 - `test_dir_tree.py`: 目录树扫描、文件大小格式化与独立 HTML 导航器生成
 - `test_file_renderers.py`: 代码高亮转换、Markdown 渲染、Diff 补丁视图、CSV 响应式表格渲染与二进制回退
-- `test_agy_bridge.py`: 命令构建、stream-json 协议解析、Mock 管道流、首轮系统提示词精准注入、次轮跳过注入、`steer()` 注入与 `is_running()` 状态判断
-- `test_telegram_client.py`: API 调用、HTML 实体解析失败自动降级、304 抑制、`send_document` 多部件上传、语音文件下载
-- `test_bot.py`: 所有斜杠命令路由、未授权拦截、流式处理管线、语音笔记/音频接收、文件附件处理、中途 Steering 注入、`/dir` 目录浏览、`/file` 文件发送、`/export` 导出、代码 Diff 启发式自动生成 HTML 附件、`[AGY_FILE]` 显式协议导出（Markdown / Raw HTML / File Path / Missing File / 多文件）、`/stop` 中断、Telegram 网络异常抗逆与自动降级保护
+- `test_agy_bridge.py`: 命令构建、stream-json 协议解析、Mock 管道流、声明式规则检测、跨轮次进程池长连接复用与空闲回收、`steer()` 注入与 `is_running()` 状态判断
+- `test_telegram_client.py`: API 调用、HTML 实体解析失败自动降级、304 抑制、`send_document` 多部件上传、语音文件下载、自适应 `set_my_commands`
+- `test_bot.py`: 所有斜杠命令路由（含 `/usage`, `/skills`, `/artifacts`）、未授权拦截、流式处理管线、语音笔记/音频接收、文件附件处理、中途 Steering 注入、`/dir` 目录浏览、`/file` 文件发送、`/export` 导出、产物一键下载、Telegram 网络异常抗逆与自动降级保护
 - `test_smoke_agy.py`: 真实的 `agy` CLI 联调冒烟测试
 
 

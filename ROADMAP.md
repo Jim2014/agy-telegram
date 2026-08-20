@@ -28,6 +28,12 @@ This document outlines the milestones and roadmap for integrating new Google Ant
 - [x] **3.3 Concurrency & Steering Safety**: Maintain thread-safe stdin writing for prompt turns and mid-flight `/steer` inputs.
 - [x] **3.4 Performance & Latency Benchmarks**: Measure and verify cold-start vs. warm-session latency improvements.
 
+### 📋 Milestone 4: Quota Monitor, Skills Explorer, Artifacts & Adaptive LRU Command Menu
+- [x] **4.1 Real-Time Quota & Usage Monitor (`/usage`, `/quota`)**: 0-token instant query of Google Antigravity weekly / 5-hour rate limits, reset timestamps, and AI credits with graphical progress bars.
+- [x] **4.2 Agent Skills & Plugins Explorer (`/skills`, `/plugins`)**: Discover and list all loaded builtin and plugin capabilities.
+- [x] **4.3 Conversation Artifacts Manager (`/artifacts`, `/scratch`)**: Browse and download reports, code diffs, and scratch scripts with 1-tap buttons.
+- [x] **4.4 Adaptive LRU Command Menu & Interactive Center**: Keep `/help` pinned at top, dynamically bubble frequently used commands up, and limit mobile popup menu to top 8 items.
+
 ---
 
 ## Status Log
@@ -37,3 +43,4 @@ This document outlines the milestones and roadmap for integrating new Google Ant
 | **Milestone 1** | Enhanced Tool Execution & Spinner Hints | ✅ Completed | 2026-08-19 |
 | **Milestone 2** | Declarative Agent Rules Integration | ✅ Completed | 2026-08-19 |
 | **Milestone 3** | Long-Lived Session Process Pool | ✅ Completed | 2026-08-19 |
+| **Milestone 4** | Quota, Skills, Artifacts & Adaptive LRU Menu | ✅ Completed | 2026-08-19 |

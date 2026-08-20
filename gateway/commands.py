@@ -1,11 +1,11 @@
-from __future__ import annotations
-
+import asyncio
+import json
 import logging
 import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 _repo_root = str(Path(__file__).resolve().parent.parent)
 if _repo_root not in sys.path:
@@ -15,47 +15,54 @@ from gateway.dir_tree import generate_dir_tree_html, scan_directory_tree
 from gateway.file_renderers import render_file_to_html
 from gateway.message_formatter import escape_html, generate_standalone_html
 from gateway.ui_keyboards import (
+    build_artifacts_keyboard,
     build_effort_keyboard,
+    build_help_keyboard,
     build_model_keyboard,
     build_projects_keyboard,
+    build_skills_keyboard,
+    build_usage_keyboard,
 )
 
 logger = logging.getLogger(__name__)
 
 
-async def handle_cmd_help(bot: Any, chat_id: int) -> None:
-    """Send help message."""
+async def handle_cmd_help(bot: Any, chat_id: int, edit_message_id: Optional[int] = None) -> None:
+    """Send interactive help manual & master command dashboard."""
     session = bot.session_manager.get_session(chat_id)
     active_proj = session.active_project or "(none)"
     conv_id = session.conversation_id
     conv_text = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(New session)</i>"
     help_text = (
-        "🤖 <b>agy-telegram Gateway</b>\n\n"
-        "Direct Telegram interface to <b>agy</b> (Antigravity CLI) with project-based session management, real-time streaming, mid-flight steering, and HTML document exports.\n\n"
-        "<b>Project Management:</b>\n"
-        "• <code>/new &lt;name&gt; &lt;path&gt;</code> — Create a new project workspace\n"
-        "• <code>/open &lt;name&gt;</code> — Open and switch to an existing project\n"
-        "• <code>/projects</code> — List all projects with interactive switch buttons\n"
-        "• <code>/delete &lt;name&gt;</code> — Delete a project\n"
-        "• <code>/reset</code> — Clear conversation history for active project\n\n"
-        "<b>Files & Directory Tree:</b>\n"
-        "• <code>/dir</code> or <code>/ls [path]</code> — Browse workspace file tree & interactive HTML navigator\n"
+        "🤖 <b>agy-telegram Command Center</b>\n\n"
+        "Direct interface to <b>agy</b> (Antigravity CLI) with real-time streaming, project isolation, multi-agent tools, and HTML exports.\n\n"
+        "<b>Core Commands:</b>\n"
+        "• <code>/usage</code> / <code>/quota</code> — View real-time Google model limits & credits\n"
+        "• <code>/status</code> — Show active project, model, tokens & metrics\n"
+        "• <code>/projects</code> — List & switch workspaces (<code>/open &lt;name&gt;</code>, <code>/new</code>)\n"
+        "• <code>/model</code> — Switch model (<code>/model gemini-3.7-flash</code> | <code>pro</code>)\n"
+        "• <code>/effort</code> — Set reasoning effort (<code>low</code> | <code>medium</code> | <code>high</code>)\n"
+        "• <code>/skills</code> — Explore active agent skills & plugins\n"
+        "• <code>/artifacts</code> — View & download conversation artifacts/scripts\n"
+        "• <code>/dir</code> — Browse workspace file tree & interactive HTML navigator\n"
         "• <code>/file &lt;path&gt;</code> — Send workspace file document to Telegram\n"
-        "• <code>/export</code> — Export current conversation report as standalone HTML\n\n"
-        "<b>Configuration & Control:</b>\n"
-        "• <code>/status</code> — Show active project, conversation, model, & effort\n"
-        "• <code>/model</code> — Switch model (Gemini 3.7 Flash / Gemini 3.1 Pro)\n"
-        "• <code>/effort</code> — Set reasoning effort (low | medium | high)\n"
-        "• <code>/steer &lt;instruction&gt;</code> — Steer/guide currently running agy prompt\n"
+        "• <code>/export</code> — Export conversation report as standalone HTML\n"
+        "• <code>/steer &lt;text&gt;</code> — Steer/guide currently running agy prompt\n"
         "• <code>/stop</code> — Interrupt currently executing agy prompt\n"
-        "<b>Interaction:</b>\n"
-        "• Send text messages to converse directly with agy\n"
-        "• 🎙️ Send voice/audio messages — agy will inspect, transcribe, and execute voice instructions\n"
-        "• Send text/voice while a task is running to <b>steer</b> mid-flight\n\n"
+        "• <code>/reset</code> — Clear conversation history for active project\n\n"
         f"<b>Active Project:</b> <code>{escape_html(active_proj)}</code> ({conv_text})\n\n"
-        "💡 <i>Tip: Long responses, code diffs, and test reports are automatically generated and sent as formatted HTML file attachments!</i>"
+        "💡 <i>Tap any quick action button below or type slash commands directly.</i>"
     )
-    await bot._safe_send_message(chat_id=chat_id, text=help_text)
+    reply_markup = build_help_keyboard()
+    if edit_message_id:
+        await bot._safe_edit_message_text(
+            chat_id=chat_id,
+            message_id=edit_message_id,
+            text=help_text,
+            reply_markup=reply_markup,
+        )
+    else:
+        await bot._safe_send_message(chat_id=chat_id, text=help_text, reply_markup=reply_markup)
 
 
 async def handle_cmd_new(bot: Any, chat_id: int, arg: str) -> None:
@@ -595,6 +602,280 @@ async def handle_cmd_stop(bot: Any, chat_id: int) -> None:
         await bot._safe_send_message(chat_id=chat_id, text="ℹ️ No active task is currently running.")
 
 
+async def _run_agy_readonly_cmd(agy_bin: str, slash_cmd: str) -> Optional[Dict[str, Any]]:
+    """Execute a read-only slash command via agy print mode and return parsed JSON data."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            agy_bin,
+            "-p",
+            slash_cmd,
+            "--output-format",
+            "json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+        if proc.returncode == 0 and stdout:
+            return json.loads(stdout.decode("utf-8", errors="replace"))
+    except Exception as e:
+        logger.warning("Error running read-only agy command %s: %s", slash_cmd, e)
+    return None
+
+
+def _format_progress_bar(fraction: float, length: int = 10) -> str:
+    """Format a text progress bar e.g. [███████░░░]."""
+    safe_f = max(0.0, min(1.0, float(fraction)))
+    filled = int(round(safe_f * length))
+    return f"[{'█' * filled}{'░' * (length - filled)}]"
+
+
+async def handle_cmd_usage(
+    bot: Any,
+    chat_id: int,
+    edit_message_id: Optional[int] = None,
+    reply_to_id: Optional[int] = None,
+) -> None:
+    """Display real-time model quota and AI credits from Google Antigravity."""
+    agy_bin = bot.config.get_resolved_agy_bin()
+    usage_data = await _run_agy_readonly_cmd(agy_bin, "/usage")
+    credits_data = await _run_agy_readonly_cmd(agy_bin, "/credits")
+
+    lines = ["🪙 <b>Google Antigravity Quota Monitor</b>\n"]
+
+    if usage_data and "command" in usage_data and "data" in usage_data["command"]:
+        data_block = usage_data["command"]["data"]
+        groups = data_block.get("groups", [])
+
+        for group in groups:
+            g_name = group.get("name", "Models")
+            lines.append(f"<b>{escape_html(g_name)}:</b>")
+            buckets = group.get("buckets", [])
+            for b in buckets:
+                b_name = b.get("name", "Limit")
+                rem_frac = b.get("remaining_fraction", 1.0)
+                pct_str = f"{rem_frac * 100:.1f}%"
+                bar = _format_progress_bar(rem_frac)
+                reset_t = b.get("reset_time", "")
+                reset_hint = f" <i>(Resets: {escape_html(reset_t[:16].replace('T', ' '))})</i>" if reset_t else ""
+                lines.append(f"• {escape_html(b_name)}: <code>{bar} {pct_str}</code>{reset_hint}")
+            lines.append("")
+
+    if credits_data and "command" in credits_data and "data" in credits_data["command"]:
+        c_block = credits_data["command"]["data"]
+        rem_credits = c_block.get("remaining_credits", 0)
+        lines.append(f"💳 <b>G1 AI Credits Balance:</b> <code>{rem_credits} credits</code>\n")
+
+    if not usage_data and not credits_data:
+        lines.append("⚠️ <i>Could not fetch real-time quota from agy. Check CLI authentication.</i>\n")
+
+    session = bot.session_manager.get_session(chat_id)
+    proj_name = session.active_project or "default"
+    proj = session.projects.get(proj_name, {})
+    stats = proj.get("stats", {})
+    if stats:
+        tot_tok = stats.get("total_tokens", 0)
+        tot_dur = stats.get("total_duration_seconds", 0.0)
+        lines.append(f"📊 <b>Active Session Stats:</b> <code>{tot_tok}</code> tokens used in <code>{tot_dur:.1f}s</code>")
+
+    lines.append("\n💡 <i>Limits refresh automatically based on your subscription tier.</i>")
+    text = "\n".join(lines)
+    reply_markup = build_usage_keyboard()
+
+    if edit_message_id:
+        await bot._safe_edit_message_text(
+            chat_id=chat_id,
+            message_id=edit_message_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+    else:
+        await bot._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, reply_to_message_id=reply_to_id)
+
+
+async def handle_cmd_skills(
+    bot: Any,
+    chat_id: int,
+    edit_message_id: Optional[int] = None,
+    reply_to_id: Optional[int] = None,
+) -> None:
+    """Explore and list available skills and plugins."""
+    agy_bin = bot.config.get_resolved_agy_bin()
+    skills_data = await _run_agy_readonly_cmd(agy_bin, "/skills")
+
+    lines = ["🧩 <b>Antigravity Skills & Plugin Tools</b>\n"]
+
+    skill_list = []
+    if skills_data and "command" in skills_data and "data" in skills_data["command"]:
+        skill_list = skills_data["command"]["data"].get("skills", [])
+
+    if skill_list:
+        builtin_skills = []
+        plugin_skills: Dict[str, List[Dict[str, Any]]] = {}
+
+        for s in skill_list:
+            s_plugin = s.get("plugin")
+            if s_plugin:
+                plugin_skills.setdefault(s_plugin, []).append(s)
+            else:
+                builtin_skills.append(s)
+
+        if builtin_skills:
+            lines.append("<b>Built-in Core Skills:</b>")
+            for bs in builtin_skills[:4]:
+                s_name = bs.get("name", "")
+                s_desc = bs.get("description", "")
+                lines.append(f"• <b>{escape_html(s_name)}</b>: {escape_html(s_desc[:70])}{'...' if len(s_desc)>70 else ''}")
+            lines.append("")
+
+        if plugin_skills:
+            lines.append("<b>Installed Plugin Packages:</b>")
+            for p_name, p_skills in plugin_skills.items():
+                s_names = ", ".join([sk.get("name", "").split(":")[-1] for sk in p_skills])
+                lines.append(f"• 🔌 <b>{escape_html(p_name)}</b> ({len(p_skills)} skills): <code>{escape_html(s_names[:60])}{'...' if len(s_names)>60 else ''}</code>")
+            lines.append("")
+
+        lines.append(f"✨ <i>Total {len(skill_list)} skills registered and model-invocable.</i>")
+    else:
+        lines.append("ℹ️ <i>No custom skills discovered. Standard tools (bash, file, search) are active.</i>")
+
+    text = "\n".join(lines)
+    reply_markup = build_skills_keyboard()
+
+    if edit_message_id:
+        await bot._safe_edit_message_text(
+            chat_id=chat_id,
+            message_id=edit_message_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+    else:
+        await bot._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, reply_to_message_id=reply_to_id)
+
+
+def _collect_conversation_artifacts(conversation_id: Optional[str], workspace_path: Optional[str]) -> List[Dict[str, Any]]:
+    """Scan brain directory and workspace runtime/artifacts for artifacts."""
+    artifacts: List[Dict[str, Any]] = []
+    seen_paths = set()
+
+    # 1. Brain directory
+    if conversation_id:
+        brain_dir = Path.home() / ".gemini" / "antigravity-cli" / "brain" / conversation_id
+        if brain_dir.is_dir():
+            for p in sorted(brain_dir.rglob("*")):
+                if p.is_file() and not p.name.startswith(".") and ".system_generated" not in p.parts:
+                    if p not in seen_paths:
+                        seen_paths.add(p)
+                        artifacts.append({
+                            "name": p.name,
+                            "path": p,
+                            "size": p.stat().st_size,
+                            "mtime": p.stat().st_mtime,
+                            "source": "brain",
+                        })
+
+    # 2. Workspace runtime/artifacts
+    if workspace_path:
+        w_art = Path(workspace_path) / "runtime" / "artifacts"
+        if w_art.is_dir():
+            for p in sorted(w_art.glob("*")):
+                if p.is_file() and not p.name.startswith("."):
+                    if p not in seen_paths:
+                        seen_paths.add(p)
+                        artifacts.append({
+                            "name": p.name,
+                            "path": p,
+                            "size": p.stat().st_size,
+                            "mtime": p.stat().st_mtime,
+                            "source": "workspace",
+                        })
+
+    # Sort by mtime descending
+    artifacts.sort(key=lambda x: x["mtime"], reverse=True)
+    return artifacts
+
+
+async def handle_cmd_artifacts(
+    bot: Any,
+    chat_id: int,
+    arg: str = "",
+    edit_message_id: Optional[int] = None,
+    reply_to_id: Optional[int] = None,
+) -> None:
+    """List or download conversation artifacts and reports."""
+    session = bot.session_manager.get_session(chat_id)
+    conv_id = session.conversation_id
+    w_path = session.active_path() or bot.config.agy_working_dir
+
+    artifacts = _collect_conversation_artifacts(conv_id, w_path)
+
+    # If argument provided, attempt direct download
+    if arg.strip():
+        arg_clean = arg.strip()
+        target_art: Optional[Dict[str, Any]] = None
+        if arg_clean.isdigit():
+            idx = int(arg_clean) - 1
+            if 0 <= idx < len(artifacts):
+                target_art = artifacts[idx]
+        else:
+            for art in artifacts:
+                if art["name"].lower() == arg_clean.lower() or arg_clean.lower() in art["name"].lower():
+                    target_art = art
+                    break
+
+        if target_art:
+            p = target_art["path"]
+            sz_kb = target_art["size"] / 1024
+            sz_str = f"{sz_kb:.1f} KB" if sz_kb >= 1 else f"{target_art['size']} B"
+            await bot._safe_send_chat_action(chat_id, "upload_document")
+            await bot._safe_send_document(
+                chat_id=chat_id,
+                document_content=p,
+                filename=p.name,
+                caption=f"📦 <b>{escape_html(p.name)}</b> ({sz_str})\nSource: <code>{escape_html(target_art['source'])}</code>",
+                reply_to_message_id=reply_to_id,
+            )
+            return
+        else:
+            await bot._safe_send_message(
+                chat_id=chat_id,
+                text=f"❌ Artifact <code>{escape_html(arg_clean)}</code> not found.",
+                reply_to_message_id=reply_to_id,
+            )
+            return
+
+    # List view
+    lines = ["📦 <b>Conversation Artifacts & Reports:</b>\n"]
+    if not artifacts:
+        conv_str = f"<code>{escape_html(conv_id[:8])}...</code>" if conv_id else "<i>(None)</i>"
+        lines.append(
+            f"ℹ️ No artifacts found for active session ({conv_str}).\n\n"
+            "Artifacts (HTML reports, code diffs, diagrams) generated during conversations will automatically appear here."
+        )
+    else:
+        for idx, art in enumerate(artifacts[:10], 1):
+            sz_kb = art["size"] / 1024
+            sz_str = f"{sz_kb:.1f} KB" if sz_kb >= 1 else f"{art['size']} B"
+            t_str = time.strftime("%m-%d %H:%M", time.localtime(art["mtime"]))
+            lines.append(
+                f"<b>{idx}.</b> <code>{escape_html(art['name'])}</code> ({sz_str}, {t_str})\n"
+                f"    Download: <code>/artifacts {idx}</code>"
+            )
+        lines.append(f"\n💡 <i>Total {len(artifacts)} artifact(s). Tap a button below to download directly.</i>")
+
+    text = "\n".join(lines)
+    reply_markup = build_artifacts_keyboard(artifacts)
+
+    if edit_message_id:
+        await bot._safe_edit_message_text(
+            chat_id=chat_id,
+            message_id=edit_message_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+    else:
+        await bot._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, reply_to_message_id=reply_to_id)
+
+
 async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> None:
     """Handle Telegram inline keyboard button presses."""
     cq_id = callback_query.get("id")
@@ -636,7 +917,7 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
         else:
             await bot._safe_answer_callback_query(cq_id, text=f"Project '{proj_name}' not found", show_alert=True)
 
-    elif data == "projects:refresh":
+    elif data in ("projects:refresh", "projects:show"):
         await bot._safe_answer_callback_query(cq_id, text="Projects refreshed")
         await handle_cmd_projects(bot, chat_id, edit_message_id=message_id)
 
@@ -661,6 +942,35 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
     elif data == "status":
         await bot._safe_answer_callback_query(cq_id)
         await handle_cmd_status(bot, chat_id)
+
+    elif data in ("usage:show", "usage:refresh"):
+        await bot._safe_answer_callback_query(cq_id, text="Refreshing quota...")
+        await handle_cmd_usage(bot, chat_id, edit_message_id=message_id)
+
+    elif data == "skills:show":
+        await bot._safe_answer_callback_query(cq_id)
+        await handle_cmd_skills(bot, chat_id, edit_message_id=message_id)
+
+    elif data == "artifacts:show":
+        await bot._safe_answer_callback_query(cq_id)
+        await handle_cmd_artifacts(bot, chat_id, edit_message_id=message_id)
+
+    elif data.startswith("artifact:dl:"):
+        idx_str = data[12:].strip()
+        await bot._safe_answer_callback_query(cq_id, text="Downloading artifact...")
+        await handle_cmd_artifacts(bot, chat_id, arg=str(int(idx_str) + 1))
+
+    elif data == "help:show":
+        await bot._safe_answer_callback_query(cq_id)
+        await handle_cmd_help(bot, chat_id, edit_message_id=message_id)
+
+    elif data == "dir:show":
+        await bot._safe_answer_callback_query(cq_id)
+        await handle_cmd_dir(bot, chat_id)
+
+    elif data == "export:show":
+        await bot._safe_answer_callback_query(cq_id)
+        await handle_cmd_export(bot, chat_id)
 
     else:
         await bot._safe_answer_callback_query(cq_id)

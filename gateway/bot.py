@@ -19,6 +19,7 @@ if _repo_root not in sys.path:
 from gateway.agy_bridge import AgyBridge, AgyEvent
 from gateway.commands import (
     handle_callback_query as cmd_handle_callback_query,
+    handle_cmd_artifacts as cmd_handle_artifacts,
     handle_cmd_delete as cmd_handle_delete,
     handle_cmd_dir as cmd_handle_dir,
     handle_cmd_effort as cmd_handle_effort,
@@ -30,9 +31,11 @@ from gateway.commands import (
     handle_cmd_open as cmd_handle_open,
     handle_cmd_projects as cmd_handle_projects,
     handle_cmd_reset as cmd_handle_reset,
+    handle_cmd_skills as cmd_handle_skills,
     handle_cmd_status as cmd_handle_status,
     handle_cmd_steer as cmd_handle_steer,
     handle_cmd_stop as cmd_handle_stop,
+    handle_cmd_usage as cmd_handle_usage,
 )
 from gateway.config import Config
 from gateway.media_handlers import (
@@ -53,26 +56,12 @@ from gateway.message_formatter import (
 )
 from gateway.session_manager import ChatSession, SessionManager
 from gateway.telegram_client import TelegramClient
+from gateway.ui_keyboards import build_adaptive_bot_commands
 
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_BOT_COMMANDS: List[Dict[str, str]] = [
-    {"command": "help", "description": "📖 Show manual & slash command guide"},
-    {"command": "status", "description": "📊 Show active project, model & status"},
-    {"command": "projects", "description": "📁 List all projects & workspaces"},
-    {"command": "open", "description": "📂 Open / switch project (/open <name>)"},
-    {"command": "new", "description": "✨ Create new project (/new <name> <path>)"},
-    {"command": "model", "description": "🧠 Set or reset model (/model <name>|reset)"},
-    {"command": "effort", "description": "⚡ Set reasoning effort (low|medium|high)"},
-    {"command": "export", "description": "📄 Export conversation as HTML report"},
-    {"command": "file", "description": "📎 Send file or render HTML (/file [-h] <path>)"},
-    {"command": "dir", "description": "📁 Browse workspace files & interactive tree"},
-    {"command": "steer", "description": "🎯 Steer active task (/steer <text>)"},
-    {"command": "stop", "description": "🛑 Interrupt running agy prompt"},
-    {"command": "reset", "description": "🔄 Clear active project conversation"},
-    {"command": "delete", "description": "🗑️ Delete a project (/delete <name>)"},
-]
+DEFAULT_BOT_COMMANDS = build_adaptive_bot_commands(None, max_commands=8)
 
 
 class AgyTelegramBot:
@@ -99,6 +88,19 @@ class AgyTelegramBot:
             return success
         except Exception as e:
             logger.warning("Error registering bot commands: %s", e)
+            return False
+
+    async def update_chat_command_menu(self, chat_id: int) -> bool:
+        """Update adaptive LRU-sorted command menu for a specific chat."""
+        try:
+            session = self.session_manager.get_session(chat_id)
+            adaptive_cmds = build_adaptive_bot_commands(session, max_commands=8)
+            return await self.client.set_my_commands(
+                commands=adaptive_cmds,
+                scope={"type": "chat", "chat_id": chat_id},
+            )
+        except Exception as e:
+            logger.debug("Failed to update adaptive commands for chat %s: %s", chat_id, e)
             return False
 
     async def _safe_send_message(
@@ -328,8 +330,18 @@ class AgyTelegramBot:
                 cmd = parts[0].lower().split("@")[0]
                 arg = parts[1].strip() if len(parts) > 1 else ""
 
+                # Record command usage for adaptive LRU menu and update in background
+                self.session_manager.record_command_usage(chat_id, cmd)
+                asyncio.create_task(self.update_chat_command_menu(chat_id))
+
                 if cmd in ("/start", "/help"):
                     await self.handle_cmd_help(chat_id)
+                elif cmd in ("/usage", "/quota"):
+                    await self.handle_cmd_usage(chat_id, reply_to_id=message_id)
+                elif cmd in ("/skills", "/plugins"):
+                    await self.handle_cmd_skills(chat_id, reply_to_id=message_id)
+                elif cmd in ("/artifacts", "/scratch"):
+                    await self.handle_cmd_artifacts(chat_id, arg, reply_to_id=message_id)
                 elif cmd == "/new":
                     await self.handle_cmd_new(chat_id, arg)
                 elif cmd == "/open":
@@ -385,6 +397,31 @@ class AgyTelegramBot:
     # Backward-compatible command and media delegation wrappers
     async def handle_cmd_help(self, chat_id: int) -> None:
         await cmd_handle_help(self, chat_id)
+
+    async def handle_cmd_usage(
+        self,
+        chat_id: int,
+        edit_message_id: Optional[int] = None,
+        reply_to_id: Optional[int] = None,
+    ) -> None:
+        await cmd_handle_usage(self, chat_id, edit_message_id, reply_to_id)
+
+    async def handle_cmd_skills(
+        self,
+        chat_id: int,
+        edit_message_id: Optional[int] = None,
+        reply_to_id: Optional[int] = None,
+    ) -> None:
+        await cmd_handle_skills(self, chat_id, edit_message_id, reply_to_id)
+
+    async def handle_cmd_artifacts(
+        self,
+        chat_id: int,
+        arg: str = "",
+        edit_message_id: Optional[int] = None,
+        reply_to_id: Optional[int] = None,
+    ) -> None:
+        await cmd_handle_artifacts(self, chat_id, arg, edit_message_id, reply_to_id)
 
     async def handle_cmd_new(self, chat_id: int, arg: str) -> None:
         await cmd_handle_new(self, chat_id, arg)
