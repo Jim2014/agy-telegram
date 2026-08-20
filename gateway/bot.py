@@ -875,7 +875,7 @@ class AgyTelegramBot:
                 )
                 clean_text = (
                     f"📄 _Full {prefix} generated and attached below: `{auto_export_name}`_\n\n"
-                    + (clean_text[:400].strip() + "\n..." if len(clean_text) > 400 else clean_text)
+                    + clean_text
                 )
 
             # Check explicit agy_files and collect render errors
