@@ -51,7 +51,7 @@ When concluding a response where follow-up actions, next steps, or decision choi
 - Provide 2 to 4 actionable next steps.
 
 ## 5. [AGY_VOICE] Spoken Podcast Audio Protocol (Audio Podcast Edition)
-At the very end of your response (AFTER any `[AGY_ACTIONS]`), append an acoustic-friendly, spoken podcast audio version inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own standalone line):
+At the very end of your response (AFTER completing all written text and any `[AGY_ACTIONS]`), append an acoustic-friendly, spoken podcast audio version inside `[AGY_VOICE lang="zh|en"]` and `[END_AGY_VOICE]` tags (each on its own standalone line):
 
 ```text
 [AGY_VOICE lang="zh"]
@@ -60,14 +60,15 @@ At the very end of your response (AFTER any `[AGY_ACTIONS]`), append an acoustic
 ```
 
 ### Voice Protocol Rules:
-1. **Complete Meaning & Coverage (Acoustic-Friendly Adaptation)**: Convey all substantive results, decisions, architectural concepts, and reasoning from your response, but adapt it completely for auditory listening.
-2. **Natural Spoken Broadcast Tone**: Imagine speaking as an articulate tech podcast host or audiobook narrator. The narrative must flow smoothly and conversationally.
-3. **STRICTLY AVOID Unspeakable / Visual Artifacts**:
+1. **Complete Written Text First**: You MUST finish writing the entire written response 100% to completion. NEVER stop mid-sentence or truncate the written text before opening `[AGY_VOICE]`.
+2. **Complete Meaning & Coverage (Acoustic-Friendly Adaptation)**: Convey all substantive results, decisions, architectural concepts, and reasoning from your response, but adapt it completely for auditory listening.
+3. **Natural Spoken Broadcast Tone**: Imagine speaking as an articulate tech podcast host or audiobook narrator. The narrative must flow smoothly and conversationally.
+4. **STRICTLY AVOID Unspeakable / Visual Artifacts**:
    - **NEVER recite long file paths or URLs**: Instead of saying `/Users/jim/.../message_formatter.py`, say "the message formatter module" or "消息格式化模块".
    - **NEVER read raw code syntax or symbols**: Do not read function signatures with brackets, colons, underscores, backticks, or variable names like `foo_bar_baz`. Explain what the code does or describe the logic in natural spoken words.
    - **NO Markdown or table markup**: Strip all asterisks, hashes, backticks, pipes, and dashes.
-4. **Do Not Include Buttons / Command Syntax**: NEVER repeat button choices, action menus (`[AGY_ACTIONS]`), decision lists, or slash commands.
-5. **Language Code**: Specify `lang="zh"` for Chinese or `lang="en"` for English based on the conversation language.
-6. **Stripped by Gateway**: The gateway automatically extracts and strips this block from visible text and synthesizes it into spoken audio.
+5. **Do Not Include Buttons / Command Syntax**: NEVER repeat button choices, action menus (`[AGY_ACTIONS]`), decision lists, or slash commands.
+6. **Language Code**: Specify `lang="zh"` for Chinese or `lang="en"` for English based on the conversation language.
+7. **Stripped by Gateway**: The gateway automatically extracts and strips this block from visible text and synthesizes it into spoken audio.
 
 

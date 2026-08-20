@@ -366,9 +366,12 @@ def format_streaming_message(
     if not current_text and "accumulated_text" in kwargs:
         current_text = kwargs["accumulated_text"]
 
-    # Strip any in-flight [AGY_VOICE] blocks from streaming preview
-    if current_text and "[AGY_VOICE" in current_text:
-        current_text = re.sub(r"\[AGY_VOICE.*?(?:\[END_AGY_VOICE\]|$)", "", current_text, flags=re.DOTALL | re.IGNORECASE).strip()
+    # Strip any in-flight [AGY_VOICE] or [AGY_TEXT] tags from streaming preview
+    if current_text:
+        if "[AGY_VOICE" in current_text:
+            current_text = re.sub(r"\[AGY_VOICE.*?(?:\[END_AGY_VOICE\]|$)", "", current_text, flags=re.DOTALL | re.IGNORECASE).strip()
+        current_text = re.sub(r"\[/?AGY_TEXT\]", "", current_text, flags=re.IGNORECASE).strip()
+        current_text = re.sub(r"\[/?AGY_DISPLAY\]", "", current_text, flags=re.IGNORECASE).strip()
 
     sections: List[str] = []
 
@@ -1119,6 +1122,8 @@ def extract_agy_voice_block(text: str) -> Tuple[str, Optional[AgyVoiceBlock]]:
         return ""
 
     cleaned = AGY_VOICE_PATTERN.sub(repl_voice, text)
+    cleaned = re.sub(r"\[/?AGY_TEXT\]", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\[/?AGY_DISPLAY\]", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned, voice_block
 
