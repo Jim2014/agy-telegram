@@ -77,13 +77,13 @@ def format_markdown_tables(text: str) -> str:
             if not any(r):
                 continue
             if len(r) == 2:
-                formatted.append(f"• <b>{r[0]}</b>: {r[1]}")
+                formatted.append(f"• **{r[0]}**: {r[1]}")
             elif len(r) >= 3:
                 main_title = r[0]
                 tags = " / ".join([x for x in r[1:-1] if x])
                 desc = r[-1]
-                tag_str = f" <i>({tags})</i>" if tags else ""
-                formatted.append(f"• <b>{main_title}</b>{tag_str}: {desc}")
+                tag_str = f" _({tags})_" if tags else ""
+                formatted.append(f"• **{main_title}**{tag_str}: {desc}")
             else:
                 formatted.append("• " + " | ".join(r))
 

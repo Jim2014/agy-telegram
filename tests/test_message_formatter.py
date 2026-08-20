@@ -134,7 +134,10 @@ def test_markdown_to_telegram_html():
 def test_format_markdown_tables():
     tbl = "| Col 1 | Col 2 |\n|---|---|\n| A | B |"
     res = format_markdown_tables(tbl)
-    assert "• <b>A</b>: B" in res
+    assert "• **A**: B" in res
+
+    html_out = markdown_to_telegram_html(tbl)
+    assert "• <b>A</b>: B" in html_out
 
 
 def test_format_streaming_message():
