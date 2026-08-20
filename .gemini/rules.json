@@ -1,6 +1,11 @@
 {
   "rules": [
     {
+      "name": "dev-workflow",
+      "path": "rules/dev-workflow.md",
+      "description": "Standard engineering cycle: tests execution, documentation update, automatic git commit, and service restart"
+    },
+    {
       "name": "telegram-output",
       "path": "rules/telegram-output.md",
       "description": "Telegram output formatting conventions and AGY_FILE mobile document export protocol"
