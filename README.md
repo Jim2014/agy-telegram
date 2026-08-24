@@ -324,7 +324,7 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-测试覆盖范围（112 项全部通过）：
+测试覆盖范围（137 项全部通过）：
 - `test_config.py`: 配置解析、Token 格式验证、白名单过滤、默认 runtime 路径、默认系统提示词内容校验、WebApp 端口/URL 配置、环境变量及文件覆盖测试
 - `test_session_manager.py`: 会话 CRUD、持久化与恢复、并发状态保护、Legacy 迁移、累计 Token 与耗时统计、命令使用频次与 LRU 追踪、决策与动作状态暂存
 - `test_ui_keyboards.py`: 多项目内联键盘、模型选择菜单、推理强度切换菜单渲染、自适应 LRU 命令菜单生成（`/help` 置顶、Top 8 截断）、配额/技能/产物/帮助命令中心面板、决策选项键盘、智能后续动作键盘、持久快捷键与动态输入框占位词、Telegram WebApp 原生弹窗按钮
@@ -332,9 +332,11 @@ conda run -n agy-telegram pytest -v
 - `test_message_formatter.py`: HTML 实体转义、Markdown 转 Telegram HTML、代码高亮、标签自闭合、表格转换、独立移动 HTML 文档导出、文件导出条件判断、`sanitize_filename`、`detect_content_mode`、`parse_agy_file_block`、`extract_agy_file_blocks`、`extract_agy_action_blocks`、可折叠引用块渲染、移动端视口与响应式元素验证
 - `test_dir_tree.py`: 目录树扫描、文件大小格式化与独立 HTML 导航器生成
 - `test_file_renderers.py`: 代码高亮转换、Markdown 渲染、Diff 补丁视图、CSV 响应式表格渲染与二进制回退
-- `test_agy_bridge.py`: 命令构建、stream-json 协议解析、Mock 管道流、声明式规则检测、跨轮次进程池长连接复用与空闲回收、`steer()` 注入与 `is_running()` 状态判断
+- `test_agy_bridge.py`: 命令构建、stream-json 协议解析、Mock 管道流、声明式规则检测、跨轮次进程池长连接复用与空闲回收、`steer()` 注入与 `is_running()` 状态判断、跨项目工作区切换与首条消息事件完整传递
 - `test_telegram_client.py`: API 调用、HTML 实体解析失败自动降级、304 抑制、`send_document` 多部件上传、语音文件下载、自适应 `set_my_commands`、`set_message_reaction` Emoji 反应
 - `test_bot.py`: 所有斜杠命令路由（含 `/usage`, `/skills`, `/artifacts`）、集中式命令分发器、未授权拦截、流式处理管线、语音笔记/音频接收、文件附件处理、中途 Steering 注入、`/dir` 目录浏览、`/file` 文件发送、`/export` 导出、产物一键下载、`ask_question` 原生决策选项与 `[AGY_ACTIONS]` 快捷按钮交互闭环、Telegram Mini App 实时弹窗集成、Telegram 网络异常抗逆与自动降级保护
+- `test_ipc_router.py`: 跨项目 `AGY_IPC` 网格通信路由、信封封包与解析、置顶折叠卡片渲染与审计日志记录
+- `test_voice_tts.py`: 动态双语 TTS 语音合成、Edge-TTS 集成与 OGG Opus 编码
 - `test_smoke_agy.py`: 真实的 `agy` CLI 联调冒烟测试
 
 

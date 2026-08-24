@@ -173,6 +173,11 @@ async def handle_cmd_open(bot: Any, chat_id: int, arg: str) -> None:
         await bot._safe_send_message(chat_id=chat_id, text=msg)
         return
 
+    if hasattr(bot, "active_bridges") and chat_id in bot.active_bridges:
+        bridge = bot.active_bridges[chat_id]
+        if bridge and bridge.is_running():
+            await bridge.stop()
+
     bot.session_manager.open_project(chat_id, name)
     asyncio.create_task(bot.update_pinned_banner(chat_id))
     path_val = session.active_path() or ""
@@ -242,6 +247,12 @@ async def handle_cmd_delete(bot: Any, chat_id: int, arg: str) -> None:
         )
         return
 
+    if session.active_project == name:
+        if hasattr(bot, "active_bridges") and chat_id in bot.active_bridges:
+            bridge = bot.active_bridges[chat_id]
+            if bridge and bridge.is_running():
+                await bridge.stop()
+
     bot.session_manager.delete_project(chat_id, name)
     await bot._safe_send_message(
         chat_id=chat_id,
@@ -262,8 +273,10 @@ async def handle_cmd_reset(bot: Any, chat_id: int) -> None:
     active = session.active_project
     bot.session_manager.reset_session(chat_id)
 
-    if hasattr(bot, "agy_bridge") and bot.agy_bridge:
-        await bot.agy_bridge.stop()
+    if hasattr(bot, "active_bridges") and chat_id in bot.active_bridges:
+        bridge = bot.active_bridges[chat_id]
+        if bridge and bridge.is_running():
+            await bridge.stop()
 
     proj_info = f" for project <b>{escape_html(active)}</b>" if active else ""
     await bot._safe_send_message(
@@ -985,6 +998,10 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
             return
 
         if proj_name in session.projects:
+            if hasattr(bot, "active_bridges") and chat_id in bot.active_bridges:
+                bridge = bot.active_bridges[chat_id]
+                if bridge and bridge.is_running():
+                    await bridge.stop()
             bot.session_manager.open_project(chat_id, proj_name)
             await bot._safe_answer_callback_query(cq_id, text=f"Opened project: {proj_name}")
             await handle_cmd_projects(bot, chat_id, edit_message_id=message_id)

@@ -237,6 +237,12 @@ class AgyBridge:
             if self.is_running():
                 await self.stop()
 
+            # Ensure stopped flag is reset and event queue is clean for the new process
+            self._is_stopped = False
+            self._event_queue = asyncio.Queue()
+            self._steer_history.clear()
+            self._pending_turns = 0
+
             cmd = self.build_command(
                 prompt=prompt,
                 conversation_id=conversation_id,
@@ -451,6 +457,12 @@ class AgyBridge:
         self._is_stopped = True
         if self._reader_task and not self._reader_task.done():
             self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.debug("Exception awaiting cancelled reader task: %s", e)
         self._reader_task = None
         proc = self._current_process
         if proc and proc.returncode is None:

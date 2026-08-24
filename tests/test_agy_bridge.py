@@ -587,4 +587,114 @@ async def test_multiturn_process_reuse(monkeypatch, tmp_path):
     assert bridge._current_process is None
 
 
+@pytest.mark.asyncio
+async def test_switch_project_first_message_yields_events(monkeypatch, tmp_path):
+    """Test that switching project working_dir stops old warm process and properly yields all events for the new project's first message."""
+    bridge = AgyBridge(keep_alive=True)
+
+    class MockStdin:
+        def __init__(self):
+            self.written = []
+            self.closed = False
+
+        def write(self, data):
+            self.written.append(data)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+        def is_closing(self):
+            return self.closed
+
+    class MockStream:
+        def __init__(self, lines=None):
+            self.lines = list(lines or [])
+
+        async def readline(self):
+            if self.lines:
+                return self.lines.pop(0)
+            return b""
+
+        async def read(self):
+            return b""
+
+    class MockProcess:
+        def __init__(self, name="proc"):
+            self.name = name
+            self.stdin = MockStdin()
+            self.stdout = MockStream()
+            self.stderr = MockStream()
+            self.returncode = None
+            self.pid = 11111
+
+        async def wait(self):
+            self.returncode = 0
+            return 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        def kill(self):
+            self.returncode = 0
+
+    proc1 = MockProcess(name="proc1")
+    proc1.pid = 11111
+    proc2 = MockProcess(name="proc2")
+    proc2.pid = 22222
+
+    processes = [proc1, proc2]
+
+    async def mock_exec(*args, **kwargs):
+        return processes.pop(0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
+
+    dir1 = str(tmp_path / "project1")
+    dir2 = str(tmp_path / "project2")
+
+    # Turn 1 on Project 1
+    proc1.stdout.lines = [
+        b'{"event":"init","conversation_id":"conv-proj1"}\n',
+        b'{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"Project 1 response"}}\n',
+        b'{"event":"result","result":{"conversation_id":"conv-proj1","status":"SUCCESS","response":"Project 1 response"}}\n',
+    ]
+    p1_events = []
+    async for ev in bridge.run_streaming(prompt="Proj 1 prompt", conversation_id=None, working_dir=dir1):
+        p1_events.append(ev)
+
+    assert len(p1_events) == 3
+    assert p1_events[-1].response == "Project 1 response"
+    assert bridge.is_running() is True
+    assert bridge._current_working_dir == dir1
+
+    # Now switch to Project 2! This should stop proc1 and yield all events from proc2 on first message!
+    proc2.stdout.lines = [
+        b'{"event":"init","conversation_id":"conv-proj2"}\n',
+        b'{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"Project 2 first response"}}\n',
+        b'{"event":"result","result":{"conversation_id":"conv-proj2","status":"SUCCESS","response":"Project 2 first response"}}\n',
+    ]
+    p2_events = []
+    async for ev in bridge.run_streaming(prompt="Proj 2 first prompt", conversation_id=None, working_dir=dir2):
+        p2_events.append(ev)
+
+    # Proc 1 must have been terminated and closed
+    assert proc1.returncode == 0
+    assert proc1.stdin.closed is True
+
+    # Proc 2 must have executed and yielded all events
+    assert len(p2_events) == 3
+    assert p2_events[0].type == "init"
+    assert p2_events[0].conversation_id == "conv-proj2"
+    assert p2_events[1].type == "text_delta"
+    assert p2_events[1].text_delta == "Project 2 first response"
+    assert p2_events[2].type == "result"
+    assert p2_events[2].response == "Project 2 first response"
+
+    await bridge.stop()
+
+
+
 
