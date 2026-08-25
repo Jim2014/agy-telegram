@@ -886,7 +886,7 @@ class AgyFileBlock:
 
 
 AGY_FILE_PATTERN = re.compile(
-    r"(?:^|\r?\n)[ \t]*\[AGY_FILE\][ \t]*\r?\n(.*?)\r?\n[ \t]*\[END_AGY_FILE\][ \t]*(?=\r?\n|$)",
+    r"(?:^|\r?\n)[ \t]*\[AGY_FILE\][ \t]*\r?\n((?:(?!\[AGY_FILE\]).)*?)\r?\n[ \t]*\[END_AGY_FILE\][ \t]*(?=\r?\n|$)",
     re.DOTALL | re.IGNORECASE,
 )
 
@@ -1030,7 +1030,10 @@ class AgyActionItem:
     description: str = ""
 
 
-AGY_ACTIONS_PATTERN = re.compile(r"\[AGY_ACTIONS\](.*?)\[END_AGY_ACTIONS\]", re.DOTALL | re.IGNORECASE)
+AGY_ACTIONS_PATTERN = re.compile(
+    r"(?:^|\r?\n)[ \t]*\[AGY_ACTIONS\][ \t]*\r?\n((?:(?!\[AGY_ACTIONS\]).)*?)\r?\n[ \t]*\[END_AGY_ACTIONS\][ \t]*(?=\r?\n|$)",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 def extract_agy_action_blocks(text: str) -> Tuple[str, List[AgyActionItem]]:
@@ -1079,7 +1082,7 @@ class AgyVoiceBlock:
 
 
 AGY_VOICE_PATTERN = re.compile(
-    r"\[AGY_VOICE(?:\s+lang=[\"']?([a-zA-Z_-]+)[\"']?)?\](.*?)\[END_AGY_VOICE\]",
+    r"(?:^|\r?\n)[ \t]*\[AGY_VOICE(?:\s+lang=[\"']?([a-zA-Z_-]+)[\"']?)?\][ \t]*\r?\n((?:(?!\[AGY_VOICE).)*?)\r?\n[ \t]*\[END_AGY_VOICE\][ \t]*(?=\r?\n|$)",
     re.DOTALL | re.IGNORECASE,
 )
 

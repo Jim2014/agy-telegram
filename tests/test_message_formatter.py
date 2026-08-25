@@ -638,6 +638,38 @@ def test():
     assert "in the mi" not in res_en.text  # Not cut mid-word
 
 
+def test_extract_protocol_blocks_with_inline_protocol_mentions():
+    from gateway.message_formatter import extract_agy_voice_block, extract_agy_action_blocks, extract_agy_file_blocks
+
+    text = """### 协议功能讲解
+我们优化了以下几个模块：
+- 模块 A：解释了 `[AGY_VOICE]` 和 `[AGY_ACTIONS]` 协议的作用。
+- 模块 B：提升了 `[AGY_FILE]` 导出稳定性。
+
+[AGY_ACTIONS]
+- 🧪 运行测试: pytest
+- 📊 查看状态: /status
+[END_AGY_ACTIONS]
+
+[AGY_VOICE lang="zh"]
+我们完成了协议解析器的加固，确保正文中讨论协议标签时不会发生错误截断。
+[END_AGY_VOICE]
+"""
+    cleaned_voice, voice = extract_agy_voice_block(text)
+    assert voice is not None
+    assert voice.lang == "zh"
+    assert "我们完成了协议解析器的加固" in voice.text
+    # Ensure inline mention in Section A and B was not destroyed
+    assert "模块 A：解释了 `[AGY_VOICE]`" in cleaned_voice
+    assert "模块 B：提升了 `[AGY_FILE]`" in cleaned_voice
+
+    cleaned_actions, actions = extract_agy_action_blocks(cleaned_voice)
+    assert len(actions) == 2
+    assert actions[0].label == "🧪 运行测试"
+    assert "模块 A：解释了 `[AGY_VOICE]`" in cleaned_actions
+    assert "模块 B：提升了 `[AGY_FILE]`" in cleaned_actions
+
+
 
 
 
