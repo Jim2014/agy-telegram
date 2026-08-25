@@ -1135,7 +1135,8 @@ async def test_bot_prompt_generates_action_keyboard(mock_bot):
     assert "inline_keyboard" in reply_markup
     buttons = reply_markup["inline_keyboard"]
     assert len(buttons) >= 1
-    assert buttons[0][0]["callback_data"] == "act:0"
+    assert any(btn.get("callback_data") == "act:0" for row in buttons for btn in row)
+    assert any(btn.get("callback_data", "").startswith("voice:") for row in buttons for btn in row)
 
 
 @pytest.mark.asyncio
@@ -1289,6 +1290,79 @@ async def test_bot_voice_input_forces_voice_autosend(mock_bot, tmp_path, monkeyp
         gen_args = mock_gen_voice.call_args[1]
         assert gen_args["text"] == "语音任务已经执行完毕。"
         assert gen_args["lang"] == "zh"
+
+
+@pytest.mark.asyncio
+async def test_bot_html_export_includes_voice_and_webapp_buttons(mock_bot, monkeypatch):
+    session = mock_bot.session_manager.get_session(100)
+    session.tts_mode = "ondemand"
+
+    # Start mock webapp server
+    mock_bot.webapp_server._is_running = True
+
+    # Simulate text response generating [AGY_FILE] without explicit [AGY_VOICE]
+    raw_response = """Here is the system architecture document.
+
+[AGY_FILE]
+filename: architecture.html
+title: Architecture Overview
+---
+<!DOCTYPE html><html><body><h1>System Architecture</h1><p>Components details...</p></body></html>
+[END_AGY_FILE]
+"""
+    async def mock_stream(self, prompt, **kwargs):
+        yield AgyEvent(type="result", response=raw_response, duration_seconds=1.5)
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream)
+    mock_bot.client.send_document.reset_mock()
+    mock_bot.client.edit_message_text.reset_mock()
+
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "generate architecture report", "message_id": 201}})
+
+    # 1. Text message edit has the voice button
+    assert mock_bot.client.edit_message_text.called
+    text_edit_call = mock_bot.client.edit_message_text.call_args[1]
+    text_markup = text_edit_call.get("reply_markup")
+    assert text_markup is not None
+    assert any("🔊 Send Audio" in btn["text"] for row in text_markup["inline_keyboard"] for btn in row)
+
+    # 2. Document upload has both WebApp preview button and Send Audio button
+    assert mock_bot.client.send_document.called
+    doc_call = mock_bot.client.send_document.call_args[1]
+    doc_markup = doc_call.get("reply_markup")
+    assert doc_markup is not None
+    doc_buttons = [btn["text"] for row in doc_markup["inline_keyboard"] for btn in row]
+    assert any("Open in Telegram" in b for b in doc_buttons)
+    assert any("Send Audio" in b for b in doc_buttons)
+
+
+@pytest.mark.asyncio
+async def test_bot_text_query_generates_fallback_ondemand_voice_button(mock_bot, monkeypatch):
+    session = mock_bot.session_manager.get_session(100)
+    session.tts_mode = "ondemand"
+
+    # Plain text without [AGY_VOICE]
+    raw_response = "所有自动化测试均已执行并通过，网关服务运行正常。"
+
+    async def mock_stream(self, prompt, **kwargs):
+        yield AgyEvent(type="result", response=raw_response, duration_seconds=1.0)
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream)
+    mock_bot.client.edit_message_text.reset_mock()
+
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "介绍一下状态", "message_id": 202}})
+
+    # Verify voice summary was generated in session
+    assert len(session.pending_voice_data) > 0
+    v_info = list(session.pending_voice_data.values())[-1]
+    assert "所有自动化测试均已执行并通过" in v_info["text"]
+    assert v_info["lang"] == "zh"
+
+    # Verify Send Audio button is attached
+    edit_call = mock_bot.client.edit_message_text.call_args[1]
+    markup = edit_call.get("reply_markup")
+    assert markup is not None
+    assert any("🔊 Send Audio" in btn["text"] for row in markup["inline_keyboard"] for btn in row)
 
 
 

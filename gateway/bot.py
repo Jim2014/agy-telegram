@@ -1194,18 +1194,28 @@ class AgyTelegramBot:
             # 4. Process voice summary (autosend or ondemand button)
             effective_tts_mode = getattr(session, "tts_mode", None) or getattr(self.config, "tts_mode", "ondemand")
 
-            # Fallback voice block if triggered by voice input but LLM omitted [AGY_VOICE]
-            if is_voice_input and not voice_block and clean_text and getattr(self.config, "tts_enabled", True):
+            # Fallback voice block if LLM omitted [AGY_VOICE]
+            if not voice_block and clean_text and getattr(self.config, "tts_enabled", True) and effective_tts_mode not in ("disable", "off"):
                 import re
 
-                spoken_clean = re.sub(r"```[\s\S]*?```", "代码片段已生成", clean_text)
+                has_zh = any("\u4e00" <= ch <= "\u9fff" for ch in clean_text)
+                lang_code = "zh" if has_zh else "en"
+
+                code_placeholder = "代码片段已生成。" if has_zh else "Code snippet generated."
+                spoken_clean = re.sub(r"```[\s\S]*?```", code_placeholder, clean_text)
                 spoken_clean = re.sub(r"\[.*?\]\(.*?\)", "", spoken_clean)
-                spoken_clean = re.sub(r"[#*_`~<>]", "", spoken_clean).strip()
+                spoken_clean = re.sub(r"[#*_`~<>]", "", spoken_clean)
+                spoken_clean = re.sub(r"\n{2,}", "\n", spoken_clean).strip()
+
+                if valid_exports or auto_export_content:
+                    attach_note = "详细报告与分析文件已生成并附带于下方。" if has_zh else "Detailed report and analysis document has been generated and attached below."
+                    spoken_clean = f"{spoken_clean}\n{attach_note}".strip()
+
                 if spoken_clean:
-                    has_zh = any("\u4e00" <= ch <= "\u9fff" for ch in spoken_clean)
-                    voice_block = AgyVoiceBlock(text=spoken_clean[:600], lang="zh" if has_zh else "en")
+                    voice_block = AgyVoiceBlock(text=spoken_clean[:600], lang=lang_code)
 
             voice_btn: Optional[Dict[str, Any]] = None
+            voice_id: Optional[str] = None
             if voice_block and getattr(self.config, "tts_enabled", True):
                 voice_id = f"v_{chat_id}_{int(time.time())}_{len(session.pending_voice_data)}"
                 self.session_manager.record_voice_summary(
@@ -1312,26 +1322,44 @@ class AgyTelegramBot:
             if reply_to_id:
                 await self._safe_set_message_reaction(chat_id, reply_to_id, "✅")
 
+            # Helper to build document reply markup (WebApp preview + Voice Audio)
+            def _build_doc_reply_markup(html_str: str, fname: str, doc_idx: int) -> Optional[Dict[str, Any]]:
+                row = []
+                if self.webapp_server and getattr(self.webapp_server, "_is_running", False):
+                    try:
+                        d_id = f"doc_{chat_id}_{int(time.time())}_{doc_idx}"
+                        doc_url = self.webapp_server.register_document(doc_id=d_id, content=html_str, filename=fname)
+                        row.append(build_webapp_viewer_button(doc_url, title="🌐 Open in Telegram"))
+                    except Exception as e:
+                        logger.debug("Failed to register webapp document: %s", e)
+                if voice_btn:
+                    row.append(voice_btn)
+                return {"inline_keyboard": [row]} if row else None
+
             # Send explicit [AGY_FILE] protocol exported documents
-            for af, html_data in valid_exports:
+            for idx, (af, html_data) in enumerate(valid_exports):
                 await self._safe_send_chat_action(chat_id, "upload_document")
+                doc_kb = _build_doc_reply_markup(html_data, af.filename, idx)
                 await self._safe_send_document(
                     chat_id=chat_id,
                     document_content=html_data,
                     filename=af.filename,
                     caption=f"📄 <b>{escape_html(af.title or af.filename)}</b>",
                     reply_to_message_id=reply_to_id,
+                    reply_markup=doc_kb,
                 )
 
             # Send auto-exported document if generated
             if auto_export_content:
                 await self._safe_send_chat_action(chat_id, "upload_document")
+                doc_kb = _build_doc_reply_markup(auto_export_content, auto_export_name, len(valid_exports))
                 await self._safe_send_document(
                     chat_id=chat_id,
                     document_content=auto_export_content,
                     filename=auto_export_name,
                     caption=f"📄 <b>{escape_html(auto_export_title)}</b>",
                     reply_to_message_id=reply_to_id,
+                    reply_markup=doc_kb,
                 )
 
         except asyncio.CancelledError:

@@ -30,8 +30,8 @@
 4. **声明式 Agent 规则定制**: 遵循 AGY v1.1.15 规范，采用 `.gemini/rules/telegram-output.md` 与 `.gemini/rules.json` 声明格式与 `[AGY_FILE]` 导出规则，彻底净化用户 Prompt 历史并维持系统级约束。
 5. **项目化会话持久化与隔离**: 支持多项目工作区管理（`/new`, `/open`, `/delete`, `/reset`, `/projects`），每个项目独立保存 `path` 与 `conversation_id`，跨项目持久化无缝切换。
 6. **灵活参数调整**: 通过 `/model` 切换模型，通过 `/effort` 调整推理强度 (low/medium/high)，通过 `/dir` 调整当前项目工作区。
-7. **语音消息与音频交互 (Voice Messages & Faster-Whisper STT)**: 支持直接在 Telegram 中发送语音条或音频文件，网关自动接收并下载至 `runtime/voice/` 目录，通过内置 `faster-whisper` 离线语音识别引擎秒级转录为文本后交由 `agy` 执行，彻底杜绝大模型因直接读取二进制音频导致上下文损坏的问题；在任务运行中发送语音亦可实时转录并 Steering 注入当前会话。
-8. **文件与图片附件交互 (Document & Photo Attachments)**: 支持在 Telegram 中直接发送文档、代码文件、数据表格或图片，网关自动接收下载至 `runtime/documents/` 并将文件绝对路径与元数据传给 `agy` 深度分析与处理；支持中途 Steering 注入。
+7. **语音消息与音频交互 (Voice Messages & Faster-Whisper STT / TTS Broadcast)**: 支持直接在 Telegram 中发送语音条或音频文件，网关自动接收并下载至 `runtime/voice/` 目录，通过内置 `faster-whisper` 离线语音识别引擎秒级转录为文本后交由 `agy` 执行，彻底杜绝大模型因直接读取二进制音频导致上下文损坏的问题；在任务运行中发送语音亦可实时转录并 Steering 注入当前会话；内置动态双语 TTS 引擎，支持在文本与 HTML 报告消息下方常驻 `[ 🔊 Send Audio ]` 按需语音播报按钮，或自动合成语音条。
+8. **文件与图片附件交互 (Document & Photo Attachments & Mini App WebApp)**: 支持在 Telegram 中直接发送文档、代码文件、数据表格或图片，网关自动接收下载至 `runtime/documents/` 并将文件绝对路径与元数据传给 `agy` 深度分析与处理；支持中途 Steering 注入；生成的 HTML 文档与报告自动集成内置 WebApp 服务器（`:8765`），附带 `[ 🌐 Open in Telegram ]` 与 `[ 🔊 Send Audio ]` 交互按钮。
 9. **运行时隔离与 Git 保护**: 所有运行时日志（`runtime/gateway.log`）、进程 PID（`runtime/gateway.pid`）、会话持久化（`runtime/sessions.json`）、语音缓存（`runtime/voice/`）与文件附件（`runtime/documents/`）均自动归档在 `runtime/` 目录，已加入 `.gitignore` 彻底杜绝误提交。
 10. **安全与健壮性 (Harden & Auto-Heal)**:
     - 支持 `ALLOWED_CHAT_IDS` 白名单鉴权。
@@ -39,7 +39,7 @@
     - **看门狗崩溃自动拉起 (Watchdog Supervisor)**：提供独立的看门狗守护进程（`runtime/watchdog.sh` / `./restart.sh watch`），周期巡检进程状态，意外退出后 10 秒内自动拉起。
     - 保留 `/stop` 供强制中断正在执行的 agy 子进程。
     - 自动处理 Telegram 4096 字符截断、限频 (Throttling) 与 HTML 标签容错降级。
-    - 全套单元测试（141 项全覆盖）、网络抗逆测试与 agy 冒烟测试。详细演进规划请参考 [ROADMAP.md](ROADMAP.md)。
+    - 全套单元测试（144 项全覆盖）、网络抗逆测试与 agy 冒烟测试。详细演进规划请参考 [ROADMAP.md](ROADMAP.md)。
 11. **跨项目多智能体通信协议 (`AGY_IPC`) 与专属置顶卡片管理**:
     - **跨工作区去中心化协同**：支持智能体通过 `[AGY_IPC to="<target>"]...[END_AGY_IPC]` 发起跨目录/跨项目任务派发与信封包装（`[AGY_INCOMING]`），结果自动回流主对话。
     - **专属独立置顶折叠卡片**：Telegram 顶部为每个目标项目维护独立固定的原生折叠卡片（`<blockquote expandable>`），流式追踪工具执行与耗时。

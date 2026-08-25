@@ -490,12 +490,22 @@ async def handle_cmd_dir(bot: Any, chat_id: int, arg: str = "", reply_to_id: Opt
         f"💡 <i>Open the attached HTML to expand/collapse folders and tap any file to copy its <code>/file</code> command!</i>"
     )
 
+    doc_markup = None
+    if getattr(bot, "webapp_server", None) and getattr(bot.webapp_server, "_is_running", False):
+        try:
+            d_id = f"tree_{chat_id}_{int(time.time())}"
+            doc_url = bot.webapp_server.register_document(doc_id=d_id, content=html_doc, filename=filename)
+            doc_markup = {"inline_keyboard": [[build_webapp_viewer_button(doc_url, title="🌐 Open Tree Viewer")]]}
+        except Exception as e:
+            logger.debug("Failed to register tree webapp doc: %s", e)
+
     doc_res = await bot._safe_send_document(
         chat_id=chat_id,
         document_content=html_doc,
         filename=filename,
         caption=caption,
         reply_to_message_id=reply_to_id,
+        reply_markup=doc_markup,
     )
 
     if not doc_res:
@@ -559,6 +569,15 @@ async def handle_cmd_file(bot: Any, chat_id: int, arg: str, reply_to_id: Optiona
         )
 
         if is_converted:
+            doc_markup = None
+            if getattr(bot, "webapp_server", None) and getattr(bot.webapp_server, "_is_running", False):
+                try:
+                    d_id = f"file_{chat_id}_{int(time.time())}"
+                    doc_url = bot.webapp_server.register_document(doc_id=d_id, content=html_doc, filename=out_filename)
+                    doc_markup = {"inline_keyboard": [[build_webapp_viewer_button(doc_url, title="🌐 View in Telegram")]]}
+                except Exception as e:
+                    logger.debug("Failed to register file webapp doc: %s", e)
+
             caption = f"🌐 <b>{escape_html(out_filename)}</b>\nHTML view of <code>{escape_html(target_file.name)}</code> ({size_str})"
             res = await bot._safe_send_document(
                 chat_id=chat_id,
@@ -566,6 +585,7 @@ async def handle_cmd_file(bot: Any, chat_id: int, arg: str, reply_to_id: Optiona
                 filename=out_filename,
                 caption=caption,
                 reply_to_message_id=reply_to_id,
+                reply_markup=doc_markup,
             )
         else:
             # Binary or unsupported -> return original file directly
@@ -625,6 +645,16 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
         },
     )
     filename = f"session_report_{active_proj}_{int(time.time())}.html"
+
+    doc_markup = None
+    if getattr(bot, "webapp_server", None) and getattr(bot.webapp_server, "_is_running", False):
+        try:
+            d_id = f"report_{chat_id}_{int(time.time())}"
+            doc_url = bot.webapp_server.register_document(doc_id=d_id, content=html_doc, filename=filename)
+            doc_markup = {"inline_keyboard": [[build_webapp_viewer_button(doc_url, title="🌐 Open Session Report")]]}
+        except Exception as e:
+            logger.debug("Failed to register export webapp doc: %s", e)
+
     await bot._safe_send_chat_action(chat_id, "upload_document")
     await bot._safe_send_document(
         chat_id=chat_id,
@@ -632,6 +662,7 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
         filename=filename,
         caption=f"📄 <b>{escape_html(filename)}</b>",
         reply_to_message_id=reply_to_id,
+        reply_markup=doc_markup,
     )
 
 
