@@ -224,13 +224,19 @@ class AgyBridge:
             and not self._reader_task.done()
         )
 
+        eff_sys_prompt = system_prompt if system_prompt is not None else self.system_prompt
+        if eff_sys_prompt and eff_sys_prompt.strip() and not prompt.startswith("[AGY_INCOMING"):
+            full_content = f"{eff_sys_prompt.strip()}\n\n---\n\n{prompt}"
+        else:
+            full_content = prompt
+
         if can_reuse:
             assert self._current_process is not None
             process = self._current_process
             logger.info("Reusing active warm agy process (PID %s) for new turn", process.pid)
             async with self._lock:
                 self._pending_turns = 1
-                payload = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
+                payload = json.dumps({"event": "user", "message": {"content": full_content}}) + "\n"
                 process.stdin.write(payload.encode("utf-8"))
                 await process.stdin.drain()
         else:
@@ -282,19 +288,10 @@ class AgyBridge:
             assert process.stderr is not None
             assert process.stdin is not None
 
-            # Determine effective prompt for the turn (always inject embedded system prompt on first turn)
-            eff_sys_prompt = system_prompt if system_prompt is not None else self.system_prompt
-            is_first_turn = not bool(conversation_id)
-
-            if is_first_turn and eff_sys_prompt and eff_sys_prompt.strip():
-                initial_content = f"{eff_sys_prompt.strip()}\n\n---\n\n{prompt}"
-            else:
-                initial_content = prompt
-
-            # Send initial user prompt turn
+            # Send initial user prompt turn with system prompt attached
             async with self._lock:
                 self._pending_turns = 1
-                init_payload = json.dumps({"event": "user", "message": {"content": initial_content}}) + "\n"
+                init_payload = json.dumps({"event": "user", "message": {"content": full_content}}) + "\n"
                 process.stdin.write(init_payload.encode("utf-8"))
                 await process.stdin.drain()
 

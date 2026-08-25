@@ -290,8 +290,8 @@ async def test_system_prompt_injection_first_turn(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_subsequent_turn_not_injected(monkeypatch):
-    """Test that system prompt is NOT re-injected on subsequent turns (conversation_id provided)."""
+async def test_system_prompt_subsequent_turn_injected(monkeypatch):
+    """Test that system prompt is consistently injected on subsequent turns when configured."""
     bridge = AgyBridge(system_prompt="[SYSTEM] Follow markdown conventions.")
 
     class MockStdin:
@@ -347,8 +347,8 @@ async def test_system_prompt_subsequent_turn_not_injected(monkeypatch):
 
     assert len(proc.stdin.written) == 1
     payload = json.loads(proc.stdin.written[0].decode())
-    # Should only contain user prompt, no system prompt prepended
-    assert payload == {"event": "user", "message": {"content": "Next turn question"}}
+    # Should contain system prompt prepended
+    assert payload == {"event": "user", "message": {"content": "[SYSTEM] Follow markdown conventions.\n\n---\n\nNext turn question"}}
 
 
 @pytest.mark.asyncio
