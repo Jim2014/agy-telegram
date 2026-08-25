@@ -114,6 +114,7 @@ class Config:
     tts_mode: str = "autogen"  # "disable" | "autogen" | "autoplay"
     tts_voice_zh: str = "zh-CN-XiaoxiaoNeural"
     tts_voice_en: str = "en-US-JennyNeural"
+    whisper_model_size: str = "base"
 
     @classmethod
     def load(cls, env_path: str | Path | None = None) -> Config:
@@ -208,6 +209,7 @@ class Config:
             tts_mode = "autogen"
         tts_voice_zh = os.getenv("TTS_VOICE_ZH", "zh-CN-XiaoxiaoNeural").strip() or "zh-CN-XiaoxiaoNeural"
         tts_voice_en = os.getenv("TTS_VOICE_EN", "en-US-JennyNeural").strip() or "en-US-JennyNeural"
+        whisper_model_size = os.getenv("WHISPER_MODEL_SIZE", "base").strip().lower() or "base"
 
         return cls(
             bot_token=bot_token,
@@ -229,6 +231,7 @@ class Config:
             tts_mode=tts_mode,
             tts_voice_zh=tts_voice_zh,
             tts_voice_en=tts_voice_en,
+            whisper_model_size=whisper_model_size,
         )
 
     def is_token_valid(self) -> bool:

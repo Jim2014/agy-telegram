@@ -13,3 +13,4 @@ dependencies:
       - Pygments>=2.14.0
       - edge-tts>=7.0.0
       - markdown>=3.5.0
+      - faster-whisper>=1.0.0

@@ -756,16 +756,15 @@ async def test_bot_voice_message_flow(mock_bot, tmp_path):
         }
     }
 
-    await mock_bot.process_update(update)
+    with patch("gateway.media_handlers.transcribe_voice", new_callable=AsyncMock) as mock_stt:
+        mock_stt.return_value = ("检查一下各个项目的状态", "zh")
+        await mock_bot.process_update(update)
 
     mock_bot.client.send_chat_action.assert_called_with(chat_id=100, action="record_voice")
     mock_bot.client.download_file_by_id.assert_called_once()
     assert captured_prompt["chat_id"] == 100
     assert captured_prompt["reply_to_id"] == 777
-    assert str(fake_voice_file.resolve()) in captured_prompt["prompt"]
-    assert "Duration: 8s" in captured_prompt["prompt"]
-    assert "MIME Type: audio/ogg" in captured_prompt["prompt"]
-    assert "inspect and transcribe/listen to this audio file" in captured_prompt["prompt"]
+    assert captured_prompt["prompt"] == "检查一下各个项目的状态"
 
 
 @pytest.mark.asyncio
@@ -797,17 +796,18 @@ async def test_bot_voice_message_steer(mock_bot, tmp_path):
         }
     }
 
-    await mock_bot.process_update(update)
+    with patch("gateway.media_handlers.transcribe_voice", new_callable=AsyncMock) as mock_stt:
+        mock_stt.return_value = ("请帮我改用异步写法", "zh")
+        await mock_bot.process_update(update)
 
     assert fake_bridge.steer.called
     steer_call_arg = fake_bridge.steer.call_args[0][0]
-    assert str(fake_voice_file.resolve()) in steer_call_arg
-    assert "Duration: 5s" in steer_call_arg
+    assert steer_call_arg == "请帮我改用异步写法"
 
     # Confirmation sent to chat
     sent_text = mock_bot.client.send_message.call_args[1]["text"]
     assert "Steered voice instruction (5s)" in sent_text
-    assert str(fake_voice_file.resolve()) in sent_text
+    assert "请帮我改用异步写法" in sent_text
 
 
 @pytest.mark.asyncio
@@ -840,10 +840,12 @@ async def test_bot_audio_message_with_caption(mock_bot, tmp_path):
         }
     }
 
-    await mock_bot.process_update(update)
+    with patch("gateway.media_handlers.transcribe_voice", new_callable=AsyncMock) as mock_stt:
+        mock_stt.return_value = ("Hello world", "en")
+        await mock_bot.process_update(update)
 
-    assert "Accompanying Caption: Please translate this voice message" in captured_prompt["prompt"]
-    assert str(fake_audio_file.resolve()) in captured_prompt["prompt"]
+    assert "Hello world" in captured_prompt["prompt"]
+    assert "[Caption]: Please translate this voice message" in captured_prompt["prompt"]
 
 
 @pytest.mark.asyncio

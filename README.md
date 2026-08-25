@@ -30,7 +30,7 @@
 4. **声明式 Agent 规则定制**: 遵循 AGY v1.1.15 规范，采用 `.gemini/rules/telegram-output.md` 与 `.gemini/rules.json` 声明格式与 `[AGY_FILE]` 导出规则，彻底净化用户 Prompt 历史并维持系统级约束。
 5. **项目化会话持久化与隔离**: 支持多项目工作区管理（`/new`, `/open`, `/delete`, `/reset`, `/projects`），每个项目独立保存 `path` 与 `conversation_id`，跨项目持久化无缝切换。
 6. **灵活参数调整**: 通过 `/model` 切换模型，通过 `/effort` 调整推理强度 (low/medium/high)，通过 `/dir` 调整当前项目工作区。
-7. **语音消息与音频交互 (Voice Messages Support)**: 支持直接在 Telegram 中发送语音条或音频文件，网关自动接收并下载至 `runtime/voice/` 目录，将绝对路径与音频元数据构造为语音任务提示词交由 `agy` 自主解析与执行；在任务运行中发送语音亦可实时 Steering 注入当前会话。
+7. **语音消息与音频交互 (Voice Messages & Faster-Whisper STT)**: 支持直接在 Telegram 中发送语音条或音频文件，网关自动接收并下载至 `runtime/voice/` 目录，通过内置 `faster-whisper` 离线语音识别引擎秒级转录为文本后交由 `agy` 执行，彻底杜绝大模型因直接读取二进制音频导致上下文损坏的问题；在任务运行中发送语音亦可实时转录并 Steering 注入当前会话。
 8. **文件与图片附件交互 (Document & Photo Attachments)**: 支持在 Telegram 中直接发送文档、代码文件、数据表格或图片，网关自动接收下载至 `runtime/documents/` 并将文件绝对路径与元数据传给 `agy` 深度分析与处理；支持中途 Steering 注入。
 9. **运行时隔离与 Git 保护**: 所有运行时日志（`runtime/gateway.log`）、进程 PID（`runtime/gateway.pid`）、会话持久化（`runtime/sessions.json`）、语音缓存（`runtime/voice/`）与文件附件（`runtime/documents/`）均自动归档在 `runtime/` 目录，已加入 `.gitignore` 彻底杜绝误提交。
 10. **安全与健壮性 (Harden & Auto-Heal)**:
@@ -39,7 +39,7 @@
     - **看门狗崩溃自动拉起 (Watchdog Supervisor)**：提供独立的看门狗守护进程（`runtime/watchdog.sh` / `./restart.sh watch`），周期巡检进程状态，意外退出后 10 秒内自动拉起。
     - 保留 `/stop` 供强制中断正在执行的 agy 子进程。
     - 自动处理 Telegram 4096 字符截断、限频 (Throttling) 与 HTML 标签容错降级。
-    - 全套单元测试（136 项全覆盖）、网络抗逆测试与 agy 冒烟测试。详细演进规划请参考 [ROADMAP.md](ROADMAP.md)。
+    - 全套单元测试（141 项全覆盖）、网络抗逆测试与 agy 冒烟测试。详细演进规划请参考 [ROADMAP.md](ROADMAP.md)。
 11. **跨项目多智能体通信协议 (`AGY_IPC`) 与专属置顶卡片管理**:
     - **跨工作区去中心化协同**：支持智能体通过 `[AGY_IPC to="<target>"]...[END_AGY_IPC]` 发起跨目录/跨项目任务派发与信封包装（`[AGY_INCOMING]`），结果自动回流主对话。
     - **专属独立置顶折叠卡片**：Telegram 顶部为每个目标项目维护独立固定的原生折叠卡片（`<blockquote expandable>`），流式追踪工具执行与耗时。
@@ -228,7 +228,7 @@ tail -f -n 50 runtime/watchdog.log
 | 命令 / 交互 | 说明 | 示例 |
 | :--- | :--- | :--- |
 | **直接发送文本** | 处于空闲时启动新轮次；处于运行中时**自动作为 Steering 注入当前会话** | `请帮我查看当前目录下的文件` |
-| **🎙️ 发送语音 / 音频** | 自动下载至本地 `runtime/voice/`，将路径与音频信息传给 agy 解析并执行；运行中发送则自动 Steering | 🎙️ 发送一段语音指令 |
+| **🎙️ 发送语音 / 音频** | 自动下载至本地并通过 faster-whisper 离线识别为文本后交由 agy 执行；运行中发送则自动 Steering | 🎙️ 发送一段语音指令 |
 | **📎 发送文件 / 图片** | 自动下载至本地 `runtime/documents/`，将路径与文件元数据传给 agy 检查与处理；支持中途 Steering | 📎 发送代码/文档/图片附件 |
 | `/voice [mode]` | 配置或切换语音播报模式：`disable`（禁用）、`autogen`（按需播放）、`autoplay`（自动发送语音条） | `/voice` 或 `/voice autoplay` |
 | `/pin` 或 `/banner` | 重新生成并置顶当前工作区实时状态看板至 Telegram 聊天窗口顶部 | `/pin` |
@@ -297,7 +297,8 @@ tail -f -n 50 runtime/watchdog.log
 - `gateway/config.py` (`python -m gateway.config`): 配置加载与校验，包含 `DEFAULT_SYSTEM_PROMPT` 定义与 `AGY_SYSTEM_PROMPT` / `AGY_SYSTEM_PROMPT_FILE` 覆盖解析。
 - `gateway/session_manager.py` (`python -m gateway.session_manager`): 会话状态管理与多项目持久化 (`runtime/sessions.json`)。
 - `gateway/ui_keyboards.py` (`python -m gateway.ui_keyboards`): 交互式内联键盘构建器（多项目切换面板、模型切换、推理强度调节）。
-- `gateway/media_handlers.py` (`python -m gateway.media_handlers`): 语音消息与文件附件本地下载与转发调度（自动保存至 `runtime/voice/` 与 `runtime/documents/` 并转发路径给 agy，支持中途 Steering）。
+- `gateway/transcriber.py` (`python -m gateway.transcriber`): 基于 `faster-whisper` 的高性能离线语音识别转录引擎（多语种检测、模型单例缓存、异步非阻塞）。
+- `gateway/media_handlers.py` (`python -m gateway.media_handlers`): 语音消息与文件附件本地下载、语音实时转录与转发调度（自动保存至 `runtime/voice/` 与 `runtime/documents/`，支持中途 Steering）。
 - `gateway/commands.py` (`python -m gateway.commands`): 全部 14 个斜杠命令的业务逻辑与交互式 Callback 回调分发。
 - `gateway/dir_tree.py` (`python -m gateway.dir_tree`): 工作区目录树递归扫描与独立交互式 HTML 文件导航器生成。
 - `gateway/file_renderers.py` (`python -m gateway.file_renderers`): 代码、Markdown、Diff、CSV 表格等多类型文件的 HTML 渲染。
@@ -324,7 +325,7 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-测试覆盖范围（137 项全部通过）：
+测试覆盖范围（141 项全部通过）：
 - `test_config.py`: 配置解析、Token 格式验证、白名单过滤、默认 runtime 路径、默认系统提示词内容校验、WebApp 端口/URL 配置、环境变量及文件覆盖测试
 - `test_session_manager.py`: 会话 CRUD、持久化与恢复、并发状态保护、Legacy 迁移、累计 Token 与耗时统计、命令使用频次与 LRU 追踪、决策与动作状态暂存
 - `test_ui_keyboards.py`: 多项目内联键盘、模型选择菜单、推理强度切换菜单渲染、自适应 LRU 命令菜单生成（`/help` 置顶、Top 8 截断）、配额/技能/产物/帮助命令中心面板、决策选项键盘、智能后续动作键盘、持久快捷键与动态输入框占位词、Telegram WebApp 原生弹窗按钮
@@ -334,8 +335,9 @@ conda run -n agy-telegram pytest -v
 - `test_file_renderers.py`: 代码高亮转换、Markdown 渲染、Diff 补丁视图、CSV 响应式表格渲染与二进制回退
 - `test_agy_bridge.py`: 命令构建、stream-json 协议解析、Mock 管道流、声明式规则检测、跨轮次进程池长连接复用与空闲回收、`steer()` 注入与 `is_running()` 状态判断、跨项目工作区切换与首条消息事件完整传递
 - `test_telegram_client.py`: API 调用、HTML 实体解析失败自动降级、304 抑制、`send_document` 多部件上传、语音文件下载、自适应 `set_my_commands`、`set_message_reaction` Emoji 反应
-- `test_bot.py`: 所有斜杠命令路由（含 `/usage`, `/skills`, `/artifacts`）、集中式命令分发器、未授权拦截、流式处理管线、语音笔记/音频接收、文件附件处理、中途 Steering 注入、`/dir` 目录浏览、`/file` 文件发送、`/export` 导出、产物一键下载、`ask_question` 原生决策选项与 `[AGY_ACTIONS]` 快捷按钮交互闭环、Telegram Mini App 实时弹窗集成、Telegram 网络异常抗逆与自动降级保护
+- `test_bot.py`: 所有斜杠命令路由（含 `/usage`, `/skills`, `/artifacts`）、集中式命令分发器、未授权拦截、流式处理管线、语音笔记/音频接收与转录、文件附件处理、中途 Steering 注入、`/dir` 目录浏览、`/file` 文件发送、`/export` 导出、产物一键下载、`ask_question` 原生决策选项与 `[AGY_ACTIONS]` 快捷按钮交互闭环、Telegram Mini App 实时弹窗集成、Telegram 网络异常抗逆与自动降级保护
 - `test_ipc_router.py`: 跨项目 `AGY_IPC` 网格通信路由、信封封包与解析、置顶折叠卡片渲染与审计日志记录
+- `test_transcriber.py`: faster-whisper 离线语音识别模型单例管理、同步与异步非阻塞音频转录
 - `test_voice_tts.py`: 动态双语 TTS 语音合成、Edge-TTS 集成与 OGG Opus 编码
 - `test_smoke_agy.py`: 真实的 `agy` CLI 联调冒烟测试
 

@@ -10,6 +10,7 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
 from gateway.message_formatter import escape_html
+from gateway.transcriber import transcribe_voice
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ async def handle_voice_message(
     message: Dict[str, Any],
     message_id: Optional[int],
 ) -> None:
-    """Handle incoming voice notes or audio files, download locally, and send file path to agy."""
+    """Handle incoming voice notes or audio files, download locally, transcribe via faster-whisper, and send recognized text to agy."""
     voice_obj = message.get("voice") or message.get("audio") or {}
     file_id = voice_obj.get("file_id")
     if not file_id:
@@ -70,40 +71,56 @@ async def handle_voice_message(
 
     abs_path = str(saved_path.resolve())
 
-    # Construct prompt for agy
-    prompt_lines = [
-        "🎙️ [User Voice Command]",
-        "The user sent a voice instruction in Telegram.",
-        f"• Local Audio File Path: {abs_path}",
-        f"• Duration: {duration}s",
-        f"• MIME Type: {mime_type}",
-    ]
-    if caption:
-        prompt_lines.append(f"• Accompanying Caption: {caption}")
-    prompt_lines.append("")
-    prompt_lines.append(
-        "Please inspect and transcribe/listen to this audio file to understand the user's instructions, and then execute the requested task."
-    )
-    prompt_text = "\n".join(prompt_lines)
+    # Transcribe audio using faster-whisper
+    transcribed_text = ""
+    detected_lang = "zh"
+    whisper_model_size = getattr(bot.config, "whisper_model_size", "base") if hasattr(bot, "config") else "base"
+    try:
+        transcribed_text, detected_lang = await transcribe_voice(
+            audio_path=abs_path,
+            model_size=whisper_model_size,
+        )
+    except Exception as e:
+        logger.warning("Transcription failed for audio %s: %s", abs_path, e)
+
+    # Combine transcribed text with caption if present
+    final_prompt = ""
+    if transcribed_text and caption:
+        final_prompt = f"{transcribed_text}\n\n[Caption]: {caption}"
+    elif transcribed_text:
+        final_prompt = transcribed_text
+    elif caption:
+        final_prompt = caption
+
+    if not final_prompt:
+        logger.warning("Voice message could not be transcribed (empty audio) in chat %s", chat_id)
+        await bot._safe_send_message(
+            chat_id=chat_id,
+            text="⚠️ Could not recognize any speech from the voice message. Please try speaking closer to the microphone or send text.",
+            reply_to_message_id=message_id,
+        )
+        return
+
+    logger.info("Transcribed voice message for chat %s [lang=%s]: '%s'", chat_id, detected_lang, final_prompt)
 
     # Check if session is currently busy -> steer into active session
     session = bot.session_manager.get_session(chat_id)
     if session.is_busy and chat_id in bot.active_bridges:
-        steered = await bot.active_bridges[chat_id].steer(prompt_text)
+        steered = await bot.active_bridges[chat_id].steer(final_prompt)
         if steered:
             dur_text = f" ({duration}s)" if duration else ""
             await bot._safe_send_message(
                 chat_id=chat_id,
                 text=(
-                    f"🎯 <b>Steered voice instruction{dur_text} into active session!</b>\n"
-                    f"• <b>Audio File:</b> <code>{escape_html(abs_path)}</code>"
+                    f"🎯 <b>Steered voice instruction{dur_text}:</b>\n"
+                    f"<i>\"{escape_html(final_prompt)}\"</i>"
                 ),
                 reply_to_message_id=message_id,
             )
             return
 
     # Execute prompt through agy
-    await bot.handle_prompt(chat_id, prompt_text, message_id)
+    await bot.handle_prompt(chat_id, final_prompt, message_id)
 
 
 async def handle_document_message(
