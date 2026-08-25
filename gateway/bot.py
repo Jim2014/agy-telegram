@@ -56,6 +56,7 @@ from gateway.message_formatter import (
     AgyActionItem,
     AgyFileBlock,
     AgyVoiceBlock,
+    distill_spoken_summary,
     escape_html,
     extract_agy_action_blocks,
     extract_agy_file_blocks,
@@ -1196,23 +1197,8 @@ class AgyTelegramBot:
 
             # Fallback voice block if LLM omitted [AGY_VOICE]
             if not voice_block and clean_text and getattr(self.config, "tts_enabled", True) and effective_tts_mode not in ("disable", "off"):
-                import re
-
-                has_zh = any("\u4e00" <= ch <= "\u9fff" for ch in clean_text)
-                lang_code = "zh" if has_zh else "en"
-
-                code_placeholder = "代码片段已生成。" if has_zh else "Code snippet generated."
-                spoken_clean = re.sub(r"```[\s\S]*?```", code_placeholder, clean_text)
-                spoken_clean = re.sub(r"\[.*?\]\(.*?\)", "", spoken_clean)
-                spoken_clean = re.sub(r"[#*_`~<>]", "", spoken_clean)
-                spoken_clean = re.sub(r"\n{2,}", "\n", spoken_clean).strip()
-
-                if valid_exports or auto_export_content:
-                    attach_note = "详细报告与分析文件已生成并附带于下方。" if has_zh else "Detailed report and analysis document has been generated and attached below."
-                    spoken_clean = f"{spoken_clean}\n{attach_note}".strip()
-
-                if spoken_clean:
-                    voice_block = AgyVoiceBlock(text=spoken_clean[:600], lang=lang_code)
+                has_exports = bool(valid_exports or auto_export_content)
+                voice_block = distill_spoken_summary(clean_text, has_exports=has_exports, max_chars=1200)
 
             voice_btn: Optional[Dict[str, Any]] = None
             voice_id: Optional[str] = None

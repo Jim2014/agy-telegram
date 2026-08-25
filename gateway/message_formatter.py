@@ -1123,6 +1123,91 @@ def extract_agy_voice_block(text: str) -> Tuple[str, Optional[AgyVoiceBlock]]:
     return cleaned, voice_block
 
 
+def distill_spoken_summary(
+    text: str,
+    has_exports: bool = False,
+    max_chars: int = 1200,
+) -> Optional[AgyVoiceBlock]:
+    """
+    Intelligently extract an acoustic-friendly spoken podcast summary from text
+    when the LLM omitted explicit [AGY_VOICE] tags.
+
+    Ensures:
+    1. Language matching (Chinese vs English).
+    2. Complete removal of code blocks, tables, URLs, file paths, and Markdown symbols.
+    3. Smart sentence-boundary truncation to prevent abrupt mid-sentence cuts.
+    4. Optional attachment note if HTML files were generated.
+    """
+    if not text or not text.strip():
+        return None
+
+    # Detect language
+    has_zh = any("\u4e00" <= ch <= "\u9fff" for ch in text)
+    lang_code = "zh" if has_zh else "en"
+
+    # Strip custom protocol blocks
+    clean = re.sub(r"\[AGY_ACTIONS\].*?\[END_AGY_ACTIONS\]", "", text, flags=re.DOTALL | re.IGNORECASE)
+    clean = re.sub(r"\[AGY_FILE\].*?\[END_AGY_FILE\]", "", clean, flags=re.DOTALL | re.IGNORECASE)
+    clean = re.sub(r"\[AGY_IPC\s+.*?\](.*?)\[END_AGY_IPC\]", "", clean, flags=re.DOTALL | re.IGNORECASE)
+    clean = re.sub(r"\[AGY_INCOMING\s+.*?\](.*?)\[END_AGY_INCOMING\]", "", clean, flags=re.DOTALL | re.IGNORECASE)
+
+    # Clean code blocks
+    code_rep = "代码实现已完成。" if has_zh else "Code implementation completed."
+    clean = re.sub(r"```[\s\S]*?```", code_rep, clean)
+
+    # Clean markdown tables
+    table_rep = "详细数据表格已生成。" if has_zh else "Structured data table generated."
+    clean = re.sub(r"(?:^\|[^\n]+\|(?:\r?\n|$)){2,}", table_rep + "\n", clean, flags=re.MULTILINE)
+
+    # Clean URLs and simplify file paths
+    clean = re.sub(r"https?://\S+", "", clean)
+    clean = re.sub(r"file://\S+", "", clean)
+    clean = re.sub(r"(?:/[a-zA-Z0-9_.-]+)+/([a-zA-Z0-9_.-]+)", r"\1", clean)
+
+    # Strip markdown headers, bold, italic, inline code, html tags
+    clean = re.sub(r"<[^>]+>", "", clean)
+    clean = re.sub(r"^#{1,6}\s+", "", clean, flags=re.MULTILINE)
+    clean = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", clean)
+    clean = re.sub(r"[`*_#~|<>{}]", "", clean)
+    clean = re.sub(r"^[\*\-\+•]\s*", "", clean, flags=re.MULTILINE)
+    clean = re.sub(r"^\d+\.\s*", "", clean, flags=re.MULTILINE)
+
+    # Normalize whitespace
+    clean = re.sub(r"\n{2,}", "\n", clean).strip()
+
+    if has_exports:
+        attach_note = "详细报告与分析文件已生成并附带于下方。" if has_zh else "Detailed report and analysis document has been generated and attached below."
+        clean = f"{clean}\n{attach_note}".strip()
+
+    if not clean:
+        return None
+
+    # Smart sentence-boundary truncation
+    if len(clean) > max_chars:
+        terminators = "。！？\n.!?；;"
+        cut_idx = -1
+        min_cut = max(200, max_chars - 350)
+        for i in range(max_chars - 1, min_cut - 1, -1):
+            if clean[i] in terminators:
+                cut_idx = i + 1
+                break
+
+        if cut_idx > 0:
+            clean = clean[:cut_idx].strip()
+        else:
+            last_space = clean[:max_chars].rfind(" ")
+            if last_space > min_cut:
+                clean = clean[:last_space].strip() + ("。" if has_zh else ".")
+            else:
+                clean = clean[:max_chars].strip() + ("。" if has_zh else ".")
+
+    # Ensure clean ending punctuation
+    if clean and clean[-1] not in "。！？.!?":
+        clean += "。" if has_zh else "."
+
+    return AgyVoiceBlock(text=clean, lang=lang_code)
+
+
 def wrap_raw_html_for_mobile(
     title: str,
     raw_html_content: str,

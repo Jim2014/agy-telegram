@@ -598,6 +598,46 @@ def test_markdown_tables_with_nested_formatting():
     assert "<code>gateway/commands.py</code>" in res
 
 
+def test_distill_spoken_summary_cleaning_and_boundary_truncation():
+    from gateway.message_formatter import distill_spoken_summary
+
+    # 1. Chinese text with code, tables, headers, and bullet points
+    chinese_text = """### 核心功能总结
+我们优化了以下几个模块：
+- 模块 A：完成了重构
+- 模块 B：提升了性能
+
+```python
+def test():
+    return 42
+```
+
+| 序号 | 项目 | 状态 |
+|---|---|---|
+| 1 | 网关 | 正常 |
+
+所有自动化测试已通过。详细信息请见下方。"""
+
+    res = distill_spoken_summary(chinese_text, has_exports=True, max_chars=500)
+    assert res is not None
+    assert res.lang == "zh"
+    assert "```" not in res.text
+    assert "def test" not in res.text
+    assert "###" not in res.text
+    assert "详细报告与分析文件已生成并附带于下方" in res.text
+    assert res.text.endswith("。")
+
+    # 2. English text with smart sentence boundary truncation
+    long_en = "First sentence is clear and concise. " * 30 + "This final sentence should not be brutally sliced in the middle."
+    res_en = distill_spoken_summary(long_en, has_exports=False, max_chars=300)
+    assert res_en is not None
+    assert res_en.lang == "en"
+    assert len(res_en.text) <= 305
+    # Must end at a sentence boundary
+    assert res_en.text.endswith(".")
+    assert "in the mi" not in res_en.text  # Not cut mid-word
+
+
 
 
 
