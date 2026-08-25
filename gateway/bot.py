@@ -881,7 +881,13 @@ class AgyTelegramBot:
         combined_return_text = "\n\n".join(return_envelopes)
         return combined_return_text, results
 
-    async def handle_prompt(self, chat_id: int, prompt: str, reply_to_id: Optional[int]) -> None:
+    async def handle_prompt(
+        self,
+        chat_id: int,
+        prompt: str,
+        reply_to_id: Optional[int],
+        is_voice_input: bool = False,
+    ) -> None:
         """Execute agy with prompt and stream real-time results back to Telegram with document export support."""
         session = self.session_manager.get_session(chat_id)
 
@@ -1188,8 +1194,19 @@ class AgyTelegramBot:
             # 4. Process voice summary (autosend or ondemand button)
             effective_tts_mode = getattr(session, "tts_mode", None) or getattr(self.config, "tts_mode", "ondemand")
 
+            # Fallback voice block if triggered by voice input but LLM omitted [AGY_VOICE]
+            if is_voice_input and not voice_block and clean_text and getattr(self.config, "tts_enabled", True):
+                import re
+
+                spoken_clean = re.sub(r"```[\s\S]*?```", "代码片段已生成", clean_text)
+                spoken_clean = re.sub(r"\[.*?\]\(.*?\)", "", spoken_clean)
+                spoken_clean = re.sub(r"[#*_`~<>]", "", spoken_clean).strip()
+                if spoken_clean:
+                    has_zh = any("\u4e00" <= ch <= "\u9fff" for ch in spoken_clean)
+                    voice_block = AgyVoiceBlock(text=spoken_clean[:600], lang="zh" if has_zh else "en")
+
             voice_btn: Optional[Dict[str, Any]] = None
-            if voice_block and getattr(self.config, "tts_enabled", True) and effective_tts_mode not in ("disable", "off"):
+            if voice_block and getattr(self.config, "tts_enabled", True):
                 voice_id = f"v_{chat_id}_{int(time.time())}_{len(session.pending_voice_data)}"
                 self.session_manager.record_voice_summary(
                     chat_id=chat_id,
@@ -1197,7 +1214,8 @@ class AgyTelegramBot:
                     text=voice_block.text,
                     lang=voice_block.lang,
                 )
-                if effective_tts_mode in ("autosend", "autoplay", "direct", "auto"):
+                # If triggered by voice input, ALWAYS autosend the voice response regardless of configuration
+                if is_voice_input or effective_tts_mode in ("autosend", "autoplay", "direct", "auto"):
                     asyncio.create_task(
                         self._generate_and_send_voice(
                             chat_id=chat_id,

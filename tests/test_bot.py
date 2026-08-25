@@ -736,10 +736,11 @@ async def test_bot_voice_message_flow(mock_bot, tmp_path):
 
     captured_prompt = {}
 
-    async def mock_handle_prompt(chat_id, prompt, reply_to_id):
+    async def mock_handle_prompt(chat_id, prompt, reply_to_id, **kwargs):
         captured_prompt["chat_id"] = chat_id
         captured_prompt["prompt"] = prompt
         captured_prompt["reply_to_id"] = reply_to_id
+        captured_prompt["is_voice_input"] = kwargs.get("is_voice_input", False)
 
     mock_bot.handle_prompt = mock_handle_prompt
 
@@ -821,7 +822,7 @@ async def test_bot_audio_message_with_caption(mock_bot, tmp_path):
 
     captured_prompt = {}
 
-    async def mock_handle_prompt(chat_id, prompt, reply_to_id):
+    async def mock_handle_prompt(chat_id, prompt, reply_to_id, **kwargs):
         captured_prompt["prompt"] = prompt
 
     mock_bot.handle_prompt = mock_handle_prompt
@@ -1243,6 +1244,52 @@ async def test_bot_voice_with_long_auto_export(mock_bot, monkeypatch):
         gen_args = mock_gen_voice.call_args[1]
         assert gen_args["text"] == "全部功能总结已生成完毕。"
         assert gen_args["lang"] == "zh"
+
+
+@pytest.mark.asyncio
+async def test_bot_voice_input_forces_voice_autosend(mock_bot, tmp_path, monkeypatch):
+    fake_voice_file = tmp_path / "voice_100_cmd.oga"
+    fake_voice_file.write_bytes(b"TEST_AUDIO")
+
+    mock_bot.client.download_file_by_id = AsyncMock(
+        return_value=(fake_voice_file, {"file_id": "v_force", "file_path": "voice/cmd.oga"})
+    )
+
+    # Set tts_mode to disabled/ondemand explicitly
+    session = mock_bot.session_manager.get_session(100)
+    session.tts_mode = "disable"
+
+    raw_response = "任务执行成功。\n\n[AGY_VOICE lang=\"zh\"]\n语音任务已经执行完毕。\n[END_AGY_VOICE]"
+
+    async def mock_stream(self, prompt, **kwargs):
+        yield AgyEvent(type="result", response=raw_response, duration_seconds=1.0)
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream)
+
+    update = {
+        "message": {
+            "chat": {"id": 100},
+            "message_id": 999,
+            "voice": {
+                "file_id": "v_force",
+                "file_unique_id": "vu_force",
+                "duration": 3,
+                "mime_type": "audio/ogg",
+            },
+        }
+    }
+
+    with patch("gateway.media_handlers.transcribe_voice", new_callable=AsyncMock) as mock_stt, \
+         patch.object(mock_bot, "_generate_and_send_voice", new_callable=AsyncMock) as mock_gen_voice:
+        mock_stt.return_value = ("测试语音命令", "zh")
+        await mock_bot.process_update(update)
+
+        # Even though tts_mode was "disable", voice input MUST trigger _generate_and_send_voice
+        assert mock_gen_voice.called
+        gen_args = mock_gen_voice.call_args[1]
+        assert gen_args["text"] == "语音任务已经执行完毕。"
+        assert gen_args["lang"] == "zh"
+
 
 
 

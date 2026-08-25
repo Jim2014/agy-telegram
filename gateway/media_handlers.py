@@ -120,7 +120,7 @@ async def handle_voice_message(
             return
 
     # Execute prompt through agy
-    await bot.handle_prompt(chat_id, final_prompt, message_id)
+    await bot.handle_prompt(chat_id, final_prompt, message_id, is_voice_input=True)
 
 
 async def handle_document_message(
