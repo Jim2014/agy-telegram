@@ -17,6 +17,9 @@ mkdir -p runtime
 PIDFILE="runtime/gateway.pid"
 LEGACY_PIDFILE="gateway.pid"
 WATCHDOG_PIDFILE="runtime/watchdog.pid"
+LAUNCHD_LABEL="ai.agy.telegram"
+LAUNCHD_PLIST="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
+REPO_PLIST="$(cd "$(dirname "$0")" && pwd)/ai.agy.telegram.plist"
 
 # Determine python command (prioritize agy-telegram conda env, venv, or system python)
 if [ -x "/opt/homebrew/Caskroom/miniconda/base/envs/agy-telegram/bin/python" ]; then
@@ -30,6 +33,54 @@ elif command -v python3 >/dev/null 2>&1; then
 else
     PY_BIN="python"
 fi
+
+is_launchd_loaded() {
+    launchctl list "$LAUNCHD_LABEL" >/dev/null 2>&1
+}
+
+enable_autostart() {
+    mkdir -p "$HOME/Library/LaunchAgents"
+    ensure_watchdog_stopped
+    ensure_stopped
+
+    if [ ! -f "$REPO_PLIST" ]; then
+        echo "❌ Plist template not found at $REPO_PLIST"
+        exit 1
+    fi
+
+    cp "$REPO_PLIST" "$LAUNCHD_PLIST"
+    chmod 644 "$LAUNCHD_PLIST"
+
+    # Unload first if previously loaded
+    launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+    
+    # Load and enable
+    if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
+        echo "✅ macOS LaunchAgent registered: $LAUNCHD_PLIST"
+        sleep 2
+        if is_launchd_loaded; then
+            echo "🚀 agy-telegram is now managed by launchd and will auto-start on macOS boot/login!"
+        else
+            echo "⚠️  LaunchAgent loaded, waiting for process..."
+        fi
+        exit 0
+    else
+        echo "❌ Failed to load LaunchAgent with launchctl."
+        exit 1
+    fi
+}
+
+disable_autostart() {
+    if [ -f "$LAUNCHD_PLIST" ]; then
+        launchctl unload -w "$LAUNCHD_PLIST" 2>/dev/null || true
+        rm -f "$LAUNCHD_PLIST"
+        echo "🛑 LaunchAgent autostart disabled and $LAUNCHD_PLIST removed."
+    else
+        echo "ℹ️  LaunchAgent plist not found ($LAUNCHD_PLIST)."
+    fi
+    ensure_stopped
+    exit 0
+}
 
 ensure_watchdog_stopped() {
     local wpid=""
@@ -77,8 +128,30 @@ case "${1:-}" in
         $PY_BIN main.py --check-config
         exit $?
         ;;
+    autostart-enable|enable-autostart|install-service|install-autostart|autostart)
+        enable_autostart
+        ;;
+    autostart-disable|disable-autostart|uninstall-service|uninstall-autostart)
+        disable_autostart
+        ;;
+    autostart-status)
+        if [ -f "$LAUNCHD_PLIST" ]; then
+            if is_launchd_loaded; then
+                echo "🚀 Autostart: Enabled & Loaded in launchd ($LAUNCHD_LABEL)"
+            else
+                echo "⚠️  Autostart: Plist installed at $LAUNCHD_PLIST but NOT loaded in launchctl"
+            fi
+        else
+            echo "⚪ Autostart: Disabled (not installed)"
+        fi
+        exit 0
+        ;;
     stop)
         ensure_watchdog_stopped
+        if is_launchd_loaded; then
+            echo "🛑 Stopping gateway via launchctl..."
+            launchctl stop "$LAUNCHD_LABEL" 2>/dev/null || true
+        fi
         ensure_stopped
         echo "🛑 Gateway and watchdog stopped."
         exit 0
@@ -118,14 +191,27 @@ case "${1:-}" in
             active_pid=$(cat "$LEGACY_PIDFILE" 2>/dev/null || true)
         fi
 
-        if [ -n "$active_pid" ]; then
-            if kill -0 "$active_pid" 2>/dev/null; then
-                echo "✅ Gateway: Running (PID $active_pid)"
-            else
+        if [ -n "$active_pid" ] && kill -0 "$active_pid" 2>/dev/null; then
+            echo "✅ Gateway: Running (PID $active_pid)"
+        else
+            lpid=$(launchctl list | awk -v lbl="$LAUNCHD_LABEL" '$3 == lbl {print $1}')
+            if [ -n "$lpid" ] && [ "$lpid" != "-" ]; then
+                echo "✅ Gateway: Running under launchd (PID $lpid)"
+            elif [ -n "$active_pid" ]; then
                 echo "⚠️  Gateway: Stale pidfile (PID $active_pid not running)"
+            else
+                echo "❌ Gateway: Not running (no $PIDFILE)"
+            fi
+        fi
+
+        if [ -f "$LAUNCHD_PLIST" ]; then
+            if is_launchd_loaded; then
+                echo "🚀 Autostart (LaunchAgent): Enabled & Loaded ($LAUNCHD_LABEL)"
+            else
+                echo "⚠️  Autostart (LaunchAgent): Plist installed but NOT loaded in launchctl"
             fi
         else
-            echo "❌ Gateway: Not running (no $PIDFILE)"
+            echo "⚪ Autostart (LaunchAgent): Disabled (not installed)"
         fi
 
         if [ -f "$WATCHDOG_PIDFILE" ]; then
@@ -137,6 +223,11 @@ case "${1:-}" in
             fi
         else
             echo "⚪ Watchdog: Not running"
+        fi
+
+        health_resp=$(curl -s --connect-timeout 1 http://127.0.0.1:8765/health 2>/dev/null || true)
+        if [ -n "$health_resp" ]; then
+            echo "🌐 WebApp (:8765): $health_resp"
         fi
         exit 0
         ;;
@@ -158,6 +249,19 @@ case "${1:-}" in
         RESTART_WATCH=1
         ;;
 esac
+
+# If managed by launchd, use launchctl kickstart to cleanly restart
+if is_launchd_loaded; then
+    echo "🔄 Restarting gateway via launchd supervisor..."
+    launchctl kickstart -k "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || {
+        launchctl stop "$LAUNCHD_LABEL" 2>/dev/null || true
+        sleep 1
+        launchctl start "$LAUNCHD_LABEL" 2>/dev/null || true
+    }
+    sleep 2
+    ./restart.sh status
+    exit 0
+fi
 
 ensure_stopped
 

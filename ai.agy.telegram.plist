@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.agy.telegram</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/Caskroom/miniconda/base/envs/agy-telegram/bin/python</string>
+        <string>/Users/jim/hermes-shared/agy-telegram/main.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/jim/hermes-shared/agy-telegram</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/Caskroom/miniconda/base/envs/agy-telegram/bin:/Users/jim/.local/bin:/Users/jim/.gemini/antigravity-cli/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/jim/.hermes/bin:/Users/jim/.nvm/versions/node/v24.11.1/bin:/Users/jim/Library/pnpm:/opt/homebrew/Caskroom/miniconda/base/condabin</string>
+        <key>HOME</key>
+        <string>/Users/jim</string>
+        <key>USER</key>
+        <string>jim</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/jim/hermes-shared/agy-telegram/runtime/launchd.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/jim/hermes-shared/agy-telegram/runtime/launchd.stderr.log</string>
+</dict>
+</plist>

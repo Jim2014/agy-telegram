@@ -180,8 +180,14 @@ conda run -n agy-telegram python main.py --smoke-test
 # 启动 / 重启网关
 ./restart.sh
 
-# 查看网关与看门狗运行状态
+# 查看网关、看门狗与 macOS 自启动服务状态
 ./restart.sh status
+
+# 开启 macOS 开机/登录后台自启动 (LaunchAgent)
+./restart.sh autostart
+
+# 禁用 macOS 自启动服务
+./restart.sh autostart-disable
 
 # 启动崩溃自动拉起看门狗 (Watchdog)
 ./restart.sh watch

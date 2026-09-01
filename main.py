@@ -148,6 +148,13 @@ def main() -> None:
         print("You can verify your agy setup now by running: ./venv/bin/python main.py --smoke-test\n")
         return
 
+    pid_file = Path("runtime/gateway.pid")
+    try:
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    except Exception as e:
+        logging.getLogger(__name__).warning("Failed to write PID file: %s", e)
+
     bot = AgyTelegramBot(config)
 
     # Handle OS signals for graceful shutdown
@@ -167,6 +174,11 @@ def main() -> None:
     finally:
         loop.run_until_complete(bot.shutdown())
         loop.close()
+        try:
+            if pid_file.exists():
+                pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
