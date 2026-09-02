@@ -48,7 +48,7 @@ async def handle_cmd_help(bot: Any, chat_id: int, edit_message_id: Optional[int]
         "• <code>/usage</code> / <code>/quota</code> — View real-time Google model limits & credits\n"
         "• <code>/status</code> — Show active project, model, tokens & metrics\n"
         "• <code>/projects</code> — List & switch workspaces (<code>/open &lt;name&gt;</code>, <code>/new</code>)\n"
-        "• <code>/model</code> — Switch model (<code>/model gemini-3.7-flash</code> | <code>pro</code>)\n"
+        "• <code>/model</code> — Switch model (<code>/model gemini-3.8-flash</code> | <code>pro</code>)\n"
         "• <code>/effort</code> — Set reasoning effort (<code>low</code> | <code>medium</code> | <code>high</code>)\n"
         "• <code>/skills</code> — Explore active agent skills & plugins\n"
         "• <code>/artifacts</code> — View & download conversation artifacts/scripts\n"
@@ -294,7 +294,7 @@ async def handle_cmd_status(bot: Any, chat_id: int) -> None:
 
     active_proj = session.active_project or "<i>(default / none)</i>"
     active_path = session.active_path() or bot.config.agy_working_dir or os.getcwd()
-    model_str = session.model or bot.config.default_model or "gemini-3.7-flash"
+    model_str = session.model or bot.config.default_model or "gemini-3.8-flash"
     effort_str = session.effort or bot.config.default_effort or "high"
     busy_status = "🔴 Busy (Running prompt)" if session.is_busy else "🟢 Idle"
 
@@ -351,7 +351,7 @@ async def handle_cmd_model(bot: Any, chat_id: int, arg: str = "", edit_message_i
             bot.session_manager.set_model(chat_id, val)
         asyncio.create_task(bot.update_pinned_banner(chat_id))
 
-    cur_model = session.model or bot.config.default_model or "gemini-3.7-flash"
+    cur_model = session.model or bot.config.default_model or "gemini-3.8-flash"
     cur_effort = session.effort or bot.config.default_effort or "high"
 
     text, reply_markup = build_model_keyboard(cur_model, cur_effort)
@@ -376,7 +376,7 @@ async def handle_cmd_effort(bot: Any, chat_id: int, arg: str = "", edit_message_
         bot.session_manager.set_effort(chat_id, val)
         asyncio.create_task(bot.update_pinned_banner(chat_id))
 
-    cur_model = session.model or bot.config.default_model or "gemini-3.7-flash"
+    cur_model = session.model or bot.config.default_model or "gemini-3.8-flash"
     cur_effort = session.effort or bot.config.default_effort or "high"
 
     text, reply_markup = build_effort_keyboard(cur_model, cur_effort)

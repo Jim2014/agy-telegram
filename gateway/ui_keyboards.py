@@ -161,8 +161,8 @@ def build_model_keyboard(
     """Build model configuration message text and inline keyboard markup."""
     models = [
         {
-            "id": "gemini-3.7-flash",
-            "name": "Gemini 3.7 Flash",
+            "id": "gemini-3.8-flash",
+            "name": "Gemini 3.8 Flash",
             "icon": "⚡",
             "desc": "Fast multimodal model with dynamic reasoning",
         },
@@ -481,7 +481,7 @@ def build_ipc_accordion_keyboard(target_project: str) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    msg, kb = build_model_keyboard("gemini-3.7-flash", "high")
+    msg, kb = build_model_keyboard("gemini-3.8-flash", "high")
     print("build_model_keyboard output preview:\n", msg)
     adaptive = build_adaptive_bot_commands(None, max_commands=8)
     print("\nDefault Adaptive Top Commands (8 items):")

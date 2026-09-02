@@ -526,7 +526,7 @@ def split_text_chunks(text: str, chunk_size: int = MAX_TELEGRAM_MESSAGE_LEN, **k
 
 def format_pinned_banner(
     session: Any,
-    default_model: str = "gemini-3.7-flash",
+    default_model: str = "gemini-3.8-flash",
     default_effort: str = "high",
     is_busy: bool = False,
 ) -> str:

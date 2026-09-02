@@ -33,17 +33,17 @@ def test_build_projects_keyboard_with_items():
 
 
 def test_build_model_keyboard():
-    text, markup = build_model_keyboard("gemini-3.7-flash", "high")
+    text, markup = build_model_keyboard("gemini-3.8-flash", "high")
     assert "Model & Reasoning Configuration" in text
-    assert "gemini-3.7-flash" in text
+    assert "gemini-3.8-flash" in text
     assert "high" in text
 
     buttons = markup["inline_keyboard"]
-    assert any(b[0]["callback_data"] == "model:gemini-3.7-flash" for b in buttons if b)
+    assert any(b[0]["callback_data"] == "model:gemini-3.8-flash" for b in buttons if b)
 
 
 def test_build_effort_keyboard():
-    text, markup = build_effort_keyboard("gemini-3.7-flash", "medium")
+    text, markup = build_effort_keyboard("gemini-3.8-flash", "medium")
     assert "Reasoning Effort Setting" in text
     assert "medium" in text
 

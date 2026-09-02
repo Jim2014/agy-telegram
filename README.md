@@ -225,7 +225,7 @@ tail -f -n 50 runtime/watchdog.log
 - **/artifacts 产物管理**：列出会话生成的 HTML 报告、图表与 `scratch/` 脚本，附带 `[ 📥 一键下载 ]` 按钮。
 - **/projects 项目菜单**：附带每个项目的点击按钮（如 `[ 🌟 myapp ]`、`[ 📂 backend ]`）及 `[ 🔄 Refresh ]`，一键切换工作区。
 - **/effort 推理强度**：附带 `[ 🟢 Low ]`、`[ 🟡 Medium ]`、`[ 🔴 High ]` 快速选择按钮，即时生效。
-- **/model 模型切换**：展示当前激活模型与所有模型选项，附带 `[ ⚡ Gemini 3.7 Flash ]`、`[ 🧠 Gemini 3.1 Pro ]` 按钮。
+- **/model 模型切换**：展示当前激活模型与所有模型选项，附带 `[ ⚡ Gemini 3.8 Flash ]`、`[ 🧠 Gemini 3.1 Pro ]` 按钮。
 
 ### 支持的命令列表
 
@@ -246,7 +246,7 @@ tail -f -n 50 runtime/watchdog.log
 | `/projects` | 列出所有项目、活跃标记、工作区路径与最后活跃时间 | `/projects` |
 | `/open <name>` | 打开并切换到已有项目，恢复其历史会话与统计 | `/open myapp` |
 | `/new <name> <path>` | 创建新项目并设为当前活跃工作区（目录不存在则自动递归创建 `mkdir -p` 并提示；已存在则切换） | `/new myapp /Users/jim/myapp` |
-| `/model <name>` | 切换当前对话使用的模型（如 `/model gemini-3.7-flash` 或 `/model gemini-3.1-pro`） | `/model gemini-3.7-flash` |
+| `/model <name>` | 切换当前对话使用的模型（如 `/model gemini-3.8-flash` 或 `/model gemini-3.1-pro`） | `/model gemini-3.8-flash` |
 | `/effort <level>` | 调整推理强度：`low`、`medium`、`high` | `/effort high` |
 | `/dir` 或 `/ls [path]` | 扫描工作区目录并生成交互式折叠 HTML 文件树，支持一键点击复制 `/file` 与 `/file -h` 指令 | `/dir` 或 `/ls tests` |
 | `/file [-h] <path>` | 发送工作区文件；使用 `-h` 参数动态转换为对应格式的独立 HTML 文件（如 `bot.py.html`、`README.md.html`） | `/file -h bot.py` |

@@ -59,9 +59,9 @@ async def test_bot_help_and_status(mock_bot):
 async def test_bot_model_and_effort(mock_bot):
     # /model
     mock_bot.client.send_message.reset_mock()
-    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/model gemini-3.7-flash", "message_id": 3}})
-    assert "gemini-3.7-flash" in mock_bot.client.send_message.call_args[1]["text"]
-    assert mock_bot.session_manager.get_session(100).model == "gemini-3.7-flash"
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/model gemini-3.8-flash", "message_id": 3}})
+    assert "gemini-3.8-flash" in mock_bot.client.send_message.call_args[1]["text"]
+    assert mock_bot.session_manager.get_session(100).model == "gemini-3.8-flash"
 
     # /effort
     mock_bot.client.send_message.reset_mock()

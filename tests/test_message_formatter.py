@@ -479,7 +479,7 @@ def test_format_pinned_banner():
                 "total_duration_seconds": 95.5,
             }
         },
-        model="gemini-3.7-flash",
+        model="gemini-3.8-flash",
         effort="high",
     )
 
@@ -489,7 +489,7 @@ def test_format_pinned_banner():
     assert "<code>alpha-strategy</code>" in banner_idle
     assert "🟢 <b>Ready</b>" in banner_idle
     assert "/Users/jim/projects/alpha" in banner_idle
-    assert "gemini-3.7-flash" in banner_idle
+    assert "gemini-3.8-flash" in banner_idle
     assert "1.50M" in banner_idle
     assert "15 turns" in banner_idle
 

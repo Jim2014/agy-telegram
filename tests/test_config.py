@@ -8,7 +8,7 @@ from gateway.config import Config
 
 def test_default_config():
     cfg = Config()
-    assert cfg.default_model == "gemini-3.7-flash"
+    assert cfg.default_model == "gemini-3.8-flash"
     assert cfg.default_effort == "high"
     assert cfg.stream_throttle_seconds == 1.0
     assert cfg.agy_timeout_seconds == 300
