@@ -225,7 +225,7 @@ tail -f -n 50 runtime/watchdog.log
 - **/artifacts 产物管理**：列出会话生成的 HTML 报告、图表与 `scratch/` 脚本，附带 `[ 📥 一键下载 ]` 按钮。
 - **/projects 项目菜单**：附带每个项目的点击按钮（如 `[ 🌟 myapp ]`、`[ 📂 backend ]`）及 `[ 🔄 Refresh ]`，一键切换工作区。
 - **/effort 推理强度**：附带 `[ 🟢 Low ]`、`[ 🟡 Medium ]`、`[ 🔴 High ]` 快速选择按钮，即时生效。
-- **/model 模型切换**：展示当前激活模型与所有模型选项，附带 `[ ⚡ Gemini 3.8 Flash ]`、`[ 🧠 Gemini 3.1 Pro ]` 按钮。
+- **/model 模型切换**：自动从 `agy models` 探测并同步最新可用模型清单（如 `[ ⚡ Gemini 3.8 Flash ]`、`[ 🧠 Gemini 3.1 Pro ]`、`[ ⚡ Gemini 3.7 Flash ]`、`[ 🟣 Claude Sonnet 4.6 ]` 等），展示当前激活模型与 `[ 🔄 Refresh ]` 按钮，一键即时切换。
 
 ### 支持的命令列表
 

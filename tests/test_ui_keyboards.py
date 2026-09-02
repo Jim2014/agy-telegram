@@ -1,5 +1,6 @@
 """Unit tests for gateway.ui_keyboards."""
 
+import pytest
 from gateway.ui_keyboards import (
     build_effort_keyboard,
     build_model_keyboard,
@@ -40,6 +41,37 @@ def test_build_model_keyboard():
 
     buttons = markup["inline_keyboard"]
     assert any(b[0]["callback_data"] == "model:gemini-3.8-flash" for b in buttons if b)
+    # Check bottom control row
+    bottom_row = buttons[-1]
+    assert any(b["callback_data"] == "model:refresh" for b in bottom_row)
+
+
+def test_parse_agy_models():
+    from gateway.ui_keyboards import parse_agy_models
+    raw_output = """Fetching available models...
+gemini-3.8-flash-high\tGemini 3.8 Flash (High)
+gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)
+gemini-3.8-flash-low\tGemini 3.8 Flash (Low)
+gemini-3.1-pro-high\tGemini 3.1 Pro (High)
+claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)
+gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
+"""
+    parsed = parse_agy_models(raw_output)
+    assert len(parsed) == 4
+    model_ids = [m["id"] for m in parsed]
+    assert "gemini-3.8-flash" in model_ids
+    assert "gemini-3.1-pro" in model_ids
+    assert "claude-sonnet-4-6" in model_ids
+    assert "gpt-oss-120b-medium" in model_ids
+
+
+@pytest.mark.asyncio
+async def test_fetch_agy_models_fallback():
+    from gateway.ui_keyboards import fetch_agy_models, DEFAULT_STATIC_MODELS
+    # When invalid binary passed, falls back gracefully
+    models = await fetch_agy_models(agy_bin="/non/existent/bin", force_refresh=True)
+    assert len(models) >= 2
+    assert any(m["id"] == "gemini-3.8-flash" for m in models)
 
 
 def test_build_effort_keyboard():

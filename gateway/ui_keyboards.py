@@ -1,12 +1,20 @@
-import sys
+import asyncio
+import logging
+import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+import re
+import shutil
+import sys
+import time
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 _repo_root = str(Path(__file__).resolve().parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
 from gateway.message_formatter import escape_html
+
+logger = logging.getLogger(__name__)
 
 
 # Master list of all supported bot commands with default priority rank
@@ -154,36 +162,170 @@ def build_projects_keyboard(
     return "\n".join(lines), {"inline_keyboard": keyboard}
 
 
+DEFAULT_STATIC_MODELS: List[Dict[str, Any]] = [
+    {
+        "id": "gemini-3.8-flash",
+        "name": "Gemini 3.8 Flash",
+        "icon": "⚡",
+        "desc": "Fast multimodal model with dynamic reasoning",
+    },
+    {
+        "id": "gemini-3.1-pro",
+        "name": "Gemini 3.1 Pro",
+        "icon": "🧠",
+        "desc": "State-of-the-art coding and deep reasoning",
+    },
+    {
+        "id": "gemini-3.7-flash",
+        "name": "Gemini 3.7 Flash",
+        "icon": "⚡",
+        "desc": "Multimodal hybrid reasoning model",
+    },
+    {
+        "id": "claude-sonnet-4-6",
+        "name": "Claude Sonnet 4.6",
+        "icon": "🟣",
+        "desc": "Anthropic Claude 4.6 (Thinking)",
+    },
+    {
+        "id": "claude-opus-4-6-thinking",
+        "name": "Claude Opus 4.6",
+        "icon": "🎭",
+        "desc": "Anthropic Claude 4.6 Opus (Thinking)",
+    },
+    {
+        "id": "gpt-oss-120b-medium",
+        "name": "GPT-OSS 120B",
+        "icon": "🤖",
+        "desc": "High-parameter open-weights model",
+    },
+]
+
+_CACHED_MODELS: Optional[List[Dict[str, Any]]] = None
+_CACHED_MODELS_EXPIRY: float = 0.0
+
+
+def parse_agy_models(output: str) -> List[Dict[str, Any]]:
+    """Parse 'agy models' CLI stdout into structured model dictionaries."""
+    models: List[Dict[str, Any]] = []
+    seen_base_ids: Set[str] = set()
+
+    for line in output.splitlines():
+        line = line.strip()
+        if not line or line.startswith("Fetching") or line.startswith("Usage:") or line.startswith("List"):
+            continue
+        parts = line.split("\t")
+        if not parts or not parts[0].strip():
+            continue
+        raw_id = parts[0].strip()
+        raw_name = parts[1].strip() if len(parts) > 1 else raw_id
+
+        # Determine base id (for Gemini family, strip -high/-medium/-low for clean deduplication)
+        if raw_id.startswith("gemini-"):
+            base_id = re.sub(r"-(high|medium|low)$", "", raw_id)
+        else:
+            base_id = raw_id
+
+        if base_id in seen_base_ids:
+            continue
+        seen_base_ids.add(base_id)
+
+        # Determine clean display name
+        clean_name = re.sub(r"\s*\((High|Medium|Low|Thinking)\)", "", raw_name).strip()
+        if not clean_name or clean_name == base_id:
+            clean_name = " ".join(word.capitalize() for word in base_id.split("-"))
+
+        if "flash" in base_id.lower():
+            icon = "⚡"
+            desc = "Fast multimodal model with dynamic reasoning"
+        elif "pro" in base_id.lower():
+            icon = "🧠"
+            desc = "Deep reasoning and complex coding"
+        elif "claude" in base_id.lower():
+            icon = "🟣"
+            desc = "Anthropic reasoning model"
+        elif "gpt" in base_id.lower() or "oss" in base_id.lower():
+            icon = "🤖"
+            desc = "Open-weights 120B model"
+        else:
+            icon = "✨"
+            desc = "Antigravity CLI model"
+
+        models.append({
+            "id": base_id,
+            "raw_id": raw_id,
+            "name": clean_name,
+            "icon": icon,
+            "desc": desc,
+        })
+
+    return models
+
+
+async def fetch_agy_models(
+    agy_bin: str = "/Users/jim/.local/bin/agy",
+    force_refresh: bool = False,
+    timeout: float = 6.0,
+) -> List[Dict[str, Any]]:
+    """Query 'agy models' asynchronously with caching and fallback."""
+    global _CACHED_MODELS, _CACHED_MODELS_EXPIRY
+
+    now = time.time()
+    if not force_refresh and _CACHED_MODELS and now < _CACHED_MODELS_EXPIRY:
+        return _CACHED_MODELS
+
+    # Resolve executable
+    resolved_bin = agy_bin
+    if not os.path.isfile(resolved_bin):
+        resolved_bin = shutil.which(agy_bin) or "/Users/jim/.local/bin/agy"
+
+    if not os.path.isfile(resolved_bin) and not shutil.which(resolved_bin):
+        logger.warning("agy binary not found at %s, using fallback models.", resolved_bin)
+        return DEFAULT_STATIC_MODELS
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            resolved_bin,
+            "models",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        output = stdout_bytes.decode("utf-8", errors="ignore")
+        parsed = parse_agy_models(output)
+        if parsed:
+            _CACHED_MODELS = parsed
+            _CACHED_MODELS_EXPIRY = now + 600.0  # 10 minutes cache
+            logger.info("Successfully discovered %d models from agy CLI", len(parsed))
+            return parsed
+    except Exception as e:
+        logger.warning("Failed to fetch models from agy CLI: %s", e)
+
+    return _CACHED_MODELS or DEFAULT_STATIC_MODELS
+
+
 def build_model_keyboard(
     current_model: str,
     current_effort: str,
+    models: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Build model configuration message text and inline keyboard markup."""
-    models = [
-        {
-            "id": "gemini-3.8-flash",
-            "name": "Gemini 3.8 Flash",
-            "icon": "⚡",
-            "desc": "Fast multimodal model with dynamic reasoning",
-        },
-        {
-            "id": "gemini-3.1-pro",
-            "name": "Gemini 3.1 Pro",
-            "icon": "🧠",
-            "desc": "State-of-the-art coding and deep reasoning",
-        },
-    ]
+    model_list = models or _CACHED_MODELS or DEFAULT_STATIC_MODELS
 
     lines = [
         "🤖 <b>Model & Reasoning Configuration:</b>\n",
         f"• <b>Active Model:</b> <code>{escape_html(current_model)}</code>",
         f"• <b>Active Effort:</b> <code>{escape_html(current_effort)}</code>\n",
-        "<b>Available Models:</b>",
+        "<b>Available Models (Auto-detected from agy):</b>",
     ]
 
     buttons: List[List[Dict[str, str]]] = []
-    for m in models:
-        is_active = current_model == m["id"]
+    for m in model_list:
+        is_active = (
+            current_model == m["id"]
+            or current_model == m.get("raw_id")
+            or current_model.startswith(m["id"])
+        )
         marker = "🌟 <b>[ACTIVE]</b> " if is_active else "• "
         lines.append(f"{marker}{m['icon']} <b>{m['name']}</b> (<code>{m['id']}</code>)\n   <i>{m['desc']}</i>")
         btn_label = f"✓ {m['name']}" if is_active else f"{m['icon']} {m['name']}"
@@ -191,10 +333,11 @@ def build_model_keyboard(
 
     buttons.append([
         {"text": "⚡ Adjust Effort", "callback_data": "effort:show"},
+        {"text": "🔄 Refresh", "callback_data": "model:refresh"},
         {"text": "📊 Status", "callback_data": "status"},
     ])
 
-    lines.append("\n💡 <i>Tap a button below to switch model instantly.</i>")
+    lines.append("\n💡 <i>Tap any model button above to switch instantly, or use /model &lt;name&gt;.</i>")
     return "\n".join(lines), {"inline_keyboard": buttons}
 
 

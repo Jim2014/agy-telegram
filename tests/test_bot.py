@@ -724,6 +724,22 @@ async def test_bot_callback_query_effort_and_model(mock_bot):
         show_alert=False,
     )
 
+    # Model refresh callback
+    cb_model_refresh = {
+        "callback_query": {
+            "id": "cb_model_ref",
+            "from": {"id": 100},
+            "message": {"chat": {"id": 100}, "message_id": 602},
+            "data": "model:refresh",
+        }
+    }
+    await mock_bot.process_update(cb_model_refresh)
+    mock_bot.client.answer_callback_query.assert_called_with(
+        callback_query_id="cb_model_ref",
+        text="Refreshing models from agy...",
+        show_alert=False,
+    )
+
 
 @pytest.mark.asyncio
 async def test_bot_voice_message_flow(mock_bot, tmp_path):

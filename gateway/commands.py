@@ -30,6 +30,7 @@ from gateway.ui_keyboards import (
     build_usage_keyboard,
     build_voice_keyboard,
     build_webapp_viewer_button,
+    fetch_agy_models,
 )
 
 logger = logging.getLogger(__name__)
@@ -343,18 +344,26 @@ async def handle_cmd_status(bot: Any, chat_id: int) -> None:
 async def handle_cmd_model(bot: Any, chat_id: int, arg: str = "", edit_message_id: Optional[int] = None) -> None:
     """Change or view model with interactive option buttons showing active status."""
     session = bot.session_manager.get_session(chat_id)
-    if arg and arg.lower() != "show":
+    force_refresh = False
+    if arg:
         val = arg.strip()
-        if val.lower() in ("reset", "default"):
-            bot.session_manager.set_model(chat_id, None)
-        else:
-            bot.session_manager.set_model(chat_id, val)
-        asyncio.create_task(bot.update_pinned_banner(chat_id))
+        if val.lower() == "refresh":
+            force_refresh = True
+        elif val.lower() != "show":
+            if val.lower() in ("reset", "default"):
+                bot.session_manager.set_model(chat_id, None)
+            else:
+                bot.session_manager.set_model(chat_id, val)
+            asyncio.create_task(bot.update_pinned_banner(chat_id))
 
     cur_model = session.model or bot.config.default_model or "gemini-3.8-flash"
     cur_effort = session.effort or bot.config.default_effort or "high"
 
-    text, reply_markup = build_model_keyboard(cur_model, cur_effort)
+    # Dynamically fetch available models from agy CLI
+    agy_bin = getattr(bot.config, "agy_bin_path", "/Users/jim/.local/bin/agy")
+    models = await fetch_agy_models(agy_bin=agy_bin, force_refresh=force_refresh)
+
+    text, reply_markup = build_model_keyboard(cur_model, cur_effort, models=models)
 
     if edit_message_id:
         await bot._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
@@ -1052,9 +1061,11 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
         await handle_cmd_effort(bot, chat_id, arg=effort_val, edit_message_id=message_id)
         await bot._safe_answer_callback_query(cq_id, text=f"Reasoning effort set to {effort_val}")
 
-    elif data == "model:show":
-        await bot._safe_answer_callback_query(cq_id)
-        await handle_cmd_model(bot, chat_id, edit_message_id=message_id)
+    elif data in ("model:show", "model:refresh"):
+        hint = "Refreshing models from agy..." if data == "model:refresh" else None
+        await bot._safe_answer_callback_query(cq_id, text=hint)
+        arg_val = "refresh" if data == "model:refresh" else "show"
+        await handle_cmd_model(bot, chat_id, arg=arg_val, edit_message_id=message_id)
 
     elif data.startswith("model:"):
         model_val = data[6:].strip()
