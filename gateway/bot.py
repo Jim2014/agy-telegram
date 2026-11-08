@@ -101,6 +101,8 @@ class AgyTelegramBot:
         self.client = TelegramClient(bot_token=config.bot_token)
         self.session_manager = SessionManager(persistence_file=config.sessions_file)
         self.active_bridges: Dict[int, AgyBridge] = {}
+        self.active_progress_messages: Dict[int, int] = {}
+        self.active_reply_to_ids: Dict[int, Optional[int]] = {}
         self.running = False
         self.bot_info: Dict[str, Any] = {}
         self.started_at = time.time()
@@ -510,15 +512,19 @@ class AgyTelegramBot:
 
             # If a prompt is running and user sends a new message -> steer into active session!
             session = self.session_manager.get_session(chat_id)
-            if session.is_busy and chat_id in self.active_bridges:
-                steered = await self.active_bridges[chat_id].steer(text)
-                if steered:
-                    await self._safe_send_message(
-                        chat_id=chat_id,
-                        text=f"🎯 <b>Steered into active session:</b>\n<i>{escape_html(text)}</i>",
-                        reply_to_message_id=message_id,
-                    )
-                    return
+            if session.is_busy:
+                bridge = self.active_bridges.get(chat_id)
+                if bridge and bridge.is_running():
+                    steered = await self.perform_steering(chat_id, text, message_id)
+                    if steered:
+                        return
+
+                await self._safe_send_message(
+                    chat_id=chat_id,
+                    text="⏳ A prompt is currently processing. Use /steer to guide it or /stop to cancel.",
+                    reply_to_message_id=message_id,
+                )
+                return
 
             # Regular prompt -> agy bridge execution
             await self.handle_prompt(chat_id, text, message_id)
@@ -882,6 +888,74 @@ class AgyTelegramBot:
         combined_return_text = "\n\n".join(return_envelopes)
         return combined_return_text, results
 
+    async def perform_steering(
+        self,
+        chat_id: int,
+        steering_text: str,
+        reply_to_id: Optional[int],
+        is_voice: bool = False,
+        duration: Optional[int] = None,
+    ) -> bool:
+        """Inject steering guidance into active session, rotate progress messages, and return True if successful."""
+        bridge = self.active_bridges.get(chat_id)
+        if not bridge:
+            return False
+
+        is_running_fn = getattr(bridge, "is_running", None)
+        if callable(is_running_fn):
+            res = is_running_fn()
+            if asyncio.iscoroutine(res):
+                res = await res
+            if not res:
+                return False
+
+        steered = await bridge.steer(steering_text)
+        if not steered:
+            return False
+
+        # 1. Finalize the old progress message so it stops updating
+        old_msg_id = self.active_progress_messages.get(chat_id)
+        if old_msg_id:
+            summary_snippet = steering_text.replace("\n", " ")[:100]
+            if len(steering_text) > 100:
+                summary_snippet += "..."
+            await self._safe_edit_message_text(
+                chat_id=chat_id,
+                message_id=old_msg_id,
+                text=(
+                    f"🔄 <b>Task Steered:</b>\n"
+                    f"<i>\"{escape_html(summary_snippet)}\"</i>\n\n"
+                    f"↳ <i>Progress continues in new reply below.</i>"
+                ),
+            )
+
+        # 2. Add reaction to the steering message
+        if reply_to_id:
+            await self._safe_set_message_reaction(chat_id, reply_to_id, "👀")
+
+        # 3. Create a new progress message replying to the steering message
+        dur_text = f" ({duration}s)" if duration else ""
+        prefix = (
+            "🎯 <b>Steered into active session (Steering instruction sent):</b>"
+            if not is_voice
+            else f"🎙️ <b>Steered voice instruction{dur_text} into active session:</b>"
+        )
+        new_progress = await self._safe_send_message(
+            chat_id=chat_id,
+            text=(
+                f"{prefix}\n"
+                f"<i>\"{escape_html(steering_text)}\"</i>\n\n"
+                f"⏳ <i>Incorporating guidance into ongoing session...</i>"
+            ),
+            reply_to_message_id=reply_to_id,
+        )
+        if new_progress and new_progress.get("message_id"):
+            self.active_progress_messages[chat_id] = new_progress["message_id"]
+        if reply_to_id:
+            self.active_reply_to_ids[chat_id] = reply_to_id
+
+        return True
+
     async def handle_prompt(
         self,
         chat_id: int,
@@ -894,14 +968,9 @@ class AgyTelegramBot:
 
         if session.is_busy:
             bridge = self.active_bridges.get(chat_id)
-            if bridge:
-                steered = await bridge.steer(prompt)
+            if bridge and bridge.is_running():
+                steered = await self.perform_steering(chat_id, prompt, reply_to_id, is_voice=is_voice_input)
                 if steered:
-                    await self._safe_send_message(
-                        chat_id=chat_id,
-                        text=f"🎯 <b>Steered into active session:</b>\n<i>{escape_html(prompt)}</i>",
-                        reply_to_message_id=reply_to_id,
-                    )
                     return
 
             await self._safe_send_message(
@@ -924,6 +993,7 @@ class AgyTelegramBot:
                 self.session_manager.create_project(chat_id, "default", default_dir)
                 session = self.session_manager.get_session(chat_id)
 
+        self.session_manager.set_busy(chat_id, True)
         session.pending_decisions = []
         session.pending_actions = []
         asyncio.create_task(self.update_pinned_banner(chat_id, is_busy=True))
@@ -937,6 +1007,10 @@ class AgyTelegramBot:
             reply_to_message_id=reply_to_id,
         )
         msg_id = init_msg.get("message_id") if init_msg else None
+        if msg_id:
+            self.active_progress_messages[chat_id] = msg_id
+        if reply_to_id:
+            self.active_reply_to_ids[chat_id] = reply_to_id
 
         active_proj = session.active_project or "default"
         effective_model = session.model or self.config.default_model or None
@@ -1058,10 +1132,11 @@ class AgyTelegramBot:
                         conversation_id=conv_id,
                         project_name=active_proj,
                     )
-                    if streaming_text != last_edited_content and msg_id:
+                    cur_msg_id = self.active_progress_messages.get(chat_id, msg_id)
+                    if streaming_text != last_edited_content and cur_msg_id:
                         await self._safe_edit_message_text(
                             chat_id=chat_id,
-                            message_id=msg_id,
+                            message_id=cur_msg_id,
                             text=streaming_text,
                         )
                         last_edited_content = streaming_text
@@ -1210,19 +1285,22 @@ class AgyTelegramBot:
                     text=voice_block.text,
                     lang=voice_block.lang,
                 )
-                # If triggered by voice input, ALWAYS autosend the voice response regardless of configuration
-                if is_voice_input or effective_tts_mode in ("autosend", "autoplay", "direct", "auto"):
-                    asyncio.create_task(
-                        self._generate_and_send_voice(
-                            chat_id=chat_id,
-                            text=voice_block.text,
-                            lang=voice_block.lang,
-                            voice_id=voice_id,
-                            reply_to_id=reply_to_id,
-                        )
+            target_msg_id = self.active_progress_messages.get(chat_id, msg_id)
+            target_reply_id = self.active_reply_to_ids.get(chat_id, reply_to_id)
+
+            # If triggered by voice input, ALWAYS autosend the voice response regardless of configuration
+            if is_voice_input or effective_tts_mode in ("autosend", "autoplay", "direct", "auto"):
+                asyncio.create_task(
+                    self._generate_and_send_voice(
+                        chat_id=chat_id,
+                        text=voice_block.text,
+                        lang=voice_block.lang,
+                        voice_id=voice_id,
+                        reply_to_id=target_reply_id,
                     )
-                elif effective_tts_mode in ("ondemand", "autogen", "script", "manual"):
-                    voice_btn = build_voice_play_button(voice_id)
+                )
+            elif effective_tts_mode in ("ondemand", "autogen", "script", "manual"):
+                voice_btn = build_voice_play_button(voice_id)
 
             # 5. Extract [AGY_ACTIONS] suggested next steps from clean_text
             clean_text, action_items = extract_agy_action_blocks(clean_text)
@@ -1252,10 +1330,10 @@ class AgyTelegramBot:
 
             if chunks:
                 if len(chunks) == 1:
-                    if msg_id:
+                    if target_msg_id:
                         await self._safe_edit_message_text(
                             chat_id=chat_id,
-                            message_id=msg_id,
+                            message_id=target_msg_id,
                             text=chunks[0],
                             reply_markup=actions_markup,
                         )
@@ -1264,20 +1342,20 @@ class AgyTelegramBot:
                             chat_id=chat_id,
                             text=chunks[0],
                             reply_markup=actions_markup,
-                            reply_to_message_id=reply_to_id,
+                            reply_to_message_id=target_reply_id,
                         )
                 else:
-                    if msg_id:
+                    if target_msg_id:
                         await self._safe_edit_message_text(
                             chat_id=chat_id,
-                            message_id=msg_id,
+                            message_id=target_msg_id,
                             text=chunks[0],
                         )
                     else:
                         await self._safe_send_message(
                             chat_id=chat_id,
                             text=chunks[0],
-                            reply_to_message_id=reply_to_id,
+                            reply_to_message_id=target_reply_id,
                         )
 
                     for idx, chunk in enumerate(chunks[1:], 1):
@@ -1286,14 +1364,14 @@ class AgyTelegramBot:
                             chat_id=chat_id,
                             text=chunk,
                             reply_markup=actions_markup if is_last else None,
-                            reply_to_message_id=reply_to_id,
+                            reply_to_message_id=target_reply_id,
                         )
             else:
                 fallback = f"✅ <b>Done</b> <i>({total_duration:.1f}s)</i>"
-                if msg_id:
+                if target_msg_id:
                     await self._safe_edit_message_text(
                         chat_id=chat_id,
-                        message_id=msg_id,
+                        message_id=target_msg_id,
                         text=fallback,
                         reply_markup=actions_markup,
                     )
@@ -1302,11 +1380,11 @@ class AgyTelegramBot:
                         chat_id=chat_id,
                         text=fallback,
                         reply_markup=actions_markup,
-                        reply_to_message_id=reply_to_id,
+                        reply_to_message_id=target_reply_id,
                     )
 
-            if reply_to_id:
-                await self._safe_set_message_reaction(chat_id, reply_to_id, "✅")
+            if target_reply_id:
+                await self._safe_set_message_reaction(chat_id, target_reply_id, "✅")
 
             # Helper to build document reply markup (WebApp preview + Voice Audio)
             def _build_doc_reply_markup(html_str: str, fname: str, doc_idx: int) -> Optional[Dict[str, Any]]:
@@ -1331,7 +1409,7 @@ class AgyTelegramBot:
                     document_content=html_data,
                     filename=af.filename,
                     caption=f"📄 <b>{escape_html(af.title or af.filename)}</b>",
-                    reply_to_message_id=reply_to_id,
+                    reply_to_message_id=target_reply_id,
                     reply_markup=doc_kb,
                 )
 
@@ -1344,33 +1422,39 @@ class AgyTelegramBot:
                     document_content=auto_export_content,
                     filename=auto_export_name,
                     caption=f"📄 <b>{escape_html(auto_export_title)}</b>",
-                    reply_to_message_id=reply_to_id,
+                    reply_to_message_id=target_reply_id,
                     reply_markup=doc_kb,
                 )
 
         except asyncio.CancelledError:
             logger.info("Prompt task cancelled for chat %s", chat_id)
-            if msg_id:
+            target_msg_id = self.active_progress_messages.get(chat_id, msg_id)
+            target_reply_id = self.active_reply_to_ids.get(chat_id, reply_to_id)
+            if target_msg_id:
                 await self._safe_edit_message_text(
                     chat_id=chat_id,
-                    message_id=msg_id,
+                    message_id=target_msg_id,
                     text="🛑 <i>Task stopped.</i>",
                 )
-            if reply_to_id:
-                await self._safe_set_message_reaction(chat_id, reply_to_id, "⚠️")
+            if target_reply_id:
+                await self._safe_set_message_reaction(chat_id, target_reply_id, "⚠️")
             raise
         except Exception as e:
             logger.error("Error executing prompt for chat %s: %s", chat_id, e, exc_info=True)
-            if reply_to_id:
-                await self._safe_set_message_reaction(chat_id, reply_to_id, "⚠️")
+            target_msg_id = self.active_progress_messages.get(chat_id, msg_id)
+            target_reply_id = self.active_reply_to_ids.get(chat_id, reply_to_id)
+            if target_reply_id:
+                await self._safe_set_message_reaction(chat_id, target_reply_id, "⚠️")
             err_text = f"❌ <b>Execution Error:</b>\n<code>{escape_html(str(e))}</code>"
-            if msg_id:
-                await self._safe_edit_message_text(chat_id=chat_id, message_id=msg_id, text=err_text)
+            if target_msg_id:
+                await self._safe_edit_message_text(chat_id=chat_id, message_id=target_msg_id, text=err_text)
             else:
-                await self._safe_send_message(chat_id=chat_id, text=err_text, reply_to_message_id=reply_to_id)
+                await self._safe_send_message(chat_id=chat_id, text=err_text, reply_to_message_id=target_reply_id)
         finally:
             if bridge and not bridge.is_running():
                 self.active_bridges.pop(chat_id, None)
+            self.active_progress_messages.pop(chat_id, None)
+            self.active_reply_to_ids.pop(chat_id, None)
             self.session_manager.set_busy(chat_id, False)
             asyncio.create_task(self.update_pinned_banner(chat_id, is_busy=False))
 

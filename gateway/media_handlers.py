@@ -105,19 +105,18 @@ async def handle_voice_message(
 
     # Check if session is currently busy -> steer into active session
     session = bot.session_manager.get_session(chat_id)
-    if session.is_busy and chat_id in bot.active_bridges:
-        steered = await bot.active_bridges[chat_id].steer(final_prompt)
-        if steered:
-            dur_text = f" ({duration}s)" if duration else ""
-            await bot._safe_send_message(
-                chat_id=chat_id,
-                text=(
-                    f"🎯 <b>Steered voice instruction{dur_text}:</b>\n"
-                    f"<i>\"{escape_html(final_prompt)}\"</i>"
-                ),
-                reply_to_message_id=message_id,
-            )
-            return
+    if session.is_busy:
+        bridge = bot.active_bridges.get(chat_id)
+        if bridge:
+            steered = await bot.perform_steering(chat_id, final_prompt, message_id, is_voice=True, duration=duration)
+            if steered:
+                return
+        await bot._safe_send_message(
+            chat_id=chat_id,
+            text="⏳ A prompt is currently processing. Use /steer to guide it or /stop to cancel.",
+            reply_to_message_id=message_id,
+        )
+        return
 
     # Execute prompt through agy
     await bot.handle_prompt(chat_id, final_prompt, message_id, is_voice_input=True)
@@ -210,19 +209,18 @@ async def handle_document_message(
 
     # Check if session is currently busy -> steer into active session
     session = bot.session_manager.get_session(chat_id)
-    if session.is_busy and chat_id in bot.active_bridges:
-        steered = await bot.active_bridges[chat_id].steer(prompt_text)
-        if steered:
-            await bot._safe_send_message(
-                chat_id=chat_id,
-                text=(
-                    f"📎 <b>Steered uploaded file into active session:</b>\n"
-                    f"• <b>File:</b> <code>{escape_html(file_name)}</code>\n"
-                    f"• <b>Path:</b> <code>{escape_html(abs_path)}</code>"
-                ),
-                reply_to_message_id=message_id,
-            )
-            return
+    if session.is_busy:
+        bridge = bot.active_bridges.get(chat_id)
+        if bridge and bridge.is_running():
+            steered = await bot.perform_steering(chat_id, prompt_text, message_id)
+            if steered:
+                return
+        await bot._safe_send_message(
+            chat_id=chat_id,
+            text="⏳ A prompt is currently processing. Use /steer to guide it or /stop to cancel.",
+            reply_to_message_id=message_id,
+        )
+        return
 
     # Execute prompt through agy
     await bot.handle_prompt(chat_id, prompt_text, message_id)

@@ -504,6 +504,78 @@ async def test_bot_stop_command(mock_bot):
 
 
 @pytest.mark.asyncio
+async def test_bot_midflight_steering_progress_rotation_and_single_report(mock_bot, monkeypatch):
+    """Test that midflight steering freezes old progress message, creates new progress reply, and yields only 1 final report."""
+    mock_bot.session_manager.create_project(100, "test_proj", "/tmp")
+
+    sent_msgs = []
+    msg_counter = 1000
+
+    async def mock_send_message(chat_id, text, reply_to_message_id=None, **kwargs):
+        nonlocal msg_counter
+        msg_counter += 1
+        m = {"message_id": msg_counter, "chat": {"id": chat_id}, "text": text, "reply_to": reply_to_message_id}
+        sent_msgs.append(m)
+        return m
+
+    edited_msgs = []
+
+    async def mock_edit_message_text(chat_id, message_id, text, **kwargs):
+        edited_msgs.append({"message_id": message_id, "text": text})
+        return {"message_id": message_id, "text": text}
+
+    mock_bot.client.send_message = AsyncMock(side_effect=mock_send_message)
+    mock_bot.client.edit_message_text = AsyncMock(side_effect=mock_edit_message_text)
+
+    steer_event = asyncio.Event()
+
+    async def mock_run_streaming(self, prompt, **kwargs):
+        yield AgyEvent(type="init", conversation_id="conv-steer-test")
+        yield AgyEvent(type="text_delta", text_delta="Working on step 1...")
+        await steer_event.wait()
+        yield AgyEvent(type="turn_complete", response="Step 1 complete, now adapting to steering...")
+        yield AgyEvent(type="result", response="Final unified result after steering!", duration_seconds=2.0)
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_run_streaming)
+    monkeypatch.setattr(AgyBridge, "is_running", lambda self: True)
+    monkeypatch.setattr(AgyBridge, "steer", AsyncMock(return_value=True))
+
+    # 1. Start prompt 1 in background
+    task = asyncio.create_task(
+        mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "Task 1", "message_id": 10}})
+    )
+    await asyncio.sleep(0.05)
+
+    # Verify session is busy
+    assert mock_bot.session_manager.is_busy(100) is True
+    # Initial placeholder was sent (message_id 1001)
+    assert any(m["message_id"] == 1001 for m in sent_msgs)
+
+    # 2. User sends steering instruction (message_id 11)
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "Actually do Task 2", "message_id": 11}})
+
+    # Old working message (1001) must have been edited to freeze with Task Steered
+    frozen = [e for e in edited_msgs if e["message_id"] == 1001 and "Task Steered" in e["text"]]
+    assert len(frozen) >= 1
+
+    # New progress message (1002) was sent replying to message 11
+    steer_msgs = [m for m in sent_msgs if m.get("reply_to") == 11 and "Steered into active session" in m["text"]]
+    assert len(steer_msgs) == 1
+    new_progress_id = steer_msgs[0]["message_id"]
+
+    # 3. Resume streaming and finish execution
+    steer_event.set()
+    await task
+
+    # Session must now be idle
+    assert mock_bot.session_manager.is_busy(100) is False
+
+    # The final report must have edited the NEW progress message (1002), NOT 1001
+    final_edits = [e for e in edited_msgs if e["message_id"] == new_progress_id and "Final unified result" in e["text"]]
+    assert len(final_edits) >= 1
+
+
+@pytest.mark.asyncio
 async def test_bot_streaming_telegram_network_error_resilience(mock_bot, monkeypatch):
     """Verify that httpx.ReadError during streaming edits does NOT crash the bot."""
     import httpx

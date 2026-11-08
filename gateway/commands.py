@@ -687,14 +687,8 @@ async def handle_cmd_steer(bot: Any, chat_id: int, arg: str, reply_to_id: Option
 
     bridge = bot.active_bridges.get(chat_id)
     if bridge and bridge.is_running():
-        steered = await bridge.steer(arg)
-        if steered:
-            await bot._safe_send_message(
-                chat_id=chat_id,
-                text=f"🎯 <b>Steering instruction sent:</b>\n<i>{escape_html(arg)}</i>\n\nThe agent will incorporate this guidance into the ongoing turn.",
-                reply_to_message_id=reply_to_id,
-            )
-        else:
+        steered = await bot.perform_steering(chat_id, arg, reply_to_id)
+        if not steered:
             await bot._safe_send_message(
                 chat_id=chat_id,
                 text="⚠️ Could not steer: the current task is already concluding.",
@@ -714,7 +708,12 @@ async def handle_cmd_stop(bot: Any, chat_id: int) -> None:
     if bridge:
         await bridge.stop()
         bot.active_bridges.pop(chat_id, None)
+        if hasattr(bot, "active_progress_messages"):
+            bot.active_progress_messages.pop(chat_id, None)
+        if hasattr(bot, "active_reply_to_ids"):
+            bot.active_reply_to_ids.pop(chat_id, None)
         bot.session_manager.set_busy(chat_id, False)
+        asyncio.create_task(bot.update_pinned_banner(chat_id, is_busy=False))
         await bot._safe_send_message(chat_id=chat_id, text="🛑 <b>Task interrupted by user.</b>")
     else:
         await bot._safe_send_message(chat_id=chat_id, text="ℹ️ No active task is currently running.")
