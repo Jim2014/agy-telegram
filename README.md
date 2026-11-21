@@ -5,6 +5,7 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 ---
 
 ## Table of Contents
+- [Why agy-telegram?](#why-agy-telegram)
 - [Main Features](#main-features)
 - [⚠️ Limitations & Security Notice](#%EF%B8%8F-limitations--security-notice)
 - [Prerequisites](#prerequisites)
@@ -20,6 +21,17 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 - [Disclaimer](#disclaimer)
 - [Contributing](#contributing)
 - [License](#license)
+
+---
+
+## Why agy-telegram?
+
+Generic multi-agent bot wrappers and remote terminal hacks often fall short when you want to work with **Google Antigravity CLI (`agy`)** from your phone:
+
+- **Zero Middleman LLM Overhead:** Generic agent harnesses that wrap CLI tools inside another outer LLM loop burn extra API tokens, add latency, and dilute context just to relay your prompt. `agy-telegram` connects **directly** to the official `agy` CLI (`stream-json`) on your machine — **0 extra proxy tokens**.
+- **Works Directly With Your Local `agy` Setup (No OAuth Scraping):** Uses your own authenticated local `agy` binary directly—including auto-discovered `/model` options, workspace `.gemini/rules`, skills, and zero-token `/usage` quota checks—without touching or proxying OAuth credentials.
+- **Designed as a Mobile Coding Cockpit:** Instead of slow walls of raw text on a small phone screen, you get live collapsible tool progress (`<blockquote expandable>`), **mid-flight steering** while `agy` is working, one-tap `[AGY_ACTIONS]` decision buttons, mobile-responsive HTML viewers for diffs/code/directory trees (`/file -h`, `/dir`), and hands-free voice input + spoken podcast summaries (`/voice`).
+- **Clean Multi-Project Isolation:** Switch across local repositories (`/new`, `/open`) with independent `conversation_id` persistence, token/duration tracking, and a live pinned workspace banner (`/pin`).
 
 ---
 
@@ -53,6 +65,7 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 
 ## Disclaimer
 
+- **Terms Compliance & Personal Single-User Use:** `agy-telegram` invokes the official, unmodified local `agy` CLI binary in headless mode and does **not** extract, scrape, or proxy Google OAuth tokens. Users are responsible for complying with Google Antigravity's Terms of Service—keep `ALLOW_ALL_CHATS=false` with `ALLOWED_CHAT_IDS` restricted strictly to **your own personal Telegram account**, and do not use this gateway for multi-user sharing, quota harvesting, or commercial redistribution.
 - **Use at Your Own Risk:** This software is provided *"AS IS"*, without warranty of any kind. Because `agy-telegram` enables autonomous AI execution with unrestricted local tool and shell permissions (`--dangerously-skip-permissions`), **you are solely responsible** for any commands executed, files modified or deleted, system changes, API/model quota usage, or unintended behavior resulting from running this tool. The author and contributors assume no liability for any damages or data loss.
 - **No Official Affiliation:** `agy-telegram` is an independent open-source project and is not affiliated with, endorsed by, or officially connected to Google, Antigravity, or Telegram.
 
