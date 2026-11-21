@@ -233,8 +233,10 @@ def parse_agy_models(output: str) -> List[Dict[str, Any]]:
             continue
         seen_base_ids.add(base_id)
 
-        # Determine clean display name
-        clean_name = re.sub(r"\s*\((High|Medium|Low|Thinking)\)", "", raw_name).strip()
+        # Determine clean display name; keep (Low)/(Medium)/(High)/(XHigh) when variants are distinct buttons
+        clean_name = re.sub(r"\s*\(Thinking\)", "", raw_name).strip()
+        if base_id != raw_id:
+            clean_name = re.sub(r"\s*\((High|Medium|Low)\)", "", clean_name).strip()
         if not clean_name or clean_name == base_id:
             clean_name = " ".join(word.capitalize() for word in base_id.split("-"))
 
@@ -325,10 +327,15 @@ def build_model_keyboard(
 
     buttons: List[List[Dict[str, str]]] = []
     for m in model_list:
+        collapsed_variants = (
+            {f"{m['id']}-low", f"{m['id']}-medium", f"{m['id']}-high"}
+            if m.get("raw_id") and m["id"] != m.get("raw_id")
+            else set()
+        )
         is_active = (
             current_model == m["id"]
             or current_model == m.get("raw_id")
-            or current_model.startswith(m["id"])
+            or current_model in collapsed_variants
         )
         marker = "🌟 <b>[ACTIVE]</b> " if is_active else "• "
         lines.append(f"{marker}{m['icon']} <b>{m['name']}</b> (<code>{m['id']}</code>)\n   <i>{m['desc']}</i>")
@@ -336,7 +343,7 @@ def build_model_keyboard(
         buttons.append([{"text": btn_label, "callback_data": f"model:{m['id']}"}])
 
     buttons.append([
-        {"text": "⚡ Adjust Effort", "callback_data": "effort:show"},
+        {"text": "⚡ Effort", "callback_data": "effort:show"},
         {"text": "🔄 Refresh", "callback_data": "model:refresh"},
         {"text": "📊 Status", "callback_data": "status"},
     ])

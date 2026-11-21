@@ -147,3 +147,21 @@ def test_format_pinned_accordion_card_error():
     )
     assert "📌 <b>[Background Task · learner]</b> 🔴 <i>Failed (4.0s)</i>" in card
     assert "❌ <b>Error:</b> AssertionError in test_sync" in card
+
+
+def test_format_pinned_accordion_card_renders_markdown_and_prevents_nested_blockquote():
+    card = format_pinned_accordion_card(
+        target_project="file-share",
+        source_project="admin",
+        task_preview="Report status",
+        tools_log=["✅ read_file (1.3s)"],
+        status_text="Completed",
+        is_done=True,
+        duration_seconds=2.5,
+        final_reply="**Project Status: `file-share`**\n- **Git**: `main` clean\n> quoted note",
+    )
+    assert "<b>Project Status: <code>file-share</code></b>" in card
+    assert "• <b>Git</b>: <code>main</code> clean" in card
+    assert "**Project Status" not in card
+    assert card.count("<blockquote") == 1
+    assert card.count("</blockquote>") == 1

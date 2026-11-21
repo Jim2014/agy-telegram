@@ -399,7 +399,7 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-Test coverage (**168 tests** across 17 test modules):
+Test coverage (**170 tests** across 17 test modules):
 - `tests/test_config.py`: Configuration loading, token validation, deny-by-default chat whitelist, default runtime paths, and system prompt overrides.
 - `tests/test_pairing.py`: DM pairing code lifecycle, expiration, atomic `0600` persistence, revocation, and CLI commands.
 - `tests/test_setup_helper.py`: Telegram `getMe` verification, `getUpdates` Chat ID auto-detection, `.env` rendering/permissions (`0600`), and interactive onboarding flow.

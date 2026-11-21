@@ -13,7 +13,10 @@ import html
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from gateway.message_formatter import markdown_to_telegram_html
 
 
 @dataclass
@@ -171,7 +174,10 @@ def format_pinned_accordion_card(
         clean_rep = final_reply.strip()
         if len(clean_rep) > 500:
             clean_rep = clean_rep[:497] + "..."
-        body_lines.append(f"<b>Result:</b>\n{html.escape(clean_rep, quote=False)}")
+        rendered_rep = markdown_to_telegram_html(clean_rep)
+        # Telegram forbids nested <blockquote> inside <blockquote expandable>
+        rendered_rep = re.sub(r"</?blockquote(?:\s+expandable)?>", "", rendered_rep).strip()
+        body_lines.append(f"<b>Result:</b>\n{rendered_rep}")
     else:
         body_lines.append(f"⏱ <i>{html.escape(status_text, quote=False)}</i>")
 

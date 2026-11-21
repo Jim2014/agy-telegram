@@ -65,6 +65,33 @@ gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
     assert "gpt-oss-120b-medium" in model_ids
 
 
+def test_parse_agy_models_preserves_distinct_claude_and_xhigh_labels():
+    from gateway.ui_keyboards import parse_agy_models
+    raw_output = """Fetching available models...
+gemini-4-hydrogen-high\tGemini 4 Hydrogen (High)
+gemini-4-hydrogen-xhigh\tGemini 4 Hydrogen (XHigh)
+gemini-4-hydrogen-medium\tGemini 4 Hydrogen (Medium)
+claude-opus-5-5-low\tClaude Opus 5.5 (Low)
+claude-opus-5-5-medium\tClaude Opus 5.5 (Medium)
+claude-opus-5-5-high\tClaude Opus 5.5 (High)
+"""
+    parsed = parse_agy_models(raw_output)
+    names_by_id = {m["id"]: m["name"] for m in parsed}
+    assert names_by_id["gemini-4-hydrogen"] == "Gemini 4 Hydrogen"
+    assert names_by_id["gemini-4-hydrogen-xhigh"] == "Gemini 4 Hydrogen (XHigh)"
+    assert names_by_id["claude-opus-5-5-low"] == "Claude Opus 5.5 (Low)"
+    assert names_by_id["claude-opus-5-5-medium"] == "Claude Opus 5.5 (Medium)"
+    assert names_by_id["claude-opus-5-5-high"] == "Claude Opus 5.5 (High)"
+
+    # Ensure gemini-4-hydrogen-xhigh only highlights the XHigh entry, not base gemini-4-hydrogen
+    _, markup = build_model_keyboard("gemini-4-hydrogen-xhigh", "high", models=parsed)
+    btn_texts = [row[0]["text"] for row in markup["inline_keyboard"][:-1]]
+    assert any("✓ Gemini 4 Hydrogen (XHigh)" == t for t in btn_texts)
+    assert not any("✓ Gemini 4 Hydrogen" == t for t in btn_texts)
+    # Bottom row uses compact "⚡ Effort" label so it doesn't truncate on mobile
+    assert markup["inline_keyboard"][-1][0]["text"] == "⚡ Effort"
+
+
 @pytest.mark.asyncio
 async def test_fetch_agy_models_fallback():
     from gateway.ui_keyboards import fetch_agy_models, DEFAULT_STATIC_MODELS
