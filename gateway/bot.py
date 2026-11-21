@@ -576,8 +576,14 @@ class AgyTelegramBot:
                 await self.handle_voice_message(chat_id, message, message_id)
                 return
 
-            # Document or photo file handling
-            if message.get("document") or message.get("photo"):
+            # Document, photo, video, animation, or video_note file handling
+            if (
+                message.get("document")
+                or message.get("photo")
+                or message.get("video")
+                or message.get("animation")
+                or message.get("video_note")
+            ):
                 await self.handle_document_message(chat_id, message, message_id)
                 return
 

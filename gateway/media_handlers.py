@@ -14,6 +14,49 @@ from gateway.transcriber import transcribe_voice
 
 logger = logging.getLogger(__name__)
 
+TELEGRAM_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024  # Telegram Bot API getFile limit (20 MB)
+
+_MEDIA_ATTACHMENT_SPECS = (
+    ("document", "document", "application/octet-stream", None),
+    ("video", "video", "video/mp4", ".mp4"),
+    ("animation", "animation", "video/mp4", ".mp4"),
+    ("video_note", "video_note", "video/mp4", ".mp4"),
+)
+
+
+def _extract_attachment_metadata(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Extract normalized attachment metadata from document, photo, video, animation, or video_note."""
+    for field, default_prefix, default_mime, default_ext in _MEDIA_ATTACHMENT_SPECS:
+        obj = message.get(field)
+        if not isinstance(obj, dict):
+            continue
+        file_id = obj.get("file_id")
+        file_unique_id = obj.get("file_unique_id", default_prefix)
+        fallback_name = f"{default_prefix}_{file_unique_id}{default_ext}" if default_ext else default_prefix
+        return {
+            "kind": field,
+            "file_id": file_id,
+            "file_name": obj.get("file_name") or fallback_name,
+            "file_size": int(obj.get("file_size", 0) or 0),
+            "mime_type": obj.get("mime_type") or default_mime,
+            "duration": int(obj["duration"]) if obj.get("duration") is not None else None,
+        }
+
+    photos = message.get("photo")
+    if isinstance(photos, list) and photos:
+        photo_obj = photos[-1]
+        file_unique_id = photo_obj.get("file_unique_id", "photo")
+        return {
+            "kind": "photo",
+            "file_id": photo_obj.get("file_id"),
+            "file_name": f"photo_{file_unique_id}.jpg",
+            "file_size": int(photo_obj.get("file_size", 0) or 0),
+            "mime_type": "image/jpeg",
+            "duration": None,
+        }
+
+    return None
+
 
 async def handle_voice_message(
     bot: Any,
@@ -128,28 +171,12 @@ async def handle_document_message(
     message: Dict[str, Any],
     message_id: Optional[int],
 ) -> None:
-    """Handle incoming documents or photos, download locally, and send file path to agy."""
-    file_id: Optional[str] = None
-    file_name = "document"
-    file_size = 0
-    mime_type = "application/octet-stream"
+    """Handle incoming documents, photos, videos, animations, or video notes."""
+    meta = _extract_attachment_metadata(message)
+    file_id = meta.get("file_id") if meta else None
 
-    if "document" in message:
-        doc = message["document"]
-        file_id = doc.get("file_id")
-        file_name = doc.get("file_name", "document")
-        file_size = int(doc.get("file_size", 0))
-        mime_type = doc.get("mime_type", "application/octet-stream")
-    elif "photo" in message and isinstance(message["photo"], list) and message["photo"]:
-        photo_obj = message["photo"][-1]
-        file_id = photo_obj.get("file_id")
-        file_unique_id = photo_obj.get("file_unique_id", "photo")
-        file_name = f"photo_{file_unique_id}.jpg"
-        file_size = int(photo_obj.get("file_size", 0))
-        mime_type = "image/jpeg"
-
-    if not file_id:
-        logger.warning("Document/Photo message received without file_id in chat %s", chat_id)
+    if not meta or not file_id:
+        logger.warning("Media/Document message received without file_id in chat %s", chat_id)
         await bot._safe_send_message(
             chat_id=chat_id,
             text="⚠️ Unable to process file: missing file ID.",
@@ -157,10 +184,35 @@ async def handle_document_message(
         )
         return
 
+    file_name = meta["file_name"]
+    file_size = meta["file_size"]
+    mime_type = meta["mime_type"]
+    duration = meta["duration"]
+
+    if file_size > TELEGRAM_MAX_DOWNLOAD_BYTES:
+        size_mb = file_size / (1024 * 1024)
+        logger.warning(
+            "Attachment '%s' in chat %s exceeds 20 MB Bot API limit (%d bytes)",
+            file_name,
+            chat_id,
+            file_size,
+        )
+        await bot._safe_send_message(
+            chat_id=chat_id,
+            text=(
+                f"⚠️ File <code>{escape_html(file_name)}</code> is too large ({size_mb:.1f} MB). "
+                "Telegram Bot API only allows downloading files up to 20 MB. "
+                "Please trim, compress, or send a shorter clip."
+            ),
+            reply_to_message_id=message_id,
+        )
+        return
+
     caption = message.get("caption", "").strip()
 
     logger.info(
-        "Received document/attachment '%s' in chat %s (size=%d, mime=%s)",
+        "Received %s attachment '%s' in chat %s (size=%d, mime=%s)",
+        meta["kind"],
         file_name,
         chat_id,
         file_size,
@@ -199,6 +251,8 @@ async def handle_document_message(
         f"• File Size: {file_size} bytes",
         f"• MIME Type: {mime_type}",
     ]
+    if duration is not None:
+        prompt_lines.append(f"• Duration: {duration}s")
     if caption:
         prompt_lines.append(f"• User Instructions/Caption: {caption}")
     prompt_lines.append("")
@@ -227,4 +281,13 @@ async def handle_document_message(
 
 
 if __name__ == "__main__":
-    print("Media handlers module initialized.")
+    sample_video = {
+        "video": {
+            "file_id": "v1",
+            "file_unique_id": "vu1",
+            "file_size": 1024,
+            "duration": 8,
+        }
+    }
+    assert _extract_attachment_metadata(sample_video)["file_name"] == "video_vu1.mp4"
+    print("Media handlers module self-test passed.")

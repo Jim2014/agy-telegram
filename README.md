@@ -311,7 +311,7 @@ tail -f -n 50 runtime/watchdog.log
 | :--- | :--- | :--- |
 | **Plain text message** | Starts a new turn when idle; **automatically steers** the active session when busy | `List files in this repository` |
 | **🎙️ Voice / Audio message** | Downloaded locally and transcribed offline via `faster-whisper`; steers automatically if busy | 🎙️ Send a voice note |
-| **📎 File / Photo attachment** | Saved to `runtime/documents/` and passed with metadata to `agy`; supports mid-flight steering | 📎 Upload code, docs, or images |
+| **📎 File / Photo / Video attachment** | Saved to `runtime/documents/` (documents, photos, videos, animations, video notes ≤ 20 MB) and passed with metadata to `agy`; supports mid-flight steering | 📎 Upload code, docs, images, or screen recordings |
 | `/voice [mode]` | Configure TTS mode: `disable`, `autogen` (on-demand button), or `autoplay` | `/voice` or `/voice autoplay` |
 | `/html [mode]` | Configure HTML attachment mode: `auto` (long replies & diffs), `explicit` (`[AGY_FILE]` only), or `off` | `/html` or `/html explicit` |
 | `/pin` or `/banner` | Refresh and pin the live workspace status banner at the top of the chat | `/pin` |
@@ -369,7 +369,7 @@ Each Python module is single-purpose and supports standalone CLI verification:
 - `gateway/session_manager.py` (`python -m gateway.session_manager`): Multi-project session persistence (`runtime/sessions.json`), LRU command stats, and token metrics.
 - `gateway/ui_keyboards.py` (`python -m gateway.ui_keyboards`): Inline keyboard builders, dynamic `agy models` discovery, adaptive LRU command menus, and WebApp viewer buttons.
 - `gateway/transcriber.py` (`python -m gateway.transcriber`): Offline `faster-whisper` speech-to-text transcription with lazy model caching.
-- `gateway/media_handlers.py` (`python -m gateway.media_handlers`): Voice/audio and document/photo download handlers with mid-flight steering routing.
+- `gateway/media_handlers.py` (`python -m gateway.media_handlers`): Voice/audio and document/photo/video/animation/video-note download handlers (with 20 MB Bot API size guard) and mid-flight steering routing.
 - `gateway/commands.py` (`python -m gateway.commands`): Slash command handlers and inline callback query routing.
 - `gateway/dir_tree.py` (`python -m gateway.dir_tree`): Recursive workspace directory scanner and interactive HTML file tree generator.
 - `gateway/file_renderers.py` (`python -m gateway.file_renderers`): Multi-format standalone HTML renderers for `/file -h`.
@@ -399,7 +399,7 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-Test coverage (**165 tests** across 17 test modules):
+Test coverage (**168 tests** across 17 test modules):
 - `tests/test_config.py`: Configuration loading, token validation, deny-by-default chat whitelist, default runtime paths, and system prompt overrides.
 - `tests/test_pairing.py`: DM pairing code lifecycle, expiration, atomic `0600` persistence, revocation, and CLI commands.
 - `tests/test_setup_helper.py`: Telegram `getMe` verification, `getUpdates` Chat ID auto-detection, `.env` rendering/permissions (`0600`), and interactive onboarding flow.

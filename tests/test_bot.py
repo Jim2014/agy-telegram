@@ -1022,6 +1022,112 @@ async def test_bot_photo_message_flow(mock_bot, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_bot_video_message_flow(mock_bot, tmp_path):
+    fake_video_file = tmp_path / "doc_100_vu789.mp4"
+    fake_video_file.write_bytes(b"MP4_VIDEO_BYTES")
+
+    mock_bot.client.download_file_by_id = AsyncMock(
+        return_value=(fake_video_file, {"file_id": "v789", "file_path": "videos/screen.mp4"})
+    )
+
+    captured_prompt = {}
+
+    async def mock_handle_prompt(chat_id, prompt, reply_to_id):
+        captured_prompt["prompt"] = prompt
+
+    mock_bot.handle_prompt = mock_handle_prompt
+
+    update = {
+        "message": {
+            "chat": {"id": 100},
+            "message_id": 892,
+            "video": {
+                "file_id": "v789",
+                "file_unique_id": "vu789",
+                "file_name": "screen-recording.mp4",
+                "file_size": 2048000,
+                "mime_type": "video/mp4",
+                "duration": 14,
+            },
+            "caption": "Make a GIF demo from this screen recording",
+        }
+    }
+
+    await mock_bot.process_update(update)
+
+    mock_bot.client.send_chat_action.assert_called_with(chat_id=100, action="upload_document")
+    assert str(fake_video_file.resolve()) in captured_prompt["prompt"]
+    assert "screen-recording.mp4" in captured_prompt["prompt"]
+    assert "MIME Type: video/mp4" in captured_prompt["prompt"]
+    assert "Duration: 14s" in captured_prompt["prompt"]
+    assert "Make a GIF demo from this screen recording" in captured_prompt["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_bot_animation_and_video_note_flows(mock_bot, tmp_path):
+    for field, uid, expected_name in (
+        ("animation", "au1", "animation_au1.mp4"),
+        ("video_note", "vnu2", "video_note_vnu2.mp4"),
+    ):
+        fake_file = tmp_path / expected_name
+        fake_file.write_bytes(b"BYTES")
+        mock_bot.client.download_file_by_id = AsyncMock(
+            return_value=(fake_file, {"file_id": "id1", "file_path": f"videos/{expected_name}"})
+        )
+        captured = {}
+
+        async def mock_handle_prompt(chat_id, prompt, reply_to_id):
+            captured["prompt"] = prompt
+
+        mock_bot.handle_prompt = mock_handle_prompt
+
+        update = {
+            "message": {
+                "chat": {"id": 100},
+                "message_id": 893,
+                field: {
+                    "file_id": "id1",
+                    "file_unique_id": uid,
+                    "file_size": 1024,
+                    "duration": 5,
+                },
+            }
+        }
+
+        await mock_bot.process_update(update)
+        assert expected_name in captured["prompt"]
+        assert "Duration: 5s" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_bot_oversized_video_rejected_before_download(mock_bot):
+    mock_bot.client.download_file_by_id = AsyncMock()
+
+    update = {
+        "message": {
+            "chat": {"id": 100},
+            "message_id": 894,
+            "video": {
+                "file_id": "v_big",
+                "file_unique_id": "vu_big",
+                "file_name": "huge_recording.mp4",
+                "file_size": 25 * 1024 * 1024,
+                "mime_type": "video/mp4",
+                "duration": 60,
+            },
+        }
+    }
+
+    await mock_bot.process_update(update)
+
+    mock_bot.client.download_file_by_id.assert_not_called()
+    mock_bot.client.send_message.assert_called()
+    sent_text = mock_bot.client.send_message.call_args[1]["text"]
+    assert "too large" in sent_text
+    assert "20 MB" in sent_text
+
+
+@pytest.mark.asyncio
 async def test_bot_voice_download_error(mock_bot):
     mock_bot.client.download_file_by_id = AsyncMock(side_effect=RuntimeError("Connection reset by peer"))
 
