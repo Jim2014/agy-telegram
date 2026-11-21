@@ -43,7 +43,7 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
     - **Watchdog Supervisor & macOS Autostart**: Includes `watchdog.sh` (`./restart.sh watch`) for crash auto-recovery within 10 seconds, plus macOS LaunchAgent integration (`./restart.sh autostart`).
     - `/stop` immediately interrupts the active `agy` subprocess.
     - Automatic Telegram 4096-character chunk splitting, rate-limit throttling, and HTML fallback handling.
-    - Comprehensive test suite (**152 tests** covering unit, network resilience, protocol parsing, and real `agy` CLI smoke testing). See [ROADMAP.md](ROADMAP.md) for planned milestones.
+    - Comprehensive test suite (**157 tests** covering unit, network resilience, protocol parsing, onboarding setup, and real `agy` CLI smoke testing). See [ROADMAP.md](ROADMAP.md) for planned milestones.
 11. **Cross-Project Multi-Agent Mesh (`AGY_IPC`) & Pinned Expandable Cards**:
     - **Decentralized Cross-Workspace Collaboration**: Agents can dispatch sub-tasks across registered project directories via `[AGY_IPC to="<target>"]...[END_AGY_IPC]` envelopes (`[AGY_INCOMING]`) and automatically return results to the main chat.
     - **Dedicated Pinned Progress Cards**: Maintains per-project pinned expandable cards (`<blockquote expandable>`) in Telegram tracking live tool execution and elapsed duration.
@@ -71,7 +71,19 @@ git clone https://github.com/Jim2014/agy-telegram.git
 cd agy-telegram
 ```
 
-### Option A: Conda Environment (Recommended, env: `agy-telegram`)
+### Quick Start (Recommended): One-Command Interactive Setup (`./setup.sh`)
+
+Run the interactive onboarding wizard to create the Python environment (Conda `agy-telegram` or `venv`), verify your Telegram bot token via `getMe`, auto-detect your Telegram `chat_id` when you send `/start`, write `.env` with `0600` permissions, and validate the setup:
+
+```bash
+./setup.sh
+```
+
+*(Pass `./setup.sh --venv` to force Python `venv` instead of Conda, or `./setup.sh --check` to validate an existing config.)*
+
+---
+
+### Manual Option A: Conda Environment (Recommended, env: `agy-telegram`)
 
 An `environment.yml` (Python 3.10) is provided:
 
@@ -111,6 +123,7 @@ agy-telegram/
 │   └── sessions.json     # Persistent chat, project & stats store
 ├── gateway/              # Core Python gateway modules
 ├── tests/                # Unit, integration & smoke tests
+├── setup.sh              # Interactive first-time setup & Telegram onboarding wizard
 ├── restart.sh            # Service, watchdog & autostart control script
 ├── watchdog.sh           # Watchdog auto-restart supervisor script
 ├── environment.yml       # Conda environment specification
@@ -331,6 +344,7 @@ When using `/file -h <path>`, the gateway selects a renderer based on file exten
 Each Python module is single-purpose and supports standalone CLI verification:
 
 - `gateway/config.py` (`python -m gateway.config`): Environment loading, validation, dynamic binary resolution, and system prompt configuration.
+- `gateway/setup_helper.py` (`python -m gateway.setup_helper`): Interactive onboarding wizard for `.env` generation, Telegram `getMe` verification, and automatic `chat_id` detection.
 - `gateway/session_manager.py` (`python -m gateway.session_manager`): Multi-project session persistence (`runtime/sessions.json`), LRU command stats, and token metrics.
 - `gateway/ui_keyboards.py` (`python -m gateway.ui_keyboards`): Inline keyboard builders, dynamic `agy models` discovery, adaptive LRU command menus, and WebApp viewer buttons.
 - `gateway/transcriber.py` (`python -m gateway.transcriber`): Offline `faster-whisper` speech-to-text transcription with lazy model caching.
@@ -364,8 +378,9 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-Test coverage (**152 tests** across 14 test modules):
+Test coverage (**157 tests** across 15 test modules):
 - `tests/test_config.py`: Configuration loading, token validation, chat whitelist, default runtime paths, and system prompt overrides.
+- `tests/test_setup_helper.py`: Telegram `getMe` verification, `getUpdates` Chat ID auto-detection, `.env` rendering/permissions (`0600`), and interactive onboarding flow.
 - `tests/test_session_manager.py`: Session CRUD, persistence, legacy migration, token/duration stats, and LRU command tracking.
 - `tests/test_ui_keyboards.py`: Project switchers, dynamic `agy models` parsing and fallback discovery, effort keyboards, adaptive LRU menus, and WebApp buttons.
 - `tests/test_webapp_server.py`: Async WebApp lifecycle, document registration, Telegram WebApp SDK injection, and `/health` endpoint.
