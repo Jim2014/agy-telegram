@@ -5,6 +5,7 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 ---
 
 ## Table of Contents
+- [Live Demos](#live-demos)
 - [Why agy-telegram?](#why-agy-telegram)
 - [Main Features](#main-features)
 - [⚠️ Limitations & Security Notice](#%EF%B8%8F-limitations--security-notice)
@@ -21,6 +22,25 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 - [Disclaimer](#disclaimer)
 - [Contributing](#contributing)
 - [License](#license)
+
+---
+
+## Live Demos
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <strong>Interactive Controls &amp; Quota Monitor</strong><br />
+      <sub>Adaptive <code>/</code> menu &middot; <code>/model</code> &middot; <code>/effort</code> &middot; <code>/usage</code></sub><br /><br />
+      <img src="docs/demo_controls.gif" alt="agy-telegram interactive controls and quota demo" width="280" />
+    </td>
+    <td align="center" width="50%">
+      <strong>Cross-Project <code>AGY_IPC</code> &amp; Pinned Tasks</strong><br />
+      <sub>Multi-workspace dispatch &middot; live pinned status &middot; expandable tool trace</sub><br /><br />
+      <img src="docs/demo_ipc.gif" alt="agy-telegram cross-project IPC and pinned background tasks demo" width="280" />
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -45,7 +65,7 @@ Generic multi-agent bot wrappers and remote terminal hacks often fall short when
 - **Voice Interaction (Offline STT + Bilingual TTS)**: Transcribes Telegram voice messages offline via `faster-whisper` and generates spoken audio summaries (`[AGY_VOICE]`) with on-demand playback buttons or auto-send (`/voice`).
 - **One-Tap Setup & Hardened Access Control**: Interactive `./setup.sh` wizard with live token verification and automatic Chat ID detection, **deny-by-default** authorization with **DM pairing** (`gateway.pairing`), crash watchdog (`watchdog.sh`), and macOS LaunchAgent autostart.
 - **Cross-Project Multi-Agent Mesh (`AGY_IPC`)**: Dispatches tasks across registered project directories with pinned expandable progress cards in Telegram and audit logging (`runtime/ipc.log`).
-- **Automated Test Suite**: **165 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, CLI script safety, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
+- **Automated Test Suite**: **170 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, CLI script safety, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
 
 ---
 
