@@ -5,50 +5,46 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 ---
 
 ## Table of Contents
-- [Key Features](#key-features)
+- [Main Features](#main-features)
+- [⚠️ Limitations & Security Notice](#%EF%B8%8F-limitations--security-notice)
 - [Prerequisites](#prerequisites)
 - [Environment Setup](#environment-setup)
-  - [Option A: Conda Environment (Recommended, env: `agy-telegram`)](#option-a-conda-environment-recommended-env-agy-telegram)
-  - [Option B: Python `venv`](#option-b-python-venv)
+  - [Quick Start (Recommended): `./setup.sh`](#quick-start-recommended-one-command-interactive-setup-setupsh)
+  - [Manual Conda / `venv` Setup](#manual-option-a-conda-environment-recommended-env-agy-telegram)
 - [Runtime Isolation (`runtime/`)](#runtime-isolation-runtime)
 - [Configuration Guide (`.env`)](#configuration-guide-env)
-  - [Step 1: Obtain a Telegram Bot Token](#step-1-obtain-a-telegram-bot-token)
-  - [Step 2: Find Your Telegram Chat ID (Security Whitelist)](#step-2-find-your-telegram-chat-id-security-whitelist)
-  - [Step 3: Configure `.env`](#step-3-configure-env)
 - [Starting and Managing the Service](#starting-and-managing-the-service)
-  - [Step 4: First Chat in Telegram](#4-first-chat-in-telegram)
 - [Telegram Commands & Interactive UI](#telegram-commands--interactive-ui)
-  - [Supported Commands & Inputs](#supported-commands--inputs)
-  - [Dynamic Multi-Template HTML Rendering (`/file -h`)](#dynamic-multi-template-html-rendering-file--h)
-  - [Mid-Flight Steering & System Prompt Injection](#mid-flight-steering--system-prompt-injection)
 - [Architecture & Module Overview](#architecture--module-overview)
 - [Testing & Verification](#testing--verification)
 
 ---
 
-## Key Features
+## Main Features
 
-1. **Telegram Long-Polling**: Built directly on the Telegram Bot API — no public IP or webhook setup required.
-2. **Real-Time Streaming & Tool Visibility**: Captures `agy` `stream-json` events in real time, displaying tool invocations (`run_command`, `view_file`, `grep_search`, `invoke_subagent`, `read_url_content`, `generate_image`, `schedule`, etc.) with live elapsed timings.
-3. **Mid-Flight Steering & Warm Process Pool**: Inject steering guidance while `agy` is actively working via `/steer` or by sending a normal message (rotating the Telegram progress reply cleanly so only one final report is sent); supports `--input-format stream-json` keep-alive turns to eliminate cold-start latency.
-4. **Declarative Agent Rules**: Follows AGY rules specifications using `.gemini/rules/` and `.gemini/rules.json` for output formatting and `[AGY_FILE]` document exports.
-5. **Project-Based Session Persistence & Isolation**: Manage multiple project workspaces (`/new`, `/open`, `/delete`, `/reset`, `/projects`), each persisting its own `path`, `conversation_id`, and usage stats.
-6. **Dynamic Model Discovery & Effort Controls**: `/model` auto-discovers available models directly from `agy models` (with caching and `/model refresh`), `/effort` adjusts reasoning depth (`low`/`medium`/`high`), and `/dir` inspects the active workspace tree.
-7. **Voice Messages & Audio Interaction (Faster-Whisper STT + Bilingual TTS)**: Send Telegram voice notes or audio files, automatically downloaded to `runtime/voice/` and transcribed offline via `faster-whisper` before being sent to `agy` (or steered mid-flight); includes dynamic bilingual TTS (`[AGY_VOICE]`) supporting on-demand playback buttons (`[ 🔊 Play Audio ]`) or auto-sent voice replies.
-8. **File & Photo Attachments + Telegram Mini App WebApp**: Send documents, source files, CSVs, or images directly in chat (saved to `runtime/documents/`) for `agy` analysis; generated HTML reports are served by the built-in WebApp server (`:8765`) with `[ 🌐 Open in Telegram ]` buttons.
-9. **Runtime Isolation & Git Safety**: Runtime logs (`runtime/gateway.log`), PID files (`runtime/gateway.pid`), session persistence (`runtime/sessions.json`), voice cache (`runtime/voice/`), and uploads (`runtime/documents/`) are isolated inside `runtime/` and excluded via `.gitignore`.
-10. **Hardening & Auto-Healing**:
-    - **Deny-by-Default & DM Pairing**: Blocks unknown chats unless listed in `ALLOWED_CHAT_IDS` (or `ALLOW_ALL_CHATS=true`). Unknown senders receive a temporary 8-character pairing code that owners can approve with one tap in Telegram (`[ ✅ Approve ]`) or via CLI (`python -m gateway.pairing approve <CODE>`).
-    - **Telegram Network Exception Resilience**: Wrapped Telegram API calls gracefully absorb transient `httpx.ReadError`, timeouts, and network hiccups without aborting streaming turns.
-    - **Watchdog Supervisor & macOS Autostart**: Includes `watchdog.sh` (`./restart.sh watch`) for crash auto-recovery within 10 seconds, plus macOS LaunchAgent integration (`./restart.sh autostart`).
-    - `/stop` immediately interrupts the active `agy` subprocess.
-    - Automatic Telegram 4096-character chunk splitting, rate-limit throttling, and HTML fallback handling.
-    - Comprehensive test suite (**162 tests** covering unit, network resilience, protocol parsing, onboarding setup, DM pairing, deferred restarts, and real `agy` CLI smoke testing). See [ROADMAP.md](ROADMAP.md) for planned milestones.
-11. **Cross-Project Multi-Agent Mesh (`AGY_IPC`) & Pinned Expandable Cards**:
-    - **Decentralized Cross-Workspace Collaboration**: Agents can dispatch sub-tasks across registered project directories via `[AGY_IPC to="<target>"]...[END_AGY_IPC]` envelopes (`[AGY_INCOMING]`) and automatically return results to the main chat.
-    - **Dedicated Pinned Progress Cards**: Maintains per-project pinned expandable cards (`<blockquote expandable>`) in Telegram tracking live tool execution and elapsed duration.
-    - **Interactive Unpin Button**: Each IPC card includes a `[ 📌 Unpin ]` button to unpin and sync state via the Telegram Bot API.
-    - **Dedicated IPC Audit Log**: Records full `DISPATCH`, `INIT`, `TOOL`, and `COMPLETE` lifecycles in `runtime/ipc.log`.
+- **Direct Real-Time Streaming via Telegram**: Built on Telegram Long-Polling (no public IP or webhook required) to stream `agy` thinking progress, live tool calls, and partial outputs directly to mobile.
+- **Mid-Flight Steering & Warm Process Pool**: Send a follow-up text, voice note, file, or `/steer` while `agy` is working to guide the active turn seamlessly; rotates the Telegram progress reply cleanly and delivers one consolidated final report.
+- **Multi-Project Isolation**: Manage separate workspaces (`/new`, `/open`, `/projects`, `/delete`, `/reset`), each with its own directory path, `conversation_id`, token/duration stats, and pinned status banner (`/pin`).
+- **Dynamic Model & Effort Controls**: Auto-discovers available models from `agy models` via `/model` (with refresh) and adjusts reasoning depth via `/effort` (`low` / `medium` / `high`).
+- **Rich Mobile-First Output & WebApp Viewer**: Converts Markdown to Telegram HTML, renders code/diffs/CSVs/directory trees as mobile-friendly standalone HTML (`/file -h`, `/dir`, `/html`), and serves previews in an embedded Telegram Mini App (`:8765`).
+- **Voice Interaction (Offline STT + Bilingual TTS)**: Transcribes Telegram voice messages offline via `faster-whisper` and generates spoken audio summaries (`[AGY_VOICE]`) with on-demand playback buttons or auto-send (`/voice`).
+- **One-Tap Setup & Hardened Access Control**: Interactive `./setup.sh` wizard with live token verification and automatic Chat ID detection, **deny-by-default** authorization with **DM pairing** (`gateway.pairing`), crash watchdog (`watchdog.sh`), and macOS LaunchAgent autostart.
+- **Cross-Project Multi-Agent Mesh (`AGY_IPC`)**: Dispatches tasks across registered project directories with pinned expandable progress cards in Telegram and audit logging (`runtime/ipc.log`).
+- **Automated Test Suite**: **162 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
+
+---
+
+## ⚠️ Limitations & Security Notice
+
+> [!WARNING]
+> **Please read carefully before deploying on a personal or production machine:**
+>
+> 1. **Platform Testing Scope (macOS Tested Only):**
+>    `agy-telegram` has only been tested on **macOS** (Apple Silicon). It should also work on **Linux** or inside a **Virtual Machine / Container** (note: macOS-specific features like `launchd` autostart and `say` offline TTS fallback are skipped on Linux, while Edge-TTS works cross-platform), though non-macOS environments have not been formally tested.
+> 2. **Unrestricted Tool & Shell Execution (`--dangerously-skip-permissions`):**
+>    Because Telegram acts as a non-interactive headless bridge, `agy-telegram` launches `agy` with `--dangerously-skip-permissions`. This grants `agy` permission to use **all enabled tools** and **execute any shell command** without interactive confirmation prompts.
+>    - **Strongly Recommended:** Run `agy-telegram` inside an **isolated container (Docker) or Virtual Machine (VM)**, or make sure you explicitly trust granting `agy` full tool and command-line permissions on the host machine.
+>    - Always keep `ALLOW_ALL_CHATS=false` and configure `ALLOWED_CHAT_IDS` + DM pairing so unauthorized Telegram users cannot reach your bot.
 
 ---
 
