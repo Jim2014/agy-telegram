@@ -6,14 +6,17 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 
 ## Table of Contents
 - [Key Features](#key-features)
+- [Prerequisites](#prerequisites)
 - [Environment Setup](#environment-setup)
   - [Option A: Conda Environment (Recommended, env: `agy-telegram`)](#option-a-conda-environment-recommended-env-agy-telegram)
   - [Option B: Python `venv`](#option-b-python-venv)
 - [Runtime Isolation (`runtime/`)](#runtime-isolation-runtime)
 - [Configuration Guide (`.env`)](#configuration-guide-env)
   - [Step 1: Obtain a Telegram Bot Token](#step-1-obtain-a-telegram-bot-token)
-  - [Step 2: Configure `.env`](#step-2-configure-env)
+  - [Step 2: Find Your Telegram Chat ID (Security Whitelist)](#step-2-find-your-telegram-chat-id-security-whitelist)
+  - [Step 3: Configure `.env`](#step-3-configure-env)
 - [Starting and Managing the Service](#starting-and-managing-the-service)
+  - [Step 4: First Chat in Telegram](#4-first-chat-in-telegram)
 - [Telegram Commands & Interactive UI](#telegram-commands--interactive-ui)
   - [Supported Commands & Inputs](#supported-commands--inputs)
   - [Dynamic Multi-Template HTML Rendering (`/file -h`)](#dynamic-multi-template-html-rendering-file--h)
@@ -49,28 +52,41 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 
 ---
 
+## Prerequisites
+
+Before cloning and running `agy-telegram`, make sure you have:
+- **Antigravity CLI (`agy`)** installed and authenticated on your machine (verify with `agy --version` and `agy models`).
+- **Python 3.10+** (or **Miniconda / Anaconda**).
+- **Telegram** account (mobile or desktop).
+- *Optional:* `ffmpeg` installed if you want macOS offline TTS audio fallback (`brew install ffmpeg`).
+
+---
+
 ## Environment Setup
+
+First, clone the repository:
+
+```bash
+git clone https://github.com/Jim2014/agy-telegram.git
+cd agy-telegram
+```
 
 ### Option A: Conda Environment (Recommended, env: `agy-telegram`)
 
 An `environment.yml` (Python 3.10) is provided:
 
 ```bash
-cd /path/to/agy-telegram
-
 # 1. Create and activate the conda environment
 conda env create -f environment.yml
 conda activate agy-telegram
 
-# 2. Install Python dependencies (if not installed automatically)
+# 2. Verify or update Python dependencies (if needed)
 pip install -r requirements.txt
 ```
 
 ### Option B: Python `venv`
 
 ```bash
-cd /path/to/agy-telegram
-
 # 1. Create virtual environment
 python3 -m venv venv
 
@@ -114,7 +130,15 @@ agy-telegram/
 2. Send `/newbot` and follow the prompts to choose a display name and username (e.g. `my_agy_bot`).
 3. Copy the generated API token (format: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`).
 
-### Step 2: Configure `.env`
+### Step 2: Find Your Telegram Chat ID (Security Whitelist)
+
+> [!WARNING]
+> If `ALLOWED_CHAT_IDS` is left empty, **anyone on Telegram** who finds your bot username can send prompts to your local `agy` CLI. Setting your own Chat ID is strongly recommended before starting the gateway.
+
+1. Search for [@userinfobot](https://t.me/userinfobot) on Telegram and press **Start**.
+2. Copy your numeric **Id** (for example, `123456789`).
+
+### Step 3: Configure `.env`
 
 Create `.env` from the template:
 
@@ -122,7 +146,7 @@ Create `.env` from the template:
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` and fill in at least `BOT_TOKEN` and `ALLOWED_CHAT_IDS`:
 
 ```ini
 # Required: Bot token from @BotFather
@@ -177,39 +201,51 @@ Verify that the local `agy` CLI runs properly and emits `stream-json` events:
 conda run -n agy-telegram python main.py --smoke-test
 ```
 
-### 3. Start & Manage Background Services
+### 3. Start & Manage the Gateway
 
-Use `restart.sh` to control the gateway, watchdog, and macOS LaunchAgent:
+For a first-time test in the **foreground** (so you can watch live logs directly in your terminal):
 
 ```bash
-# Start or restart the gateway
-./restart.sh
-
-# Check gateway, watchdog, WebApp health, and LaunchAgent status
-./restart.sh status
-
-# Enable macOS boot/login autostart (LaunchAgent)
-./restart.sh autostart
-
-# Disable macOS autostart
-./restart.sh autostart-disable
-
-# Start crash auto-recovery watchdog supervisor
-./restart.sh watch
-
-# Stop both gateway and watchdog
-./restart.sh stop
-
-# Stop only the watchdog
-./restart.sh stop-watch
+conda run -n agy-telegram python main.py
+# Or with venv:
+./venv/bin/python main.py
 ```
 
-Logs are written to `runtime/gateway.log` and `runtime/watchdog.log`:
+Or use `restart.sh` to start and manage the gateway in the **background** (and macOS LaunchAgent autostart):
+
+```bash
+# Start or restart the gateway in background
+./restart.sh
+
+# Check gateway, WebApp health, and LaunchAgent status
+./restart.sh status
+
+# (macOS only) Enable boot/login autostart via LaunchAgent
+./restart.sh autostart
+
+# (macOS only) Disable macOS autostart
+./restart.sh autostart-disable
+
+# Stop gateway (and watchdog if running)
+./restart.sh stop
+```
+
+Logs are written to `runtime/gateway.log`:
 
 ```bash
 tail -f -n 50 runtime/gateway.log
-tail -f -n 50 runtime/watchdog.log
 ```
+
+### 4. First Chat in Telegram
+
+1. Open the bot link provided by `@BotFather` (`https://t.me/<your_bot_username>`) in Telegram and tap **Start** (or send `/help`).
+2. You should see the interactive **agy-telegram Command Center** with quick-action buttons.
+3. Send any prompt directly (for example: `Summarize this repository`) — on first message, a `default` project is created at `AGY_WORKING_DIR`.
+4. Useful first-time setup commands in Telegram:
+   - `/new myapp /path/to/your/project` — create and switch to another project workspace
+   - `/model` — inspect and select models auto-discovered from `agy models`
+   - `/effort` — choose reasoning depth (`low`, `medium`, `high`)
+   - `/voice` & `/html` — configure spoken voice notes and automatic HTML report attachments
 
 ---
 
