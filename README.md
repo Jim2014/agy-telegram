@@ -17,6 +17,9 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 - [Telegram Commands & Interactive UI](#telegram-commands--interactive-ui)
 - [Architecture & Module Overview](#architecture--module-overview)
 - [Testing & Verification](#testing--verification)
+- [Disclaimer](#disclaimer)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
@@ -45,6 +48,13 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 >    Because Telegram acts as a non-interactive headless bridge, `agy-telegram` launches `agy` with `--dangerously-skip-permissions`. This grants `agy` permission to use **all enabled tools** and **execute any shell command** without interactive confirmation prompts.
 >    - **Strongly Recommended:** Run `agy-telegram` inside an **isolated container (Docker) or Virtual Machine (VM)**, or make sure you explicitly trust granting `agy` full tool and command-line permissions on the host machine.
 >    - Always keep `ALLOW_ALL_CHATS=false` and configure `ALLOWED_CHAT_IDS` + DM pairing so unauthorized Telegram users cannot reach your bot.
+
+---
+
+## Disclaimer
+
+- **Use at Your Own Risk:** This software is provided *"AS IS"*, without warranty of any kind. Because `agy-telegram` enables autonomous AI execution with unrestricted local tool and shell permissions (`--dangerously-skip-permissions`), **you are solely responsible** for any commands executed, files modified or deleted, system changes, API/model quota usage, or unintended behavior resulting from running this tool. The author and contributors assume no liability for any damages or data loss.
+- **No Official Affiliation:** `agy-telegram` is an independent open-source project and is not affiliated with, endorsed by, or officially connected to Google, Antigravity, or Telegram.
 
 ---
 
@@ -393,3 +403,20 @@ Test coverage (**162 tests** across 16 test modules):
 - `tests/test_transcriber.py`: `faster-whisper` singleton caching and async audio transcription.
 - `tests/test_voice_tts.py`: Bilingual TTS synthesis and OGG Opus output.
 - `tests/test_smoke_agy.py`: Live `agy` CLI smoke test.
+
+---
+
+## Contributing
+
+Contributions are welcome! Feel free to open an Issue or submit a Pull Request:
+
+1. Fork the repository and create a feature or fix branch.
+2. Keep all source code, comments, docstrings, UI strings, and documentation in **English**.
+3. Run the full test suite (`conda run -n agy-telegram pytest -v`) and ensure all tests pass.
+4. Never commit `.env`, `runtime/`, credentials, or personal paths.
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).
