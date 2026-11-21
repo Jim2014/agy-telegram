@@ -400,6 +400,7 @@ def build_effort_keyboard(
 def build_permissions_keyboard(
     current_preset: str,
     current_model: str = "",
+    project_name: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Build permission preset configuration message text and inline keyboard markup."""
     presets = [
@@ -430,6 +431,8 @@ def build_permissions_keyboard(
     ]
 
     lines = ["🛡️ <b>Permission Preset Setting:</b>\n"]
+    if project_name:
+        lines.append(f"• <b>Scope:</b> Project <code>{escape_html(project_name)}</code>")
     if current_model:
         lines.append(f"• <b>Active Model:</b> <code>{escape_html(current_model)}</code>")
     lines.append(f"• <b>Active Preset:</b> <code>{escape_html(current_preset)}</code>\n")
@@ -631,19 +634,6 @@ def build_pinned_banner_keyboard() -> Dict[str, Any]:
         ],
     ]
     return {"inline_keyboard": buttons}
-
-
-def build_webapp_viewer_button(
-    url: str,
-    title: str = "🌐 Open in Telegram",
-) -> Dict[str, Any]:
-    """
-    Build an inline button that launches Telegram WebApp popup.
-    Telegram API strictly requires HTTPS for web_app buttons; falls back to standard url for HTTP.
-    """
-    if url.startswith("https://"):
-        return {"text": title, "web_app": {"url": url}}
-    return {"text": title, "url": url}
 
 
 def build_voice_keyboard(current_mode: str) -> Tuple[str, Dict[str, Any]]:

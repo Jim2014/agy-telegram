@@ -131,6 +131,7 @@ class TelegramClient:
         offset: Optional[int] = None,
         limit: int = 100,
         timeout: int = 30,
+        raise_on_error: bool = False,
     ) -> List[Dict[str, Any]]:
         """Long poll updates from Telegram."""
         payload: Dict[str, Any] = {
@@ -150,6 +151,8 @@ class TelegramClient:
             return []
         except Exception as e:
             logger.warning("getUpdates failed: %s", e)
+            if raise_on_error:
+                raise
             return []
 
     async def send_message(

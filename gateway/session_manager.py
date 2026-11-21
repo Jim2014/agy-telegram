@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,6 +55,23 @@ class ChatSession:
     def working_dir(self) -> Optional[str]:
         """Backward-compatibility property for active project path."""
         return self.active_path()
+
+    def get_permission_preset(self, project_name: Optional[str] = None, default: str = "auto") -> str:
+        """Resolve effective permission preset with per-project isolation.
+
+        When querying a non-active project (e.g. an IPC target), never inherit the active chat's
+        elevated chat-level preset; only use that project's explicit preset or the safe default.
+        """
+        target_proj = project_name if project_name is not None else self.active_project
+        if target_proj and target_proj in self.projects:
+            proj_preset = self.projects[target_proj].get("permission_preset")
+            if proj_preset:
+                return normalize_permission_preset(proj_preset)
+        if project_name is not None and project_name != self.active_project:
+            return normalize_permission_preset(default)
+        if self.permission_preset:
+            return normalize_permission_preset(self.permission_preset)
+        return normalize_permission_preset(default)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert session to serializable dict (excluding runtime transient flags)."""
@@ -367,10 +385,24 @@ class SessionManager:
         session.last_active_at = time.time()
         self.save()
 
-    def set_permission_preset(self, chat_id: int, preset: Optional[str]) -> None:
-        """Set or clear permission preset override (chat-level: auto, accept-edits, plan, turbo)."""
+    def set_permission_preset(
+        self,
+        chat_id: int,
+        preset: Optional[str],
+        project_name: Optional[str] = None,
+    ) -> None:
+        """Set or clear permission preset override (per-project when active, or chat-level fallback)."""
         session = self.get_session(chat_id)
-        session.permission_preset = normalize_permission_preset(preset) if preset else None
+        norm = normalize_permission_preset(preset) if preset else None
+        if project_name is not None:
+            if project_name in session.projects:
+                session.projects[project_name]["permission_preset"] = norm
+        elif session.active_project and session.active_project in session.projects:
+            session.projects[session.active_project]["permission_preset"] = norm
+            if norm is None:
+                session.permission_preset = None
+        else:
+            session.permission_preset = norm
         session.last_active_at = time.time()
         self.save()
 
@@ -478,16 +510,22 @@ class SessionManager:
         self.save()
 
     def save(self) -> None:
-        """Save sessions to persistence file."""
+        """Save sessions atomically to persistence file with 0600 permissions."""
         if not self.persistence_file:
             return
         try:
             self.persistence_file.parent.mkdir(parents=True, exist_ok=True)
             data = {str(k): v.to_dict() for k, v in self._sessions.items()}
-            temp_path = self.persistence_file.with_suffix(".tmp")
+            temp_path = self.persistence_file.with_name(
+                f".{self.persistence_file.name}.{os.getpid()}.{time.time_ns()}.tmp"
+            )
             with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
-            temp_path.replace(self.persistence_file)
+            os.replace(temp_path, self.persistence_file)
+            try:
+                os.chmod(self.persistence_file, 0o600)
+            except OSError:
+                pass
         except Exception as e:
             logger.warning("Failed to save sessions to %s: %s", self.persistence_file, e)
 

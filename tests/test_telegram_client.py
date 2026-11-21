@@ -367,6 +367,33 @@ async def test_telegram_client_send_voice(monkeypatch):
     await client.close()
 
 
+@pytest.mark.asyncio
+async def test_telegram_client_get_updates_raise_on_error(monkeypatch):
+    client = TelegramClient("12345:TESTTOKEN")
+
+    async def mock_post(url, **kwargs):
+        req = httpx.Request("POST", url)
+        return httpx.Response(
+            409,
+            json={"ok": False, "error_code": 409, "description": "Conflict: terminated by other getUpdates request"},
+            request=req,
+        )
+
+    mock_client = httpx.AsyncClient()
+    monkeypatch.setattr(mock_client, "post", mock_post)
+    client._client = mock_client
+
+    # Default backward-compatible mode swallows error and returns []
+    assert await client.get_updates() == []
+
+    # raise_on_error=True surfaces TelegramAPIError so caller backoff loop triggers
+    with pytest.raises(TelegramAPIError) as exc_info:
+        await client.get_updates(raise_on_error=True)
+    assert exc_info.value.error_code == 409
+
+    await client.close()
+
+
 
 
 

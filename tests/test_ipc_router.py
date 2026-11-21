@@ -241,3 +241,28 @@ def test_extract_ipc_attrs_envelope_card_and_trace_jsonl(tmp_path):
     parsed = json.loads(lines[0])
     assert parsed["parent_span_id"] == "sp0000000000"
     assert parsed["duration_ms"] == 42.5
+
+
+def test_validate_ipc_call_server_side_hop_and_trace_rotation(tmp_path):
+    # Even if an LLM spoofs hop_count=1, visited chain depth >= 4 is blocked at max_hops=3
+    spoofed = IPCCall(target_project="news", content="Bypass attempt", source_project="p3", hop_count=1)
+    blocked = validate_ipc_call(spoofed, max_hops=3, visited_projects=("admin", "p1", "p2", "p3"))
+    assert blocked is not None
+    assert blocked[0] == "MAX_HOPS_EXCEEDED"
+    assert "hop=4" in blocked[1]
+
+    # Log rotation moves traces.jsonl -> traces.jsonl.1 once size >= max_bytes
+    tf = tmp_path / "traces.jsonl"
+    for idx in range(5):
+        log_trace_span(
+            trace_id=f"tr{idx:014d}",
+            span_id=f"sp{idx:010d}",
+            operation="ipc_call",
+            status="SUCCESS",
+            duration_ms=5.0,
+            trace_file=tf,
+            max_bytes=150,
+        )
+    backup = tmp_path / "traces.jsonl.1"
+    assert tf.is_file()
+    assert backup.is_file()

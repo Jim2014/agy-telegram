@@ -59,13 +59,13 @@ Generic multi-agent bot wrappers and remote terminal hacks often fall short when
 
 - **Direct Real-Time Streaming via Telegram**: Built on Telegram Long-Polling (no public IP or webhook required) to stream `agy` thinking progress, live tool calls, and partial outputs directly to mobile.
 - **Mid-Flight Steering & Warm Process Pool**: Send a follow-up text, voice note, file, or `/steer` while `agy` is working to guide the active turn seamlessly; rotates the Telegram progress reply cleanly and delivers one consolidated final report.
-- **Multi-Project Isolation**: Manage separate workspaces (`/new`, `/open`, `/projects`, `/delete`, `/reset`), each with its own directory path, `conversation_id`, token/duration stats, and pinned status banner (`/pin`).
+- **Multi-Project & Per-Project Permission Isolation**: Manage separate workspaces (`/new`, `/open`, `/projects`, `/delete`, `/reset`), each with its own directory path, `conversation_id`, isolated `permission_preset`, token/duration stats, and pinned status banner (`/pin`).
 - **Dynamic Model & Effort Controls**: Auto-discovers available models from `agy models` via `/model` (with refresh) and adjusts reasoning depth via `/effort` (`low` / `medium` / `high`).
-- **Rich Mobile-First Output & WebApp Viewer**: Converts Markdown to Telegram HTML, renders code/diffs/CSVs/directory trees as mobile-friendly standalone HTML (`/file -h`, `/dir`, `/html`), and serves previews in an embedded Telegram Mini App (`:8765`).
+- **Rich Mobile-First Output**: Converts Markdown to Telegram HTML and renders code/diffs/CSVs/directory trees as standalone mobile-friendly HTML documents sent directly in Telegram (`/file -h`, `/dir`, `/export`, `/html`, `[AGY_FILE]`) — zero open local HTTP ports needed.
 - **Voice Interaction (Offline STT + Bilingual TTS)**: Transcribes Telegram voice messages offline via `faster-whisper` and generates spoken audio summaries (`[AGY_VOICE]`) with on-demand playback buttons or auto-send (`/voice`).
 - **One-Tap Setup & Hardened Access Control**: Interactive `./setup.sh` wizard with live token verification and automatic Chat ID detection, **deny-by-default** authorization with **DM pairing** (`gateway.pairing`), crash watchdog (`watchdog.sh`), and macOS LaunchAgent autostart.
 - **Cross-Project Multi-Agent Mesh (`AGY_IPC`)**: Dispatches tasks across registered project directories with cycle detection, `max_hops` limits (`IPC_MAX_HOPS`), UUID `trace_id` propagation, pinned expandable progress cards, and structured audit/span logs (`runtime/ipc.log`, `runtime/traces.jsonl`).
-- **Automated Test Suite**: **181 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, CLI script safety, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
+- **Automated Test Suite**: **186 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, CLI script safety, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
 
 ---
 
@@ -276,7 +276,7 @@ Or use `restart.sh` to start and manage the gateway in the **background** (and m
 # Start or restart the gateway in background
 ./restart.sh
 
-# Check gateway, WebApp health, and LaunchAgent status
+# Check gateway, launchd, and watchdog status
 ./restart.sh status
 
 # (macOS only) Enable boot/login autostart via LaunchAgent
@@ -373,7 +373,7 @@ When using `/file -h <path>`, the gateway selects a renderer based on file exten
 
 ### Mid-Flight Steering & System Prompt Injection
 
-- **First-Turn System Prompt Injection**: When starting a fresh session (or after `/reset`), the gateway injects output formatting conventions once without repeating them across follow-up turns or steering messages. Supports overrides via `AGY_SYSTEM_PROMPT` or `AGY_SYSTEM_PROMPT_FILE` in `.env`.
+- **First-Turn Full Prompt + Compact Follow-Up Reminder**: When starting a fresh session (or after `/reset`), the gateway injects the complete output protocol guide once, then prepends only a compact single-line protocol reminder on warm/resumed turns to eliminate 7 KB per-turn token bloat. Supports overrides via `AGY_SYSTEM_PROMPT` or `AGY_SYSTEM_PROMPT_FILE` in `.env`.
 - **Mid-Flight Steering**: Sending a regular message, voice note, file, or `/steer <instruction>` while `agy` is running injects guidance via `stream-json` `stdin`, freezes the previous progress message, opens a new progress reply under your steering message, and sends a single consolidated final report upon completion.
 - **Direct Standalone HTML Export (`[AGY_FILE]`)**:
   ```text
@@ -394,20 +394,19 @@ Each Python module is single-purpose and supports standalone CLI verification:
 - `gateway/config.py` (`python -m gateway.config`): Environment loading, validation, dynamic binary resolution, and system prompt configuration.
 - `gateway/setup_helper.py` (`python -m gateway.setup_helper`): Interactive onboarding wizard for `.env` generation, Telegram `getMe` verification, and automatic `chat_id` detection.
 - `gateway/pairing.py` (`python -m gateway.pairing list|approve|revoke`): Deny-by-default DM pairing store (`runtime/pairing.json`) and CLI approval tool.
-- `gateway/session_manager.py` (`python -m gateway.session_manager`): Multi-project session persistence (`runtime/sessions.json`), LRU command stats, and token metrics.
-- `gateway/ui_keyboards.py` (`python -m gateway.ui_keyboards`): Inline keyboard builders, dynamic `agy models` discovery, adaptive LRU command menus, and WebApp viewer buttons.
+- `gateway/session_manager.py` (`python -m gateway.session_manager`): Multi-project session persistence (`runtime/sessions.json` with `0600` permissions), per-project permission isolation, LRU command stats, and token metrics.
+- `gateway/ui_keyboards.py` (`python -m gateway.ui_keyboards`): Inline keyboard builders, dynamic `agy models` discovery, permission preset pickers, and adaptive LRU command menus.
 - `gateway/transcriber.py` (`python -m gateway.transcriber`): Offline `faster-whisper` speech-to-text transcription with lazy model caching.
 - `gateway/media_handlers.py` (`python -m gateway.media_handlers`): Voice/audio and document/photo/video/animation/video-note download handlers (with 20 MB Bot API size guard) and mid-flight steering routing.
 - `gateway/commands.py` (`python -m gateway.commands`): Slash command handlers and inline callback query routing.
 - `gateway/dir_tree.py` (`python -m gateway.dir_tree`): Recursive workspace directory scanner and interactive HTML file tree generator.
 - `gateway/file_renderers.py` (`python -m gateway.file_renderers`): Multi-format standalone HTML renderers for `/file -h`.
 - `gateway/message_formatter.py` (`python -m gateway.message_formatter`): Markdown-to-Telegram-HTML conversion, protocol block extractors (`[AGY_FILE]`, `[AGY_ACTIONS]`, `[AGY_VOICE]`), spoken summary distillation, and standalone HTML report generation.
-- `gateway/agy_bridge.py` (`python -m gateway.agy_bridge "<prompt>"`): Asynchronous `agy` subprocess manager, `stream-json` bidirectional streaming, keep-alive process pooling, and steering injection.
-- `gateway/ipc_router.py` (`python -m gateway.ipc_router`): Cross-project `[AGY_IPC]` message parsing, envelope formatting, and `runtime/ipc.log` auditing.
+- `gateway/agy_bridge.py` (`python -m gateway.agy_bridge "<prompt>"`): Asynchronous `agy` subprocess manager, `stream-json` bidirectional streaming, keep-alive process pooling, follow-up prompt deduplication, and steering injection.
+- `gateway/ipc_router.py` (`python -m gateway.ipc_router`): Cross-project `[AGY_IPC]` message parsing, cycle/max-hop guardrails, multi-hop forwarding, and auto-rotated `runtime/ipc.log` + `runtime/traces.jsonl` span logging.
 - `gateway/voice_tts.py` (`python -m gateway.voice_tts`): Dynamic bilingual TTS synthesis (`edge-tts` + offline fallback) and OGG Opus conversion.
-- `gateway/webapp_server.py` (`python -m gateway.webapp_server`): Lightweight asynchronous HTTP server for Telegram Mini App document viewing.
-- `gateway/telegram_client.py` (`python -m gateway.telegram_client`): Async Telegram Bot API client with retries, HTML fallback, multipart uploads, and rate-limit backoff.
-- `gateway/bot.py`: Core orchestrator dispatching long-polling updates, streaming progress updates, steering rotation, and exports.
+- `gateway/telegram_client.py` (`python -m gateway.telegram_client`): Async Telegram Bot API client with retries, HTML fallback, multipart uploads, and polling error propagation for backoff.
+- `gateway/bot.py`: Core orchestrator with per-chat locking, 409 conflict backoff, streaming progress updates, steering rotation, and exports.
 - `main.py` (`python main.py`): CLI entry point supporting `--check-config` and `--smoke-test`.
 
 ### Design Documents
@@ -427,13 +426,12 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-Test coverage (**181 tests** across 17 test modules):
+Test coverage (**186 tests** across 16 test modules):
 - `tests/test_config.py`: Configuration loading, token validation, deny-by-default chat whitelist, default runtime paths, and system prompt overrides.
 - `tests/test_pairing.py`: DM pairing code lifecycle, expiration, atomic `0600` persistence, revocation, and CLI commands.
 - `tests/test_setup_helper.py`: Telegram `getMe` verification, `getUpdates` Chat ID auto-detection, `.env` rendering/permissions (`0600`), and interactive onboarding flow.
 - `tests/test_session_manager.py`: Session CRUD, persistence, legacy migration, token/duration stats, and LRU command tracking.
-- `tests/test_ui_keyboards.py`: Project switchers, dynamic `agy models` parsing and fallback discovery, effort keyboards, adaptive LRU menus, and WebApp buttons.
-- `tests/test_webapp_server.py`: Async WebApp lifecycle, document registration, Telegram WebApp SDK injection, and `/health` endpoint.
+- `tests/test_ui_keyboards.py`: Project switchers, dynamic `agy models` parsing and fallback discovery, effort and permission keyboards, and adaptive LRU menus.
 - `tests/test_message_formatter.py`: HTML escaping, Markdown-to-HTML conversion, protocol extraction (`[AGY_FILE]`, `[AGY_ACTIONS]`, `[AGY_VOICE]`), spoken summary distillation, and mobile-responsive HTML exports.
 - `tests/test_dir_tree.py`: Directory tree scanning and interactive HTML navigator generation.
 - `tests/test_file_renderers.py`: Syntax highlighting, Markdown, diff/patch, CSV table rendering, and binary fallback.

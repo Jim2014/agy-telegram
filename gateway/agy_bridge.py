@@ -93,6 +93,7 @@ class AgyBridge:
         system_prompt: Optional[str] = None,
         idle_timeout_seconds: float = 300.0,
         keep_alive: bool = True,
+        followup_system_prompt: Optional[str] = None,
     ) -> None:
         local_bin = Path.home() / ".local" / "bin" / "agy"
         default_bin = str(local_bin) if local_bin.is_file() else (shutil.which("agy") or str(local_bin))
@@ -100,6 +101,7 @@ class AgyBridge:
         self.default_working_dir = default_working_dir or os.getcwd()
         self.timeout_seconds = timeout_seconds
         self.system_prompt = system_prompt
+        self.followup_system_prompt = followup_system_prompt
         self.idle_timeout_seconds = idle_timeout_seconds
         self.keep_alive = keep_alive
         self._current_process: Optional[asyncio.subprocess.Process] = None
@@ -254,6 +256,7 @@ class AgyBridge:
         working_dir: Optional[str] = None,
         system_prompt: Optional[str] = None,
         permission_preset: Optional[str] = None,
+        followup_system_prompt: Optional[str] = None,
     ) -> AsyncIterator[AgyEvent]:
         """Run agy CLI with stream-json input/output and yield streaming AgyEvent instances."""
         self._is_stopped = False
@@ -284,11 +287,23 @@ class AgyBridge:
             and not self._reader_task.done()
         )
 
+        is_followup_turn = can_reuse or bool(conversation_id)
         eff_sys_prompt = system_prompt if system_prompt is not None else self.system_prompt
-        if eff_sys_prompt and eff_sys_prompt.strip() and not prompt.startswith("[AGY_INCOMING"):
-            full_content = f"{eff_sys_prompt.strip()}\n\n---\n\n{prompt}"
-        else:
+        eff_followup_prompt = (
+            followup_system_prompt if followup_system_prompt is not None else self.followup_system_prompt
+        )
+        if prompt.startswith("[AGY_INCOMING"):
             full_content = prompt
+        elif not is_followup_turn:
+            if eff_sys_prompt and eff_sys_prompt.strip():
+                full_content = f"{eff_sys_prompt.strip()}\n\n---\n\n{prompt}"
+            else:
+                full_content = prompt
+        else:
+            if eff_sys_prompt and eff_sys_prompt.strip() and eff_followup_prompt and eff_followup_prompt.strip():
+                full_content = f"{eff_followup_prompt.strip()}\n\n---\n\n{prompt}"
+            else:
+                full_content = prompt
 
         if can_reuse:
             assert self._current_process is not None

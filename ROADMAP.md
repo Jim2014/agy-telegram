@@ -41,8 +41,8 @@ This document outlines the milestones and roadmap for integrating new Google Ant
 - [x] **5.4 Dynamic Slash Command Dispatcher & LRU Integration**: Centralized slash command routing with persistent statistics and instant execution.
 - [x] **5.5 Unit & Integration Testing**: 109 automated tests passing with complete coverage across interactive buttons, expandable blocks, reactions, and callbacks.
 
-### 📋 Milestone 6: Telegram Mini App (Web App) Viewer & Advanced UI Extensions
-- [x] **6.1 Telegram Mini App (Web App) In-Chat Popup Viewer**: Integrated a lightweight zero-dependency embedded WebApp server with `WebAppInfo(url=...)` enabling instant slide-up viewing of HTML reports, Git diffs, and directory navigators directly inside Telegram without file downloading.
+### 📋 Milestone 6: Rich HTML Document Exports & Advanced UI Extensions
+- [x] **6.1 Mobile-First HTML Viewer & Document Delivery**: Initially prototyped an embedded local WebApp server (`:8765`), then retired it to maintain zero open listening ports in favor of direct standalone mobile-responsive HTML file delivery via Telegram (`sendDocument`, `/file -h`, `/dir`, `/export`, `[AGY_FILE]`).
 - [x] **6.2 Dynamic Input Field Placeholder State Machine**: Persistent reply keyboard with dynamic `input_field_placeholder` and quick navigation shortcuts.
 - [x] **6.3 Pinned Project & Session Header Banner (`pinChatMessage`)**: Maintain a persistent pinned banner at the top of the chat showing the active project workspace, current model, reasoning effort, and quick navigation shortcuts.
 - [ ] **6.4 Supergroup Forum Topics Multi-Project Mapping**: Automatically bind separate projects to distinct Telegram Forum Topics/threads (`message_thread_id`) when used in group workspaces.

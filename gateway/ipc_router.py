@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import time
 import uuid
@@ -21,6 +22,17 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from gateway.message_formatter import markdown_to_telegram_html
 
 DEFAULT_MAX_HOPS = 3
+DEFAULT_LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB rotation threshold
+
+
+def _rotate_file_if_needed(path: Path, max_bytes: int = DEFAULT_LOG_MAX_BYTES) -> None:
+    """Rotate a log/trace file to '<name>.1' when it reaches max_bytes."""
+    try:
+        if path.is_file() and path.stat().st_size >= max_bytes:
+            backup = path.with_name(f"{path.name}.1")
+            os.replace(path, backup)
+    except Exception:
+        pass
 
 
 def generate_trace_id() -> str:
@@ -144,10 +156,11 @@ def validate_ipc_call(
             f"IPC cycle detected: '{call.target_project}' already visited ({chain}).",
         )
 
-    if call.hop_count > max_hops:
+    effective_hop = max(int(call.hop_count or 1), len(visited_list))
+    if effective_hop > max_hops:
         return (
             "MAX_HOPS_EXCEEDED",
-            f"IPC max hop limit exceeded (hop={call.hop_count} > max_hops={max_hops}).",
+            f"IPC max hop limit exceeded (hop={effective_hop} > max_hops={max_hops}).",
         )
 
     return None
@@ -275,12 +288,14 @@ def log_ipc_event(
     details: str,
     log_file: Optional[Path] = None,
     trace_id: str = "",
+    max_bytes: int = DEFAULT_LOG_MAX_BYTES,
 ) -> None:
     """Append a structured trace entry to runtime/ipc.log for auditing cross-project calls."""
     if log_file is None:
         log_file = Path("runtime/ipc.log")
     try:
         log_file.parent.mkdir(parents=True, exist_ok=True)
+        _rotate_file_if_needed(log_file, max_bytes=max_bytes)
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         trace_prefix = f"[trace={trace_id[:8]}] " if trace_id else ""
         entry = f"[{ts}] [{event_type.upper()}] [{source} -> {target}] {trace_prefix}{details.strip()}\n"
@@ -306,6 +321,7 @@ def log_trace_span(
     error: str = "",
     metadata: Optional[Dict[str, Any]] = None,
     trace_file: Optional[Path] = None,
+    max_bytes: int = DEFAULT_LOG_MAX_BYTES,
 ) -> Dict[str, Any]:
     """Append a structured OpenTelemetry-style JSONL span record to runtime/traces.jsonl."""
     record: Dict[str, Any] = {
@@ -332,6 +348,7 @@ def log_trace_span(
     target_file = trace_file if trace_file is not None else Path("runtime/traces.jsonl")
     try:
         target_file.parent.mkdir(parents=True, exist_ok=True)
+        _rotate_file_if_needed(target_file, max_bytes=max_bytes)
         with open(target_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:

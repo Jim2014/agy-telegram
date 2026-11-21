@@ -334,10 +334,8 @@ async def test_system_prompt_injection_first_turn(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_subsequent_turn_injected(monkeypatch):
-    """Test that system prompt is consistently injected on subsequent turns when configured."""
-    bridge = AgyBridge(system_prompt="[SYSTEM] Follow markdown conventions.")
-
+async def test_system_prompt_subsequent_turn_dedup_and_compact_reminder(monkeypatch, tmp_path):
+    """Test that full system prompt is NOT duplicated on resumed/warm turns, with optional compact reminder."""
     class MockStdin:
         def __init__(self):
             self.written = []
@@ -368,31 +366,75 @@ async def test_system_prompt_subsequent_turn_injected(monkeypatch):
             return b""
 
     class MockProcess:
-        def __init__(self):
+        def __init__(self, lines):
             self.stdin = MockStdin()
-            self.stdout = MockStream([
-                b'{"event":"result","result":{"status":"SUCCESS","response":"Continued"}}\n',
-            ])
+            self.stdout = MockStream(lines)
             self.stderr = MockStream([])
-            self.returncode = 0
+            self.returncode = None
             self.pid = 22222
 
         async def wait(self):
+            self.returncode = 0
             return 0
 
-    proc = MockProcess()
-    async def mock_exec(*args, **kwargs):
-        return proc
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
+        def terminate(self):
+            self.returncode = 0
 
-    events = []
-    async for ev in bridge.run_streaming(prompt="Next turn question", conversation_id="conv-existing-99"):
-        events.append(ev)
+        def kill(self):
+            self.returncode = 0
 
-    assert len(proc.stdin.written) == 1
-    payload = json.loads(proc.stdin.written[0].decode())
-    # Should contain system prompt prepended
-    assert payload == {"event": "user", "message": {"content": "[SYSTEM] Follow markdown conventions.\n\n---\n\nNext turn question"}}
+    # 1. Resumed turn without followup_system_prompt sends raw prompt cleanly (no 7KB bloat)
+    proc_no_reminder = MockProcess([
+        b'{"event":"result","result":{"status":"SUCCESS","response":"Continued"}}\n',
+    ])
+
+    async def mock_exec_1(*args, **kwargs):
+        return proc_no_reminder
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec_1)
+    bridge1 = AgyBridge(system_prompt="[SYSTEM] Long markdown conventions.", keep_alive=False)
+    async for _ in bridge1.run_streaming(prompt="Next turn question", conversation_id="conv-existing-99"):
+        pass
+    assert len(proc_no_reminder.stdin.written) == 1
+    payload1 = json.loads(proc_no_reminder.stdin.written[0].decode())
+    assert payload1 == {"event": "user", "message": {"content": "Next turn question"}}
+
+    # 2. Warm keep-alive session: turn 1 gets full prompt; turn 2 warm reuse gets compact reminder only
+    proc_warm = MockProcess([])
+    spawned = 0
+
+    async def mock_exec_2(*args, **kwargs):
+        nonlocal spawned
+        spawned += 1
+        return proc_warm
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec_2)
+    bridge2 = AgyBridge(
+        system_prompt="[SYSTEM] Full conventions.",
+        followup_system_prompt="[REMINDER] Stay concise.",
+        keep_alive=True,
+        default_working_dir=str(tmp_path),
+    )
+
+    proc_warm.stdout.lines = [
+        b'{"event":"init","conversation_id":"conv-warm-1"}\n',
+        b'{"event":"result","result":{"conversation_id":"conv-warm-1","status":"SUCCESS","response":"R1"}}\n',
+    ]
+    async for _ in bridge2.run_streaming(prompt="First Q", conversation_id=None, working_dir=str(tmp_path)):
+        pass
+
+    proc_warm.stdout.lines = [
+        b'{"event":"result","result":{"conversation_id":"conv-warm-1","status":"SUCCESS","response":"R2"}}\n',
+    ]
+    async for _ in bridge2.run_streaming(prompt="Second Q", conversation_id="conv-warm-1", working_dir=str(tmp_path)):
+        pass
+
+    assert spawned == 1
+    p_turn1 = json.loads(proc_warm.stdin.written[0].decode())
+    p_turn2 = json.loads(proc_warm.stdin.written[1].decode())
+    assert p_turn1["message"]["content"] == "[SYSTEM] Full conventions.\n\n---\n\nFirst Q"
+    assert p_turn2["message"]["content"] == "[REMINDER] Stay concise.\n\n---\n\nSecond Q"
+    await bridge2.stop()
 
 
 @pytest.mark.asyncio

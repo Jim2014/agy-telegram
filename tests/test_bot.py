@@ -1498,12 +1498,9 @@ async def test_bot_voice_input_forces_voice_autosend(mock_bot, tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_bot_html_export_includes_voice_and_webapp_buttons(mock_bot, monkeypatch):
+async def test_bot_html_export_includes_voice_button(mock_bot, monkeypatch):
     session = mock_bot.session_manager.get_session(100)
     session.tts_mode = "ondemand"
-
-    # Start mock webapp server
-    mock_bot.webapp_server._is_running = True
 
     # Simulate text response generating [AGY_FILE] without explicit [AGY_VOICE]
     raw_response = """Here is the system architecture document.
@@ -1531,13 +1528,13 @@ title: Architecture Overview
     assert text_markup is not None
     assert any("🔊 Send Audio" in btn["text"] for row in text_markup["inline_keyboard"] for btn in row)
 
-    # 2. Document upload has both WebApp preview button and Send Audio button
+    # 2. Standalone HTML document upload attaches Send Audio button (without localhost WebApp URL)
     assert mock_bot.client.send_document.called
     doc_call = mock_bot.client.send_document.call_args[1]
+    assert doc_call["filename"] == "architecture.html"
     doc_markup = doc_call.get("reply_markup")
     assert doc_markup is not None
     doc_buttons = [btn["text"] for row in doc_markup["inline_keyboard"] for btn in row]
-    assert any("Open in Telegram" in b for b in doc_buttons)
     assert any("Send Audio" in b for b in doc_buttons)
 
 
@@ -1851,6 +1848,162 @@ async def test_bot_ipc_guardrails_and_trace_correlation(mock_bot, tmp_path):
     assert len(spans) == 3
     assert [s["status"] for s in spans] == ["CYCLE_DETECTED", "MAX_HOPS_EXCEEDED", "SUCCESS"]
     assert all(s["trace_id"] == "traceabc12345678" and s["parent_span_id"] == "spanroot0001" for s in spans)
+
+
+@pytest.mark.asyncio
+async def test_bot_ipc_preserves_target_conv_isolates_perms_and_forwards_multihop(mock_bot, tmp_path):
+    import json
+    from gateway.ipc_router import IPCCall
+
+    mock_bot.session_manager.create_project(100, "admin", str(tmp_path / "admin"))
+    mock_bot.session_manager.create_project(100, "learner", str(tmp_path / "learner"))
+    mock_bot.session_manager.create_project(100, "news", str(tmp_path / "news"))
+    mock_bot.session_manager.open_project(100, "learner")
+    mock_bot.session_manager.set_conversation_id(100, "conv-learner-interactive")
+    mock_bot.session_manager.open_project(100, "admin")
+    mock_bot.session_manager.set_permission_preset(100, "turbo")
+
+    bridge = AgyBridge()
+    worker_calls = []
+
+    async def mock_worker(**kwargs):
+        worker_calls.append(kwargs)
+        wdir = Path(kwargs["working_dir"]).name
+        if wdir == "learner":
+            yield AgyEvent(type="init", conversation_id="conv-ephemeral-learner")
+            yield AgyEvent(
+                type="result",
+                status="SUCCESS",
+                response='Learner note.\n\n[AGY_IPC to="news" hop="1"]Fetch digest[END_AGY_IPC]',
+            )
+        else:
+            yield AgyEvent(type="init", conversation_id="conv-ephemeral-news")
+            yield AgyEvent(type="result", status="SUCCESS", response="Latest AI headlines.")
+
+    bridge.run_ephemeral_worker = mock_worker
+
+    ret_env, res_list = await mock_bot._handle_ipc_calls(
+        chat_id=100,
+        ipc_calls=[IPCCall(target_project="learner", content="Coordinate news", source_project="admin", hop_count=1)],
+        active_proj="admin",
+        bridge=bridge,
+        effective_model="gemini-4-neon",
+        effective_effort="high",
+        effective_permission_preset="turbo",
+        trace_id="tracemultihop0001",
+        parent_span_id="spanroot0001",
+        visited_projects=("admin",),
+    )
+
+    assert len(worker_calls) == 2
+    assert worker_calls[0]["permission_preset"] == "auto"
+    assert worker_calls[1]["permission_preset"] == "auto"
+    assert mock_bot.session_manager.get_session(100).projects["learner"]["conversation_id"] == "conv-learner-interactive"
+    assert mock_bot.session_manager.get_session(100).projects["learner"]["last_ipc_conversation_id"] == "conv-ephemeral-learner"
+    assert "Latest AI headlines." in res_list[0].response_content
+    assert "Latest AI headlines." in ret_env
+
+    spans = [json.loads(line) for line in Path(mock_bot.config.traces_file).read_text(encoding="utf-8").splitlines()]
+    assert len(spans) == 2
+    news_span = [s for s in spans if s["target_project"] == "news"][0]
+    learner_span = [s for s in spans if s["target_project"] == "learner"][0]
+    assert news_span["parent_span_id"] == learner_span["span_id"]
+    assert news_span["hop"] == 2
+    assert learner_span["permission_preset"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_bot_chat_lock_serializes_concurrent_messages(mock_bot, monkeypatch):
+    stream_calls = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+    steered_messages = []
+
+    async def mock_stream(self, prompt, **kwargs):
+        nonlocal stream_calls
+        stream_calls += 1
+        started.set()
+        yield AgyEvent(type="init", conversation_id="conv-lock-1")
+        await release.wait()
+        yield AgyEvent(type="result", response="Unified response", duration_seconds=0.3)
+
+    async def mock_steer(self, msg):
+        steered_messages.append(msg)
+        return True
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream)
+    monkeypatch.setattr(AgyBridge, "is_running", lambda self: True)
+    monkeypatch.setattr(AgyBridge, "steer", mock_steer)
+
+    t1 = asyncio.create_task(
+        mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "First prompt", "message_id": 801}})
+    )
+    await started.wait()
+    # Dispatch second message while turn 1 is active -> serialized via lock and routed to steer
+    t2 = asyncio.create_task(
+        mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "Follow up steer", "message_id": 802}})
+    )
+    await t2
+    release.set()
+    await t1
+
+    assert stream_calls == 1
+    assert steered_messages == ["Follow up steer"]
+
+
+@pytest.mark.asyncio
+async def test_bot_trace_spans_record_timeout_and_cancelled(mock_bot, monkeypatch):
+    import json
+
+    async def mock_timeout_stream(self, prompt, **kwargs):
+        yield AgyEvent(type="error", status="TIMEOUT", response="Timed out after 300s")
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_timeout_stream)
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "timeout test", "message_id": 811}})
+
+    async def mock_cancelled_stream(self, prompt, **kwargs):
+        raise asyncio.CancelledError()
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_cancelled_stream)
+    with pytest.raises(asyncio.CancelledError):
+        await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "cancel test", "message_id": 812}})
+
+    spans = [json.loads(line) for line in Path(mock_bot.config.traces_file).read_text(encoding="utf-8").splitlines()]
+    assert [s["status"] for s in spans] == ["TIMEOUT", "CANCELLED"]
+    assert "Timed out" in spans[0]["error"]
+    assert spans[1]["error"] == "Task cancelled"
+
+
+@pytest.mark.asyncio
+async def test_bot_polling_backoff_on_409_conflict(mock_bot, monkeypatch):
+    from gateway.telegram_client import TelegramAPIError
+
+    mock_bot.client.get_me = AsyncMock(return_value={"id": 1, "username": "test_bot"})
+    mock_bot.client.set_my_commands = AsyncMock(return_value=True)
+    mock_bot.client.set_chat_menu_button = AsyncMock(return_value=True)
+    mock_bot.client.close = AsyncMock()
+
+    attempts = []
+    sleep_delays = []
+
+    async def mock_get_updates(offset=None, timeout=30, raise_on_error=False):
+        attempts.append((offset, raise_on_error))
+        if len(attempts) == 1:
+            raise TelegramAPIError(409, "Conflict: terminated by other getUpdates request")
+        mock_bot.running = False
+        return []
+
+    async def mock_sleep(delay):
+        sleep_delays.append(delay)
+
+    mock_bot.client.get_updates = mock_get_updates
+    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+    await mock_bot.start()
+    assert len(attempts) == 2
+    assert all(flag is True for _, flag in attempts)
+    assert sleep_delays == [5]
 
 
 

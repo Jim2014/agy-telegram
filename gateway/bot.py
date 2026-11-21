@@ -42,7 +42,7 @@ from gateway.commands import (
     handle_cmd_usage as cmd_handle_usage,
     handle_cmd_voice as cmd_handle_voice,
 )
-from gateway.config import Config
+from gateway.config import COMPACT_TURN_REMINDER, Config
 from gateway.pairing import PairingManager
 from gateway.ipc_router import (
     DEFAULT_MAX_HOPS,
@@ -81,7 +81,7 @@ from gateway.message_formatter import (
     split_text_chunks,
 )
 from gateway.session_manager import ChatSession, SessionManager
-from gateway.telegram_client import TelegramClient
+from gateway.telegram_client import TelegramAPIError, TelegramClient
 from gateway.ui_keyboards import (
     COMMAND_ALIASES,
     build_actions_keyboard,
@@ -92,10 +92,8 @@ from gateway.ui_keyboards import (
     build_reply_keyboard,
     build_voice_keyboard,
     build_voice_play_button,
-    build_webapp_viewer_button,
 )
 from gateway.voice_tts import synthesize_voice_ogg
-from gateway.webapp_server import WebAppServer
 
 logger = logging.getLogger(__name__)
 
@@ -121,14 +119,15 @@ class AgyTelegramBot:
         self.running = False
         self.bot_info: Dict[str, Any] = {}
         self.started_at = time.time()
-        self.webapp_server: Optional[WebAppServer] = (
-            WebAppServer(
-                port=getattr(config, "webapp_port", 8765),
-                base_url=getattr(config, "webapp_base_url", ""),
-            )
-            if getattr(config, "webapp_enabled", True)
-            else None
-        )
+        self._chat_locks: Dict[int, asyncio.Lock] = {}
+
+    def _get_chat_lock(self, chat_id: int) -> asyncio.Lock:
+        """Return per-chat asyncio lock serializing busy checks and prompt admission."""
+        lock = self._chat_locks.get(chat_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._chat_locks[chat_id] = lock
+        return lock
 
     async def setup_bot_commands(self) -> bool:
         """Register slash commands with Telegram Bot API so users see the command menu in chat."""
@@ -423,12 +422,6 @@ class AgyTelegramBot:
         self._clear_stale_turn_markers()
         print("🚀 agy-telegram gateway is running! Press Ctrl+C to stop.\n")
 
-        if self.webapp_server:
-            try:
-                await self.webapp_server.start()
-            except Exception as e:
-                logger.warning("Failed to start WebAppServer: %s", e)
-
         await self._notify_restart()
 
         offset: Optional[int] = None
@@ -436,7 +429,7 @@ class AgyTelegramBot:
 
         while self.running:
             try:
-                updates = await self.client.get_updates(offset=offset, timeout=30)
+                updates = await self.client.get_updates(offset=offset, timeout=30, raise_on_error=True)
                 consecutive_errors = 0
                 for update in updates:
                     update_id = update.get("update_id")
@@ -451,6 +444,20 @@ class AgyTelegramBot:
                     task.add_done_callback(_on_task_done)
             except asyncio.CancelledError:
                 break
+            except TelegramAPIError as e:
+                consecutive_errors += 1
+                if e.error_code == 409:
+                    wait_time = min(5 * consecutive_errors, 60)
+                    logger.warning(
+                        "Telegram 409 Conflict (another polling instance active? attempt %d): %s. Backing off %ds...",
+                        consecutive_errors,
+                        e,
+                        wait_time,
+                    )
+                else:
+                    wait_time = min(2 ** consecutive_errors, 30)
+                    logger.warning("Telegram API error fetching updates (attempt %d): %s. Retrying in %ds...", consecutive_errors, e, wait_time)
+                await asyncio.sleep(wait_time)
             except Exception as e:
                 consecutive_errors += 1
                 wait_time = min(2 ** consecutive_errors, 30)
@@ -466,12 +473,6 @@ class AgyTelegramBot:
             except Exception as e:
                 logger.warning("Error stopping active bridge: %s", e)
         self.active_bridges.clear()
-
-        if self.webapp_server:
-            try:
-                await self.webapp_server.stop()
-            except Exception as e:
-                logger.warning("Error stopping WebAppServer: %s", e)
 
         await self.client.close()
 
@@ -605,23 +606,7 @@ class AgyTelegramBot:
                 await self.dispatch_slash_command(chat_id, cmd, arg, message_id)
                 return
 
-            # If a prompt is running and user sends a new message -> steer into active session!
-            session = self.session_manager.get_session(chat_id)
-            if session.is_busy:
-                bridge = self.active_bridges.get(chat_id)
-                if bridge and bridge.is_running():
-                    steered = await self.perform_steering(chat_id, text, message_id)
-                    if steered:
-                        return
-
-                await self._safe_send_message(
-                    chat_id=chat_id,
-                    text="⏳ A prompt is currently processing. Use /steer to guide it or /stop to cancel.",
-                    reply_to_message_id=message_id,
-                )
-                return
-
-            # Regular prompt -> agy bridge execution
+            # Regular prompt -> atomic busy/steering admission under per-chat lock
             await self.handle_prompt(chat_id, text, message_id)
         except asyncio.CancelledError:
             raise
@@ -805,8 +790,22 @@ class AgyTelegramBot:
         for call in ipc_calls:
             target = call.target_project
             child_span_id = generate_span_id()
+            effective_hop = max(int(call.hop_count or 1), len(base_visited))
+            target_perm = session.get_permission_preset(
+                project_name=target,
+                default=getattr(self.config, "default_permission_preset", "auto"),
+            )
+            norm_call = IPCCall(
+                target_project=target,
+                content=call.content,
+                source_project=call.source_project,
+                hop_count=effective_hop,
+                raw_block=call.raw_block,
+                trace_id=call.trace_id,
+                visited_projects=call.visited_projects,
+            )
 
-            violation = validate_ipc_call(call, max_hops=max_hops, visited_projects=base_visited)
+            violation = validate_ipc_call(norm_call, max_hops=max_hops, visited_projects=base_visited)
             if violation:
                 code, err_msg = violation
                 logger.warning("IPC call blocked (%s) [trace=%s]: %s", code, eff_trace_id[:8], err_msg)
@@ -814,7 +813,7 @@ class AgyTelegramBot:
                     active_proj,
                     target,
                     "BLOCKED",
-                    f"{code}: {err_msg} | hop={call.hop_count}",
+                    f"{code}: {err_msg} | hop={effective_hop}",
                     trace_id=eff_trace_id,
                 )
                 log_trace_span(
@@ -826,9 +825,9 @@ class AgyTelegramBot:
                     duration_ms=0.0,
                     source_project=active_proj,
                     target_project=target,
-                    hop=call.hop_count,
+                    hop=effective_hop,
                     model=effective_model or "",
-                    permission_preset=effective_permission_preset or "",
+                    permission_preset=target_perm,
                     error=err_msg,
                     trace_file=trace_path,
                 )
@@ -841,7 +840,7 @@ class AgyTelegramBot:
                         error_message=err_msg,
                         trace_id=eff_trace_id,
                         span_id=child_span_id,
-                        hop_count=call.hop_count,
+                        hop_count=effective_hop,
                         blocked_reason=code,
                     )
                 )
@@ -869,9 +868,9 @@ class AgyTelegramBot:
                     duration_ms=0.0,
                     source_project=active_proj,
                     target_project=target,
-                    hop=call.hop_count,
+                    hop=effective_hop,
                     model=effective_model or "",
-                    permission_preset=effective_permission_preset or "",
+                    permission_preset=target_perm,
                     error=err_msg,
                     trace_file=trace_path,
                 )
@@ -884,7 +883,7 @@ class AgyTelegramBot:
                         error_message=err_msg,
                         trace_id=eff_trace_id,
                         span_id=child_span_id,
-                        hop_count=call.hop_count,
+                        hop_count=effective_hop,
                         blocked_reason="UNREGISTERED_PROJECT",
                     )
                 )
@@ -907,7 +906,7 @@ class AgyTelegramBot:
                 active_proj,
                 target,
                 "DISPATCH",
-                f"Task: {call.content[:100]} | hop={call.hop_count}",
+                f"Task: {call.content[:100]} | hop={effective_hop}",
                 trace_id=eff_trace_id,
             )
             card_text = format_pinned_accordion_card(
@@ -946,7 +945,7 @@ class AgyTelegramBot:
                 source=active_proj,
                 target=target,
                 body=call.content,
-                hop_count=call.hop_count,
+                hop_count=effective_hop,
                 trace_id=eff_trace_id,
                 visited_projects=next_visited,
             )
@@ -966,14 +965,14 @@ class AgyTelegramBot:
                     model=effective_model,
                     effort=effective_effort,
                     timeout_seconds=self.config.agy_timeout_seconds,
-                    permission_preset=effective_permission_preset,
+                    permission_preset=target_perm,
                 ):
                     now = time.time()
                     if event.type == "init":
                         if event.conversation_id:
-                            session.projects[target]["conversation_id"] = event.conversation_id
+                            session.projects[target]["last_ipc_conversation_id"] = event.conversation_id
                             self.session_manager.save()
-                            log_ipc_event(target, active_proj, "INIT", f"Target conv_id={event.conversation_id}", trace_id=eff_trace_id)
+                            log_ipc_event(target, active_proj, "INIT", f"Ephemeral conv_id={event.conversation_id}", trace_id=eff_trace_id)
 
                     elif event.type == "tool":
                         t_sum = format_tool_summary(
@@ -1032,8 +1031,31 @@ class AgyTelegramBot:
             dur = time.time() - target_start
             clean_target_text, _ = extract_agy_voice_block(target_accumulated_text)
             clean_target_text, _ = extract_agy_action_blocks(clean_target_text)
-            clean_target_text, sub_calls = extract_ipc_calls(clean_target_text, default_source=target)
-            final_body = sub_calls[0].content if sub_calls else clean_target_text
+            clean_target_text, sub_calls = extract_ipc_calls(
+                clean_target_text,
+                default_source=target,
+                default_trace_id=eff_trace_id,
+                default_visited=next_visited,
+            )
+            reply_calls = [c for c in sub_calls if c.target_project == active_proj]
+            forwarded_calls = [c for c in sub_calls if c.target_project != active_proj]
+            final_body = reply_calls[0].content if reply_calls else clean_target_text
+            if forwarded_calls and not is_error:
+                for fc in forwarded_calls:
+                    fc.hop_count = max(int(fc.hop_count or 1), len(next_visited))
+                nested_ret, _ = await self._handle_ipc_calls(
+                    chat_id=chat_id,
+                    ipc_calls=forwarded_calls,
+                    active_proj=target,
+                    bridge=bridge,
+                    effective_model=effective_model,
+                    effective_effort=effective_effort,
+                    trace_id=eff_trace_id,
+                    parent_span_id=child_span_id,
+                    visited_projects=next_visited,
+                )
+                if nested_ret:
+                    final_body = f"{final_body}\n\n{nested_ret}".strip() if final_body else nested_ret
 
             log_ipc_event(
                 target,
@@ -1051,9 +1073,9 @@ class AgyTelegramBot:
                 duration_ms=round(dur * 1000, 1),
                 source_project=active_proj,
                 target_project=target,
-                hop=call.hop_count,
+                hop=effective_hop,
                 model=effective_model or "",
-                permission_preset=effective_permission_preset or "",
+                permission_preset=target_perm,
                 error=error_reason if is_error else "",
                 trace_file=trace_path,
             )
@@ -1089,7 +1111,7 @@ class AgyTelegramBot:
                 tools_executed=tools_log,
                 trace_id=eff_trace_id,
                 span_id=child_span_id,
-                hop_count=call.hop_count,
+                hop_count=effective_hop,
             )
             results.append(res)
 
@@ -1182,37 +1204,39 @@ class AgyTelegramBot:
         is_voice_input: bool = False,
     ) -> None:
         """Execute agy with prompt and stream real-time results back to Telegram with document export support."""
-        session = self.session_manager.get_session(chat_id)
+        async with self._get_chat_lock(chat_id):
+            session = self.session_manager.get_session(chat_id)
 
-        if session.is_busy:
-            bridge = self.active_bridges.get(chat_id)
-            if bridge and bridge.is_running():
-                steered = await self.perform_steering(chat_id, prompt, reply_to_id, is_voice=is_voice_input)
-                if steered:
-                    return
+            if session.is_busy:
+                bridge = self.active_bridges.get(chat_id)
+                if bridge and bridge.is_running():
+                    steered = await self.perform_steering(chat_id, prompt, reply_to_id, is_voice=is_voice_input)
+                    if steered:
+                        return
 
-            await self._safe_send_message(
-                chat_id=chat_id,
-                text="⏳ A prompt is currently processing. Use /steer to guide it or /stop to cancel.",
-                reply_to_message_id=reply_to_id,
-            )
-            return
-
-        if not session.active_project or session.active_project not in session.projects:
-            if session.projects:
                 await self._safe_send_message(
                     chat_id=chat_id,
-                    text="⚠️ No active project selected. Use <code>/open &lt;name&gt;</code> to select a project or <code>/new &lt;name&gt; &lt;path&gt;</code> to create one.",
+                    text="⏳ A prompt is currently processing. Use /steer to guide it or /stop to cancel.",
                     reply_to_message_id=reply_to_id,
                 )
                 return
-            else:
-                default_dir = self.config.agy_working_dir or os.getcwd()
-                self.session_manager.create_project(chat_id, "default", default_dir)
-                session = self.session_manager.get_session(chat_id)
 
-        self.session_manager.set_busy(chat_id, True)
-        self._active_prompt_count += 1
+            if not session.active_project or session.active_project not in session.projects:
+                if session.projects:
+                    await self._safe_send_message(
+                        chat_id=chat_id,
+                        text="⚠️ No active project selected. Use <code>/open &lt;name&gt;</code> to select a project or <code>/new &lt;name&gt; &lt;path&gt;</code> to create one.",
+                        reply_to_message_id=reply_to_id,
+                    )
+                    return
+                else:
+                    default_dir = self.config.agy_working_dir or os.getcwd()
+                    self.session_manager.create_project(chat_id, "default", default_dir)
+                    session = self.session_manager.get_session(chat_id)
+
+            self.session_manager.set_busy(chat_id, True)
+            self._active_prompt_count += 1
+
         try:
             self._runtime_dir.mkdir(parents=True, exist_ok=True)
             self._turn_lock_file.write_text(str(os.getpid()), encoding="utf-8")
@@ -1240,8 +1264,16 @@ class AgyTelegramBot:
         active_proj = session.active_project or "default"
         effective_model = session.model or self.config.default_model or None
         effective_effort = session.effort or self.config.default_effort or None
-        effective_permission_preset = session.permission_preset or getattr(self.config, "default_permission_preset", "auto")
+        effective_permission_preset = session.get_permission_preset(
+            project_name=active_proj,
+            default=getattr(self.config, "default_permission_preset", "auto"),
+        )
         effective_dir = session.active_path() or self.config.agy_working_dir or None
+        followup_prompt = (
+            COMPACT_TURN_REMINDER
+            if (self.config.system_prompt and self.config.system_prompt.strip())
+            else None
+        )
 
         bridge = self.active_bridges.get(chat_id)
         if bridge is None:
@@ -1250,8 +1282,11 @@ class AgyTelegramBot:
                 default_working_dir=effective_dir,
                 timeout_seconds=self.config.agy_timeout_seconds,
                 system_prompt=self.config.system_prompt,
+                followup_system_prompt=followup_prompt,
             )
             self.active_bridges[chat_id] = bridge
+        else:
+            bridge.followup_system_prompt = followup_prompt
 
         tool_events: List[str] = []
         created_files: List[Path] = []
@@ -1259,6 +1294,9 @@ class AgyTelegramBot:
         start_time = time.time()
         turn_trace_id = generate_trace_id()
         turn_span_id = generate_span_id()
+        turn_status = "SUCCESS"
+        turn_error = ""
+        turn_trace_logged = False
         last_edit_time = time.time()
         last_edited_content = ""
         final_event: Optional[AgyEvent] = None
@@ -1375,6 +1413,12 @@ class AgyTelegramBot:
             if not total_duration:
                 total_duration = turn_duration
 
+            if final_event is not None:
+                ev_status = str(getattr(final_event, "status", "") or "").upper()
+                if final_event.type == "error" or ev_status in ("ERROR", "FAILED", "FAILURE", "TIMEOUT"):
+                    turn_status = ev_status or "ERROR"
+                    turn_error = (getattr(final_event, "response", "") or "")[:500]
+
             metrics_data = {
                 "total_tokens": total_tokens,
                 "thinking_tokens": thinking_tokens,
@@ -1451,20 +1495,6 @@ class AgyTelegramBot:
                         if blocks:
                             joined_blocks = "\n\n".join(blocks)
                             clean_text = f"{clean_text}\n\n{joined_blocks}".strip() if clean_text else joined_blocks
-
-            # Record root agent_turn structured trace span
-            log_trace_span(
-                trace_id=turn_trace_id,
-                span_id=turn_span_id,
-                operation="agent_turn",
-                status="ERROR" if (final_event and getattr(final_event, "status", "") == "ERROR") else "SUCCESS",
-                duration_ms=round((time.time() - start_time) * 1000, 1),
-                source_project=active_proj,
-                tokens=total_tokens,
-                model=effective_model or "",
-                permission_preset=effective_permission_preset or "",
-                trace_file=Path(getattr(self.config, "traces_file", "runtime/traces.jsonl")),
-            )
 
             # 3. Auto-export long responses as standalone HTML document (respecting per-chat html_mode)
             effective_html_mode = self.session_manager.normalize_html_mode(
@@ -1644,24 +1674,16 @@ class AgyTelegramBot:
             if target_reply_id:
                 await self._safe_set_message_reaction(chat_id, target_reply_id, "✅")
 
-            # Helper to build document reply markup (WebApp preview + Voice Audio)
-            def _build_doc_reply_markup(html_str: str, fname: str, doc_idx: int) -> Optional[Dict[str, Any]]:
-                row = []
-                if self.webapp_server and getattr(self.webapp_server, "_is_running", False):
-                    try:
-                        d_id = f"doc_{chat_id}_{int(time.time())}_{doc_idx}"
-                        doc_url = self.webapp_server.register_document(doc_id=d_id, content=html_str, filename=fname)
-                        row.append(build_webapp_viewer_button(doc_url, title="🌐 Open in Telegram"))
-                    except Exception as e:
-                        logger.debug("Failed to register webapp document: %s", e)
+            # Helper to build document reply markup (Voice Audio button if available)
+            def _build_doc_reply_markup() -> Optional[Dict[str, Any]]:
                 if voice_btn:
-                    row.append(voice_btn)
-                return {"inline_keyboard": [row]} if row else None
+                    return {"inline_keyboard": [[voice_btn]]}
+                return None
 
             # Send explicit [AGY_FILE] protocol exported documents
-            for idx, (af, html_data) in enumerate(valid_exports):
+            for af, html_data in valid_exports:
                 await self._safe_send_chat_action(chat_id, "upload_document")
-                doc_kb = _build_doc_reply_markup(html_data, af.filename, idx)
+                doc_kb = _build_doc_reply_markup()
                 await self._safe_send_document(
                     chat_id=chat_id,
                     document_content=html_data,
@@ -1674,7 +1696,7 @@ class AgyTelegramBot:
             # Send auto-exported document if generated
             if auto_export_content:
                 await self._safe_send_chat_action(chat_id, "upload_document")
-                doc_kb = _build_doc_reply_markup(auto_export_content, auto_export_name, len(valid_exports))
+                doc_kb = _build_doc_reply_markup()
                 await self._safe_send_document(
                     chat_id=chat_id,
                     document_content=auto_export_content,
@@ -1685,6 +1707,8 @@ class AgyTelegramBot:
                 )
 
         except asyncio.CancelledError:
+            turn_status = "CANCELLED"
+            turn_error = "Task cancelled"
             logger.info("Prompt task cancelled for chat %s", chat_id)
             target_msg_id = self.active_progress_messages.get(chat_id, msg_id)
             target_reply_id = self.active_reply_to_ids.get(chat_id, reply_to_id)
@@ -1698,6 +1722,8 @@ class AgyTelegramBot:
                 await self._safe_set_message_reaction(chat_id, target_reply_id, "⚠️")
             raise
         except Exception as e:
+            turn_status = "ERROR"
+            turn_error = str(e)[:500]
             logger.error("Error executing prompt for chat %s: %s", chat_id, e, exc_info=True)
             target_msg_id = self.active_progress_messages.get(chat_id, msg_id)
             target_reply_id = self.active_reply_to_ids.get(chat_id, reply_to_id)
@@ -1709,6 +1735,21 @@ class AgyTelegramBot:
             else:
                 await self._safe_send_message(chat_id=chat_id, text=err_text, reply_to_message_id=target_reply_id)
         finally:
+            if not turn_trace_logged:
+                turn_trace_logged = True
+                log_trace_span(
+                    trace_id=turn_trace_id,
+                    span_id=turn_span_id,
+                    operation="agent_turn",
+                    status=turn_status,
+                    duration_ms=round((time.time() - start_time) * 1000, 1),
+                    source_project=active_proj,
+                    tokens=total_tokens,
+                    model=effective_model or "",
+                    permission_preset=effective_permission_preset or "",
+                    error=turn_error,
+                    trace_file=Path(getattr(self.config, "traces_file", "runtime/traces.jsonl")),
+                )
             if bridge and not bridge.is_running():
                 self.active_bridges.pop(chat_id, None)
             self.active_progress_messages.pop(chat_id, None)

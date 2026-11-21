@@ -271,3 +271,31 @@ def test_permission_preset_persistence(tmp_path):
     mgr3 = SessionManager(persistence_file=persist_file)
     assert mgr3.get_session(600).permission_preset is None
 
+
+def test_per_project_permission_isolation_and_file_mode(tmp_path):
+    persist_file = tmp_path / "isolated_perms.json"
+    mgr = SessionManager(persistence_file=persist_file)
+    mgr.create_project(700, "admin", str(tmp_path / "admin"))
+    mgr.create_project(700, "learner", str(tmp_path / "learner"))
+
+    mgr.open_project(700, "admin")
+    mgr.set_permission_preset(700, "turbo")
+    sess = mgr.get_session(700)
+
+    # Admin gets turbo, while learner (and cross-project IPC lookup from admin) stays isolated at default
+    assert sess.get_permission_preset(project_name="admin", default="auto") == "turbo"
+    assert sess.get_permission_preset(project_name="learner", default="auto") == "auto"
+
+    # Switching active project reflects that project's isolated preset
+    mgr.open_project(700, "learner")
+    assert mgr.get_session(700).get_permission_preset(default="auto") == "auto"
+    mgr.open_project(700, "admin")
+    assert mgr.get_session(700).get_permission_preset(default="auto") == "turbo"
+
+    # Reloaded session retains per-project presets and enforces 0600 file permissions
+    mgr2 = SessionManager(persistence_file=persist_file)
+    sess2 = mgr2.get_session(700)
+    assert sess2.get_permission_preset(project_name="admin", default="auto") == "turbo"
+    assert sess2.get_permission_preset(project_name="learner", default="auto") == "auto"
+    assert (persist_file.stat().st_mode & 0o777) == 0o600
+

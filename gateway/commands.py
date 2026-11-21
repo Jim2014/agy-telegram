@@ -32,7 +32,6 @@ from gateway.ui_keyboards import (
     build_skills_keyboard,
     build_usage_keyboard,
     build_voice_keyboard,
-    build_webapp_viewer_button,
     fetch_agy_models,
 )
 
@@ -303,7 +302,7 @@ async def handle_cmd_status(bot: Any, chat_id: int) -> None:
     active_path = session.active_path() or bot.config.agy_working_dir or os.getcwd()
     model_str = session.model or bot.config.default_model or "gemini-3.8-flash"
     effort_str = session.effort or bot.config.default_effort or "high"
-    perm_str = session.permission_preset or getattr(bot.config, "default_permission_preset", "auto")
+    perm_str = session.get_permission_preset(default=getattr(bot.config, "default_permission_preset", "auto"))
     busy_status = "🔴 Busy (Running prompt)" if session.is_busy else "🟢 Idle"
 
     # Startup time + uptime
@@ -428,10 +427,10 @@ async def handle_cmd_permissions(bot: Any, chat_id: int, arg: str = "", edit_mes
             bot.session_manager.set_permission_preset(chat_id, parsed)
         asyncio.create_task(bot.update_pinned_banner(chat_id))
 
-    cur_preset = session.permission_preset or getattr(bot.config, "default_permission_preset", "auto")
+    cur_preset = session.get_permission_preset(default=getattr(bot.config, "default_permission_preset", "auto"))
     cur_model = session.model or bot.config.default_model or "gemini-3.8-flash"
 
-    text, reply_markup = build_permissions_keyboard(cur_preset, cur_model)
+    text, reply_markup = build_permissions_keyboard(cur_preset, cur_model, project_name=session.active_project)
 
     if edit_message_id:
         await bot._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
@@ -569,22 +568,12 @@ async def handle_cmd_dir(bot: Any, chat_id: int, arg: str = "", reply_to_id: Opt
         f"💡 <i>Open the attached HTML to expand/collapse folders and tap any file to copy its <code>/file</code> command!</i>"
     )
 
-    doc_markup = None
-    if getattr(bot, "webapp_server", None) and getattr(bot.webapp_server, "_is_running", False):
-        try:
-            d_id = f"tree_{chat_id}_{int(time.time())}"
-            doc_url = bot.webapp_server.register_document(doc_id=d_id, content=html_doc, filename=filename)
-            doc_markup = {"inline_keyboard": [[build_webapp_viewer_button(doc_url, title="🌐 Open Tree Viewer")]]}
-        except Exception as e:
-            logger.debug("Failed to register tree webapp doc: %s", e)
-
     doc_res = await bot._safe_send_document(
         chat_id=chat_id,
         document_content=html_doc,
         filename=filename,
         caption=caption,
         reply_to_message_id=reply_to_id,
-        reply_markup=doc_markup,
     )
 
     if not doc_res:
@@ -648,15 +637,6 @@ async def handle_cmd_file(bot: Any, chat_id: int, arg: str, reply_to_id: Optiona
         )
 
         if is_converted:
-            doc_markup = None
-            if getattr(bot, "webapp_server", None) and getattr(bot.webapp_server, "_is_running", False):
-                try:
-                    d_id = f"file_{chat_id}_{int(time.time())}"
-                    doc_url = bot.webapp_server.register_document(doc_id=d_id, content=html_doc, filename=out_filename)
-                    doc_markup = {"inline_keyboard": [[build_webapp_viewer_button(doc_url, title="🌐 View in Telegram")]]}
-                except Exception as e:
-                    logger.debug("Failed to register file webapp doc: %s", e)
-
             caption = f"🌐 <b>{escape_html(out_filename)}</b>\nHTML view of <code>{escape_html(target_file.name)}</code> ({size_str})"
             res = await bot._safe_send_document(
                 chat_id=chat_id,
@@ -664,7 +644,6 @@ async def handle_cmd_file(bot: Any, chat_id: int, arg: str, reply_to_id: Optiona
                 filename=out_filename,
                 caption=caption,
                 reply_to_message_id=reply_to_id,
-                reply_markup=doc_markup,
             )
         else:
             # Binary or unsupported -> return original file directly
@@ -725,15 +704,6 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
     )
     filename = f"session_report_{active_proj}_{int(time.time())}.html"
 
-    doc_markup = None
-    if getattr(bot, "webapp_server", None) and getattr(bot.webapp_server, "_is_running", False):
-        try:
-            d_id = f"report_{chat_id}_{int(time.time())}"
-            doc_url = bot.webapp_server.register_document(doc_id=d_id, content=html_doc, filename=filename)
-            doc_markup = {"inline_keyboard": [[build_webapp_viewer_button(doc_url, title="🌐 Open Session Report")]]}
-        except Exception as e:
-            logger.debug("Failed to register export webapp doc: %s", e)
-
     await bot._safe_send_chat_action(chat_id, "upload_document")
     await bot._safe_send_document(
         chat_id=chat_id,
@@ -741,7 +711,6 @@ Session is currently {'busy' if session.is_busy else 'idle and ready for tasks'}
         filename=filename,
         caption=f"📄 <b>{escape_html(filename)}</b>",
         reply_to_message_id=reply_to_id,
-        reply_markup=doc_markup,
     )
 
 

@@ -92,6 +92,12 @@ DEFAULT_SYSTEM_PROMPT = """You are interacting with a user via the agy-telegram 
    - When you receive a message wrapped in `[AGY_INCOMING from="<source>" to="<target>"]...[END_AGY_INCOMING]`, execute the requested task in your workspace and reply with `[AGY_IPC to="<source>"]...[END_AGY_IPC]`.
 """.strip()
 
+COMPACT_TURN_REMINDER = (
+    '[AGY_PROTOCOL_REMINDER: Match ONLY the user\'s latest prompt language (English/Chinese). '
+    'Use [AGY_FILE], [AGY_ACTIONS], and [AGY_IPC to="<proj>"] blocks when needed. '
+    'Always conclude with [AGY_VOICE lang="en|zh"]...[END_AGY_VOICE] in natural spoken prose without paths, code syntax, or markdown.]'
+)
+
 
 def resolve_default_agy_bin() -> str:
     """Resolve the default agy CLI binary path from local bin or PATH."""
@@ -123,9 +129,6 @@ class Config:
     log_file: str = "runtime/gateway.log"
     sessions_file: str = "runtime/sessions.json"
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
-    webapp_port: int = 8765
-    webapp_base_url: str = ""
-    webapp_enabled: bool = True
     tts_enabled: bool = True
     tts_mode: str = "autogen"  # "disable" | "autogen" | "autoplay"
     tts_voice_zh: str = "zh-CN-XiaoxiaoNeural"
@@ -198,13 +201,6 @@ class Config:
         log_file = os.getenv("LOG_FILE", "runtime/gateway.log").strip()
         sessions_file = os.getenv("SESSIONS_FILE", "runtime/sessions.json").strip()
 
-        try:
-            webapp_port = int(os.getenv("WEBAPP_PORT", "8765"))
-        except ValueError:
-            webapp_port = 8765
-        webapp_base_url = os.getenv("WEBAPP_BASE_URL", "").strip()
-        webapp_enabled = os.getenv("WEBAPP_ENABLED", "true").strip().lower() in ("true", "1", "yes")
-
         # System prompt loading (Priority: AGY_SYSTEM_PROMPT_FILE > AGY_SYSTEM_PROMPT > DEFAULT_SYSTEM_PROMPT)
         system_prompt = ""
         prompt_file_val = os.getenv("AGY_SYSTEM_PROMPT_FILE", "").strip()
@@ -263,9 +259,6 @@ class Config:
             log_file=log_file,
             sessions_file=sessions_file,
             system_prompt=system_prompt,
-            webapp_port=webapp_port,
-            webapp_base_url=webapp_base_url,
-            webapp_enabled=webapp_enabled,
             tts_enabled=tts_enabled,
             tts_mode=tts_mode,
             tts_voice_zh=tts_voice_zh,

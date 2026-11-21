@@ -232,26 +232,15 @@ def test_build_decision_and_action_keyboards():
     assert "Run Tests" in abuttons[0][0]["text"]
 
 
-def test_build_reply_keyboard_and_webapp_button():
-    from gateway.ui_keyboards import build_reply_keyboard, build_webapp_viewer_button
+def test_build_reply_keyboard():
+    from gateway.ui_keyboards import build_reply_keyboard
 
-    # 1. Reply keyboard with placeholder
+    # Reply keyboard with placeholder
     rk = build_reply_keyboard(placeholder="🎯 Type to steer...", is_busy=True)
     assert rk["resize_keyboard"] is True
     assert rk["is_persistent"] is True
     assert rk["input_field_placeholder"] == "🎯 Type to steer..."
     assert len(rk["keyboard"][0]) == 4
-
-    # 2. WebApp viewer button (HTTPS -> web_app)
-    wb_https = build_webapp_viewer_button("https://webapp.test/view/123/doc.html", "🌐 View Diff")
-    assert wb_https["text"] == "🌐 View Diff"
-    assert wb_https["web_app"]["url"] == "https://webapp.test/view/123/doc.html"
-
-    # 3. WebApp viewer button fallback (HTTP -> url)
-    wb_http = build_webapp_viewer_button("http://127.0.0.1:8765/view/123/doc.html", "🌐 View Tree")
-    assert wb_http["text"] == "🌐 View Tree"
-    assert "web_app" not in wb_http
-    assert wb_http["url"] == "http://127.0.0.1:8765/view/123/doc.html"
 
 
 def test_build_pinned_banner_keyboard():

@@ -145,7 +145,7 @@ case "${1:-}" in
     -h|--help|help)
         echo "Usage: ./restart.sh [command]"
         echo "  (no args)           Restart (or start) the gateway"
-        echo "  status | --status   Show gateway, launchd, watchdog, and WebApp health"
+        echo "  status | --status   Show gateway, launchd, and watchdog status"
         echo "  stop | --stop       Stop the gateway (and watchdog if running)"
         echo "  watch | --watch     Start the watchdog auto-restart supervisor"
         echo "  stop-watch          Stop only the watchdog supervisor"
@@ -258,11 +258,6 @@ case "${1:-}" in
             fi
         else
             echo "⚪ Watchdog: Not running"
-        fi
-
-        health_resp=$(curl -s --connect-timeout 1 http://127.0.0.1:8765/health 2>/dev/null || true)
-        if [ -n "$health_resp" ]; then
-            echo "🌐 WebApp (:8765): $health_resp"
         fi
         exit 0
         ;;
