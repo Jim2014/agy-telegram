@@ -70,7 +70,7 @@ DEFAULT_SYSTEM_PROMPT = """You are interacting with a user via the agy-telegram 
      2. **Complete Meaning & Coverage (Acoustic-Friendly Adaptation)**: Convey all substantive results, decisions, architectural concepts, and reasoning from your response, but adapt it completely for auditory listening.
      3. **Natural Spoken Broadcast Tone**: Imagine speaking as an articulate tech podcast host or audiobook narrator. The narrative must flow smoothly and conversationally.
      4. **STRICTLY AVOID Unspeakable / Visual Artifacts**:
-        - **NEVER recite long file paths or URLs**: Instead of saying `/Users/jim/.../message_formatter.py`, say "the message formatter module".
+        - **NEVER recite long file paths or URLs**: Instead of saying `/path/to/message_formatter.py`, say "the message formatter module".
         - **NEVER read raw code syntax or symbols**: Do not read function signatures with brackets, colons, underscores, backticks, or variable names like `foo_bar_baz`. Explain what the code does or describe the logic in natural spoken words.
         - **NO Markdown or table markup**: Strip all asterisks, hashes, backticks, pipes, and dashes.
      5. **Do Not Include Buttons / Command Syntax**: NEVER repeat button choices, action menus (`[AGY_ACTIONS]`), decision lists, or slash commands.
@@ -91,13 +91,21 @@ DEFAULT_SYSTEM_PROMPT = """You are interacting with a user via the agy-telegram 
 """.strip()
 
 
+def resolve_default_agy_bin() -> str:
+    """Resolve the default agy CLI binary path from local bin or PATH."""
+    local_bin = Path.home() / ".local" / "bin" / "agy"
+    if local_bin.is_file():
+        return str(local_bin)
+    return shutil.which("agy") or str(local_bin)
+
+
 @dataclass
 class Config:
     """Gateway runtime configuration."""
 
     bot_token: str = ""
     allowed_chat_ids: Set[int] = field(default_factory=set)
-    agy_bin_path: str = "/Users/jim/.local/bin/agy"
+    agy_bin_path: str = field(default_factory=resolve_default_agy_bin)
     agy_working_dir: str = ""
     default_model: str = "gemini-3.8-flash"
     default_effort: str = "high"
@@ -143,11 +151,7 @@ class Config:
         # agy binary path
         agy_bin = os.getenv("AGY_BIN_PATH", "").strip()
         if not agy_bin:
-            # Try default known paths or PATH lookup
-            if Path("/Users/jim/.local/bin/agy").is_file():
-                agy_bin = "/Users/jim/.local/bin/agy"
-            else:
-                agy_bin = shutil.which("agy") or "/Users/jim/.local/bin/agy"
+            agy_bin = resolve_default_agy_bin()
 
         # agy working dir
         working_dir = os.getenv("AGY_WORKING_DIR", "").strip()

@@ -1,152 +1,154 @@
-# agy-telegram — 通过 Telegram 直接与 agy (Antigravity CLI) 对话
+# agy-telegram — Direct Telegram Gateway for agy (Antigravity CLI)
 
-一个轻量、实时的 Telegram 网关：在 Telegram 里直接和 `agy`（Antigravity CLI / Gemini 2.5 Pro）对话，实时查看**思考过程、工具调用与中间流式输出**，支持**中途引导（Steering）**与 `/` 斜杠命令控制，不经过 Hermes 中转（省 token、看细节）。
-
----
-
-## 目录
-- [核心特性](#核心特性)
-- [运行环境准备](#运行环境准备)
-  - [选项 A: 使用 Conda 环境 (推荐，环境名: agy-telegram)](#选项-a-使用-conda-环境-推荐环境名-agy-telegram)
-  - [选项 B: 使用 Python venv](#选项-b-使用-python-venv)
-- [运行时目录与文件隔离 (runtime/)](#运行时目录与文件隔离-runtime)
-- [配置指南 (.env)](#配置指南-env)
-  - [第一步: 获取 Telegram Bot Token](#第一步-获取-telegram-bot-token)
-  - [第二步: 配置 .env](#第二步-配置-env)
-- [启动与运行](#启动与运行)
-- [Telegram 命令与交互指南](#telegram-命令与交互指南)
-  - [支持的命令列表](#支持的命令列表)
-  - [中途引导 (Steering) 工作机制](#中途引导-steering-工作机制)
-- [架构与模块说明](#架构与模块说明)
-- [测试与验证](#测试与验证)
+A lightweight, real-time Telegram gateway for interacting directly with `agy` (Antigravity CLI) from Telegram. Stream **thinking progress, tool calls, and live partial outputs**, send **mid-flight steering instructions**, and control workspaces with `/` slash commands — without any intermediate proxy overhead.
 
 ---
 
-## 核心特性
-
-1. **Telegram Long-Polling**: 基于 Telegram Bot API，无需公网 IP 或 Webhook 配置。
-2. **实时流式与中间过程可视化**: 实时捕获 agy 的 `stream-json` 事件，展示丰富工具调用（`run_command`, `view_file`, `grep_search`, `invoke_subagent`, `read_url_content`, `generate_image`, `schedule` 等）及其执行耗时，并在 Telegram 中动态高亮实时状态。
-3. **中途引导 (Steering) 与长连接进程池 (Session Daemon)**: 当 agy 正在思考或执行多步工具时，可通过 `/steer` 或直接发消息将指令注入当前会话；支持 `--input-format stream-json` 多轮长连接保活，消弭每轮冷启动开销。
-4. **声明式 Agent 规则定制**: 遵循 AGY v1.1.15 规范，采用 `.gemini/rules/telegram-output.md` 与 `.gemini/rules.json` 声明格式与 `[AGY_FILE]` 导出规则，彻底净化用户 Prompt 历史并维持系统级约束。
-5. **项目化会话持久化与隔离**: 支持多项目工作区管理（`/new`, `/open`, `/delete`, `/reset`, `/projects`），每个项目独立保存 `path` 与 `conversation_id`，跨项目持久化无缝切换。
-6. **灵活参数调整**: 通过 `/model` 切换模型，通过 `/effort` 调整推理强度 (low/medium/high)，通过 `/dir` 调整当前项目工作区。
-7. **语音消息与音频交互 (Voice Messages & Faster-Whisper STT / TTS Broadcast)**: 支持直接在 Telegram 中发送语音条或音频文件，网关自动接收并下载至 `runtime/voice/` 目录，通过内置 `faster-whisper` 离线语音识别引擎秒级转录为文本后交由 `agy` 执行，彻底杜绝大模型因直接读取二进制音频导致上下文损坏的问题；在任务运行中发送语音亦可实时转录并 Steering 注入当前会话；内置动态双语 TTS 引擎，支持在文本与 HTML 报告消息下方常驻 `[ 🔊 Send Audio ]` 按需语音播报按钮，或自动合成语音条。
-8. **文件与图片附件交互 (Document & Photo Attachments & Mini App WebApp)**: 支持在 Telegram 中直接发送文档、代码文件、数据表格或图片，网关自动接收下载至 `runtime/documents/` 并将文件绝对路径与元数据传给 `agy` 深度分析与处理；支持中途 Steering 注入；生成的 HTML 文档与报告自动集成内置 WebApp 服务器（`:8765`），附带 `[ 🌐 Open in Telegram ]` 与 `[ 🔊 Send Audio ]` 交互按钮。
-9. **运行时隔离与 Git 保护**: 所有运行时日志（`runtime/gateway.log`）、进程 PID（`runtime/gateway.pid`）、会话持久化（`runtime/sessions.json`）、语音缓存（`runtime/voice/`）与文件附件（`runtime/documents/`）均自动归档在 `runtime/` 目录，已加入 `.gitignore` 彻底杜绝误提交。
-10. **安全与健壮性 (Harden & Auto-Heal)**:
-    - 支持 `ALLOWED_CHAT_IDS` 白名单鉴权。
-    - **Telegram 网络异常免疫**：所有 Telegram API 调用统一走安全封装，遭遇 `httpx.ReadError`、超时、网络瞬断时自动降级并不中断流式任务或退出主进程。
-    - **看门狗崩溃自动拉起 (Watchdog Supervisor)**：提供独立的看门狗守护进程（`runtime/watchdog.sh` / `./restart.sh watch`），周期巡检进程状态，意外退出后 10 秒内自动拉起。
-    - 保留 `/stop` 供强制中断正在执行的 agy 子进程。
-    - 自动处理 Telegram 4096 字符截断、限频 (Throttling) 与 HTML 标签容错降级。
-    - 全套单元测试（146 项全覆盖）、网络抗逆测试与 agy 冒烟测试。详细演进规划请参考 [ROADMAP.md](ROADMAP.md)。
-11. **跨项目多智能体通信协议 (`AGY_IPC`) 与专属置顶卡片管理**:
-    - **跨工作区去中心化协同**：支持智能体通过 `[AGY_IPC to="<target>"]...[END_AGY_IPC]` 发起跨目录/跨项目任务派发与信封包装（`[AGY_INCOMING]`），结果自动回流主对话。
-    - **专属独立置顶折叠卡片**：Telegram 顶部为每个目标项目维护独立固定的原生折叠卡片（`<blockquote expandable>`），流式追踪工具执行与耗时。
-    - **一键交互式 Unpin 按钮**：卡片附带 `[ 📌 Unpin ]` 按钮，点击一键调用 Telegram Bot API 取消置顶并同步网关状态。
-    - **独立审计日志**：在 `runtime/ipc.log` 完整记录跨项目 `DISPATCH`、`INIT`、`TOOL` 与 `COMPLETE` 全生命周期。
+## Table of Contents
+- [Key Features](#key-features)
+- [Environment Setup](#environment-setup)
+  - [Option A: Conda Environment (Recommended, env: `agy-telegram`)](#option-a-conda-environment-recommended-env-agy-telegram)
+  - [Option B: Python `venv`](#option-b-python-venv)
+- [Runtime Isolation (`runtime/`)](#runtime-isolation-runtime)
+- [Configuration Guide (`.env`)](#configuration-guide-env)
+  - [Step 1: Obtain a Telegram Bot Token](#step-1-obtain-a-telegram-bot-token)
+  - [Step 2: Configure `.env`](#step-2-configure-env)
+- [Starting and Managing the Service](#starting-and-managing-the-service)
+- [Telegram Commands & Interactive UI](#telegram-commands--interactive-ui)
+  - [Supported Commands & Inputs](#supported-commands--inputs)
+  - [Dynamic Multi-Template HTML Rendering (`/file -h`)](#dynamic-multi-template-html-rendering-file--h)
+  - [Mid-Flight Steering & System Prompt Injection](#mid-flight-steering--system-prompt-injection)
+- [Architecture & Module Overview](#architecture--module-overview)
+- [Testing & Verification](#testing--verification)
 
 ---
 
-## 运行环境准备
+## Key Features
 
-### 选项 A: 使用 Conda 环境 (推荐，环境名: `agy-telegram`)
+1. **Telegram Long-Polling**: Built directly on the Telegram Bot API — no public IP or webhook setup required.
+2. **Real-Time Streaming & Tool Visibility**: Captures `agy` `stream-json` events in real time, displaying tool invocations (`run_command`, `view_file`, `grep_search`, `invoke_subagent`, `read_url_content`, `generate_image`, `schedule`, etc.) with live elapsed timings.
+3. **Mid-Flight Steering & Warm Process Pool**: Inject steering guidance while `agy` is actively working via `/steer` or by sending a normal message (rotating the Telegram progress reply cleanly so only one final report is sent); supports `--input-format stream-json` keep-alive turns to eliminate cold-start latency.
+4. **Declarative Agent Rules**: Follows AGY rules specifications using `.gemini/rules/` and `.gemini/rules.json` for output formatting and `[AGY_FILE]` document exports.
+5. **Project-Based Session Persistence & Isolation**: Manage multiple project workspaces (`/new`, `/open`, `/delete`, `/reset`, `/projects`), each persisting its own `path`, `conversation_id`, and usage stats.
+6. **Dynamic Model Discovery & Effort Controls**: `/model` auto-discovers available models directly from `agy models` (with caching and `/model refresh`), `/effort` adjusts reasoning depth (`low`/`medium`/`high`), and `/dir` inspects the active workspace tree.
+7. **Voice Messages & Audio Interaction (Faster-Whisper STT + Bilingual TTS)**: Send Telegram voice notes or audio files, automatically downloaded to `runtime/voice/` and transcribed offline via `faster-whisper` before being sent to `agy` (or steered mid-flight); includes dynamic bilingual TTS (`[AGY_VOICE]`) supporting on-demand playback buttons (`[ 🔊 Play Audio ]`) or auto-sent voice replies.
+8. **File & Photo Attachments + Telegram Mini App WebApp**: Send documents, source files, CSVs, or images directly in chat (saved to `runtime/documents/`) for `agy` analysis; generated HTML reports are served by the built-in WebApp server (`:8765`) with `[ 🌐 Open in Telegram ]` buttons.
+9. **Runtime Isolation & Git Safety**: Runtime logs (`runtime/gateway.log`), PID files (`runtime/gateway.pid`), session persistence (`runtime/sessions.json`), voice cache (`runtime/voice/`), and uploads (`runtime/documents/`) are isolated inside `runtime/` and excluded via `.gitignore`.
+10. **Hardening & Auto-Healing**:
+    - `ALLOWED_CHAT_IDS` whitelist authentication.
+    - **Network Exception Resilience**: Wrapped Telegram API calls gracefully absorb transient `httpx.ReadError`, timeouts, and network hiccups without aborting streaming turns.
+    - **Watchdog Supervisor & macOS Autostart**: Includes `runtime/watchdog.sh` (`./restart.sh watch`) for crash auto-recovery within 10 seconds, plus macOS LaunchAgent integration (`./restart.sh autostart`).
+    - `/stop` immediately interrupts the active `agy` subprocess.
+    - Automatic Telegram 4096-character chunk splitting, rate-limit throttling, and HTML fallback handling.
+    - Comprehensive test suite (**149 tests** covering unit, network resilience, protocol parsing, and real `agy` CLI smoke testing). See [ROADMAP.md](ROADMAP.md) for planned milestones.
+11. **Cross-Project Multi-Agent Mesh (`AGY_IPC`) & Pinned Expandable Cards**:
+    - **Decentralized Cross-Workspace Collaboration**: Agents can dispatch sub-tasks across registered project directories via `[AGY_IPC to="<target>"]...[END_AGY_IPC]` envelopes (`[AGY_INCOMING]`) and automatically return results to the main chat.
+    - **Dedicated Pinned Progress Cards**: Maintains per-project pinned expandable cards (`<blockquote expandable>`) in Telegram tracking live tool execution and elapsed duration.
+    - **Interactive Unpin Button**: Each IPC card includes a `[ 📌 Unpin ]` button to unpin and sync state via the Telegram Bot API.
+    - **Dedicated IPC Audit Log**: Records full `DISPATCH`, `INIT`, `TOOL`, and `COMPLETE` lifecycles in `runtime/ipc.log`.
 
-已提供 `environment.yml`（Python 3.10）：
+---
+
+## Environment Setup
+
+### Option A: Conda Environment (Recommended, env: `agy-telegram`)
+
+An `environment.yml` (Python 3.10) is provided:
 
 ```bash
-cd /Users/jim/hermes-shared/agy-telegram
+cd /path/to/agy-telegram
 
-# 1. 创建并激活 conda 环境
+# 1. Create and activate the conda environment
 conda env create -f environment.yml
 conda activate agy-telegram
 
-# 2. 安装依赖 (如未自动安装)
+# 2. Install Python dependencies (if not installed automatically)
 pip install -r requirements.txt
 ```
 
-### 选项 B: 使用 Python venv
+### Option B: Python `venv`
 
 ```bash
-cd /Users/jim/hermes-shared/agy-telegram
+cd /path/to/agy-telegram
 
-# 1. 创建虚拟环境
+# 1. Create virtual environment
 python3 -m venv venv
 
-# 2. 安装依赖
+# 2. Install dependencies
 ./venv/bin/pip install -r requirements.txt
 ```
 
 ---
 
-## 运行时目录与文件隔离 (`runtime/`)
+## Runtime Isolation (`runtime/`)
 
-为了保持代码库整洁并防止运行时动态文件被提交到 Git：
+To keep the repository clean and prevent runtime data from entering Git history:
 
-```
+```text
 agy-telegram/
-├── runtime/              # 运行时动态数据目录 (已加入 .gitignore)
-│   ├── gateway.log       # 运行日志
-│   ├── gateway.pid       # 守护进程 PID 文件
-│   ├── watchdog.sh       # 看门狗自动拉起守护脚本
-│   ├── watchdog.log      # 看门狗运行与自愈日志
-│   ├── watchdog.pid      # 看门狗 PID 文件
-│   └── sessions.json     # 跨会话与多项目持久化数据
-├── gateway/              # 核心网关 Python 模块
-├── tests/                # 单元测试与冒烟测试
-├── restart.sh            # 服务与看门狗启停控制脚本
-├── environment.yml       # Conda 运行环境定义
+├── runtime/              # Runtime dynamic data directory (gitignored)
+│   ├── gateway.log       # Main gateway logs
+│   ├── gateway.pid       # Gateway process PID file
+│   ├── ipc.log           # Cross-project IPC audit log
+│   ├── watchdog.sh       # Watchdog auto-restart script
+│   ├── watchdog.log      # Watchdog logs
+│   ├── watchdog.pid      # Watchdog PID file
+│   └── sessions.json     # Persistent chat, project & stats store
+├── gateway/              # Core Python gateway modules
+├── tests/                # Unit, integration & smoke tests
+├── restart.sh            # Service, watchdog & autostart control script
+├── environment.yml       # Conda environment specification
 └── README.md
 ```
 
-- 系统启动时会自动确保 `runtime/` 目录存在。
-- 若存在旧版本根目录下的 `sessions.json`，系统会自动兼容迁移加载。
+- The `runtime/` directory is created automatically on startup.
+- Legacy root-level `sessions.json` files are migrated automatically if present.
 
 ---
 
-## 配置指南 (.env)
+## Configuration Guide (`.env`)
 
-### 第一步: 获取 Telegram Bot Token
+### Step 1: Obtain a Telegram Bot Token
 
-1. 打开 Telegram，搜索官方账号 [@BotFather](https://t.me/BotFather)。
-2. 发送 `/newbot` 指令，按照提示输入 Bot 的名称与 username（例如 `my_agy_bot`）。
-3. BotFather 会生成形如 `123456789:ABCdefGHIjklMNOpqrsTUVwxyz` 的 API Token，复制该 Token。
+1. Open Telegram and search for the official [@BotFather](https://t.me/BotFather) account.
+2. Send `/newbot` and follow the prompts to choose a display name and username (e.g. `my_agy_bot`).
+3. Copy the generated API token (format: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`).
 
-### 第二步: 配置 `.env`
+### Step 2: Configure `.env`
 
-从模板创建 `.env`：
+Create `.env` from the template:
 
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env` 内容：
+Edit `.env`:
 
 ```ini
-# 必填: 从 @BotFather 获取的 Bot Token
+# Required: Bot token from @BotFather
 BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
 
-# 可选: 允许访问的 Telegram Chat ID 列表(逗号分隔)。留空则允许所有用户
-# 可在 Telegram 搜索 @userinfobot 获取自己的 Chat ID
+# Optional: Comma-separated Telegram Chat IDs allowed to access the bot.
+# Leave empty to allow all chats. Find your ID via @userinfobot on Telegram.
 ALLOWED_CHAT_IDS=
 
-# agy CLI 路径 (默认为 /Users/jim/.local/bin/agy 或系统 PATH 中的 agy)
-AGY_BIN_PATH=/Users/jim/.local/bin/agy
+# agy CLI binary path (defaults to ~/.local/bin/agy or agy in PATH)
+AGY_BIN_PATH=~/.local/bin/agy
 
-# 默认工作空间 (--add-dir)，留空默认使用当前仓库根目录
-AGY_WORKING_DIR=/Users/jim/hermes-shared/agy-telegram
+# Default working directory (--add-dir). Leave empty to use the repository root.
+AGY_WORKING_DIR=
 
-# 默认模型与推理强度
-DEFAULT_MODEL=
-DEFAULT_EFFORT=medium
+# Default model and reasoning effort
+DEFAULT_MODEL=gemini-3.8-flash
+DEFAULT_EFFORT=high
 
-# 消息流式刷新限频间隔 (秒，默认 1.0)
+# Streaming edit throttle interval in seconds (default: 1.0)
 STREAM_THROTTLE_SECONDS=1.0
 
-# 单次请求超时时间 (秒，默认 300)
+# Subprocess timeout in seconds (default: 300)
 AGY_TIMEOUT_SECONDS=300
 
-# 日志级别 (INFO / DEBUG) 与路径
+# Logging level (INFO / DEBUG) and runtime file paths
 LOG_LEVEL=INFO
 LOG_FILE=runtime/gateway.log
 SESSIONS_FILE=runtime/sessions.json
@@ -154,52 +156,53 @@ SESSIONS_FILE=runtime/sessions.json
 
 ---
 
-## 启动与运行
+## Starting and Managing the Service
 
-### 1. 检查配置有效性
+### 1. Validate Configuration
 
 ```bash
 conda run -n agy-telegram python main.py --check-config
-# 或使用脚本:
+# Or via helper script:
 ./restart.sh --check
 ```
 
-### 2. 运行 agy 真实冒烟测试
+### 2. Run `agy` CLI Smoke Test
 
-验证本地 `agy` CLI 能否正常调用并输出流式 JSON：
+Verify that the local `agy` CLI runs properly and emits `stream-json` events:
 
 ```bash
 conda run -n agy-telegram python main.py --smoke-test
 ```
 
-### 3. 启动与管理服务
+### 3. Start & Manage Background Services
 
-使用后台管理脚本 `restart.sh`：
+Use `restart.sh` to control the gateway, watchdog, and macOS LaunchAgent:
 
 ```bash
-# 启动 / 重启网关
+# Start or restart the gateway
 ./restart.sh
 
-# 查看网关、看门狗与 macOS 自启动服务状态
+# Check gateway, watchdog, WebApp health, and LaunchAgent status
 ./restart.sh status
 
-# 开启 macOS 开机/登录后台自启动 (LaunchAgent)
+# Enable macOS boot/login autostart (LaunchAgent)
 ./restart.sh autostart
 
-# 禁用 macOS 自启动服务
+# Disable macOS autostart
 ./restart.sh autostart-disable
 
-# 启动崩溃自动拉起看门狗 (Watchdog)
+# Start crash auto-recovery watchdog supervisor
 ./restart.sh watch
 
-# 停止网关与看门狗
+# Stop both gateway and watchdog
 ./restart.sh stop
 
-# 仅停止看门狗
+# Stop only the watchdog
 ./restart.sh stop-watch
 ```
 
-日志文件输出在 `runtime/gateway.log` 与 `runtime/watchdog.log`：
+Logs are written to `runtime/gateway.log` and `runtime/watchdog.log`:
+
 ```bash
 tail -f -n 50 runtime/gateway.log
 tail -f -n 50 runtime/watchdog.log
@@ -207,144 +210,125 @@ tail -f -n 50 runtime/watchdog.log
 
 ---
 
-### 🤖 自适应斜杠菜单与命令中心 (Adaptive Pure LRU Command Menu)
+## Telegram Commands & Interactive UI
 
-网关采用**自适应纯 LRU (Least Recently Used) 算法与置顶设计**，确保所有命令全部入驻 Telegram 菜单，且最近使用的命令自动排在最前面：
-- **📌 `/help` 永远置顶固定**：无论如何排序，`/help` 始终固定位于第 0 位，点击可呼出集成所有子系统的**交互式命令中心仪表盘**（带快捷一键点击按钮）。
-- **⚡ 纯 LRU 算法智能重排**：网关后台动态记录当前 Chat 各命令的最近使用时间戳（`last_used_timestamp`），**最后用到的命令会自动浮动到最前面（紧跟 `/help` 之后）**；未使用的命令按默认优先级排序。
-- **📱 全命令完整入驻菜单**：全部 19 条支持的斜杠命令均完整注册到 Telegram `/` 弹出菜单中，用户在对话中键入任意命令或别名后，菜单秒级自适应更新当前 Chat 的命令顺序。
+### Adaptive Slash Menu & Interactive Controls
 
-- **📌 顶部常驻工作区看板 (Pinned Status Banner)**：在聊天顶部自动置顶当前工作区看板（项目名、路径、模型、Token 统计、存活时长与状态），每次切换项目或每轮任务完成时静默自动刷新，手机抬头即见，自带 `[ 📊 Status ]`、`[ 📁 Projects ]`、`[ 🪙 Quota ]`、`[ 📖 Help ]` 快捷入口。
-- **/help 命令中心**：展示所有快捷功能入口（`[ 📊 Status ]`、`[ 🪙 Quota & Usage ]`、`[ 📁 Projects ]`、`[ 🧠 Model & Effort ]`、`[ 🧩 Skills & Tools ]`、`[ 📦 Artifacts ]`、`[ 📁 File Tree ]`、`[ 📄 Export ]`）。
-- **🔘 对话决策与后续操作选项 (Decision Flow & Action Buttons)**：
-  - 当 agy 调用 `ask_question` 工具或在末尾返回建议操作时，直接在消息下方渲染交互式行内按钮（如 `[ 🧪 运行单元测试 ]`、`[ 📝 查看 Diff ]`、`[ 🚀 提交变更 ]`），点击一键执行，无需在手机上打字！
-- **📑 原生可折叠工具进度 (`<blockquote expandable>`)**：长日志、多工具流执行过程自动包裹在可折叠块中，手机端默认仅占 3 行高度，点击即可就地展开。
-- **⚡ 即时消息 Reaction 反馈**：用户发送提示后立即反应 `👀`，执行工具反应 `⚡`，成功完成反应 `✅`，遇到异常反应 `⚠️`。
-- **/usage 配额看板**：直观展示 Gemini 7天周限制与 5小时速率限制剩余百分比（进度条格式）、重置倒计时与 AI 积分余额，附带 `[ 🔄 Refresh Quota ]` 与 `[ 🧠 Switch Model ]`。
-- **/skills 技能库**：分类展示当前 Agent 具备的 Builtin 及各插件（Firebase, Web Guidance, Xcode, AGY SDK 等）技能总览。
-- **/artifacts 产物管理**：列出会话生成的 HTML 报告、图表与 `scratch/` 脚本，附带 `[ 📥 一键下载 ]` 按钮。
-- **/projects 项目菜单**：附带每个项目的点击按钮（如 `[ 🌟 myapp ]`、`[ 📂 backend ]`）及 `[ 🔄 Refresh ]`，一键切换工作区。
-- **/effort 推理强度**：附带 `[ 🟢 Low ]`、`[ 🟡 Medium ]`、`[ 🔴 High ]` 快速选择按钮，即时生效。
-- **/model 模型切换**：自动从 `agy models` 探测并同步最新可用模型清单（如 `[ ⚡ Gemini 3.8 Flash ]`、`[ 🧠 Gemini 3.1 Pro ]`、`[ ⚡ Gemini 3.7 Flash ]`、`[ 🟣 Claude Sonnet 4.6 ]` 等），展示当前激活模型与 `[ 🔄 Refresh ]` 按钮，一键即时切换。
+- **Adaptive Pure-LRU Command Menu**: All 19 commands are registered in the Telegram `/` menu. `/help` stays pinned at position 0, while the most recently used commands automatically float to the top per chat.
+- **Pinned Workspace Status Banner (`/pin`)**: Keeps a live pinned status banner at the top of the chat displaying active project, workspace path, model, token totals, uptime, and quick-action buttons (`[ 📊 Status ]`, `[ 📁 Projects ]`, `[ 🪙 Quota ]`, `[ 📖 Help ]`).
+- **Interactive Decision & Action Buttons (`[AGY_ACTIONS]`)**: Renders one-tap inline buttons under responses when `ask_question` or `[AGY_ACTIONS]` blocks are returned.
+- **Expandable Tool Progress (`<blockquote expandable>`)**: Keeps long tool logs compact on mobile while letting you expand details in place.
+- **Instant Emoji Reactions**: Reacts with `👀` on receipt, `⚡` during tool execution, `✅` on completion, and `⚠️` on errors.
+- **`/usage` Quota Dashboard**: Queries Google Antigravity weekly and 5-hour quota limits, reset timers, and AI credits with progress bars.
+- **`/skills` Overview**: Lists active built-in and plugin skills in the workspace.
+- **`/artifacts` Manager**: Lists generated HTML reports, diffs, and `scratch/` scripts with one-tap download buttons.
+- **`/projects` Switcher**: Interactive project buttons with `[ 🔄 Refresh ]` support.
+- **`/effort` Controls**: Instant `[ 🟢 Low ]`, `[ 🟡 Medium ]`, `[ 🔴 High ]` toggles.
+- **`/model` Selector**: Auto-discovers available models from `agy models` (with caching and `[ 🔄 Refresh ]`) for instant switching.
 
-### 支持的命令列表
+### Supported Commands & Inputs
 
-在 Telegram 中与你的 Bot 对话：
-
-| 命令 / 交互 | 说明 | 示例 |
+| Command / Input | Description | Example |
 | :--- | :--- | :--- |
-| **直接发送文本** | 处于空闲时启动新轮次；处于运行中时**自动作为 Steering 注入当前会话** | `请帮我查看当前目录下的文件` |
-| **🎙️ 发送语音 / 音频** | 自动下载至本地并通过 faster-whisper 离线识别为文本后交由 agy 执行；运行中发送则自动 Steering | 🎙️ 发送一段语音指令 |
-| **📎 发送文件 / 图片** | 自动下载至本地 `runtime/documents/`，将路径与文件元数据传给 agy 检查与处理；支持中途 Steering | 📎 发送代码/文档/图片附件 |
-| `/voice [mode]` | 配置或切换语音播报模式：`disable`（禁用）、`autogen`（按需播放）、`autoplay`（自动发送语音条） | `/voice` 或 `/voice autoplay` |
-| `/pin` 或 `/banner` | 重新生成并置顶当前工作区实时状态看板至 Telegram 聊天窗口顶部 | `/pin` |
-| `/help` | 查看帮助说明与交互式命令中心仪表盘（永远置顶） | `/help` |
-| `/usage` 或 `/quota` | **0 Token 实时查询** Google Antigravity 周配额、5小时限制剩余率与重置时间、AI 积分 | `/usage` |
-| `/skills` 或 `/plugins` | 查看当前工作区已注册的所有 Agent 技能与插件工具清单 | `/skills` |
-| `/artifacts [序号]` | 浏览当前会话产生的独立报告、代码 diff 与调试脚本，或指定序号直接下载 | `/artifacts` 或 `/artifacts 1` |
-| `/status` | 查看当前活跃项目、会话累计统计（轮次、累计 Token、思考 Token、会话存活时长、总运行耗时）、模型及系统状态 | `/status` |
-| `/projects` | 列出所有项目、活跃标记、工作区路径与最后活跃时间 | `/projects` |
-| `/open <name>` | 打开并切换到已有项目，恢复其历史会话与统计 | `/open myapp` |
-| `/new <name> <path>` | 创建新项目并设为当前活跃工作区（目录不存在则自动递归创建 `mkdir -p` 并提示；已存在则切换） | `/new myapp /Users/jim/myapp` |
-| `/model <name>` | 切换当前对话使用的模型（如 `/model gemini-3.8-flash` 或 `/model gemini-3.1-pro`） | `/model gemini-3.8-flash` |
-| `/effort <level>` | 调整推理强度：`low`、`medium`、`high` | `/effort high` |
-| `/dir` 或 `/ls [path]` | 扫描工作区目录并生成交互式折叠 HTML 文件树，支持一键点击复制 `/file` 与 `/file -h` 指令 | `/dir` 或 `/ls tests` |
-| `/file [-h] <path>` | 发送工作区文件；使用 `-h` 参数动态转换为对应格式的独立 HTML 文件（如 `bot.py.html`、`README.md.html`） | `/file -h bot.py` |
-| `/export` | 将当前会话状态或最新输出导出为独立排版的 HTML 文件并发送 | `/export` |
-| `/steer <instruction>` | 显式向正在执行的任务注入引导指令（无需打断当前进程） | `/steer 请使用异步写法` |
-| `/stop` | 强制中断并杀死当前正在执行的 agy 进程 | `/stop` |
-| `/reset` | 清空当前活跃项目的 `conversation_id` 并重置会话统计为零（开启全新会话） | `/reset` |
-| `/delete <name>` | 删除指定项目（如为活跃项目则重置活跃状态） | `/delete myapp` |
+| **Plain text message** | Starts a new turn when idle; **automatically steers** the active session when busy | `List files in this repository` |
+| **🎙️ Voice / Audio message** | Downloaded locally and transcribed offline via `faster-whisper`; steers automatically if busy | 🎙️ Send a voice note |
+| **📎 File / Photo attachment** | Saved to `runtime/documents/` and passed with metadata to `agy`; supports mid-flight steering | 📎 Upload code, docs, or images |
+| `/voice [mode]` | Configure TTS mode: `disable`, `autogen` (on-demand button), or `autoplay` | `/voice` or `/voice autoplay` |
+| `/pin` or `/banner` | Refresh and pin the live workspace status banner at the top of the chat | `/pin` |
+| `/help` | Show interactive command center dashboard | `/help` |
+| `/usage` or `/quota` | Zero-token real-time query of Antigravity quota limits and reset timers | `/usage` |
+| `/skills` or `/plugins` | List registered agent skills and plugins | `/skills` |
+| `/artifacts [index]` | Browse or download generated HTML reports and scratch artifacts | `/artifacts` or `/artifacts 1` |
+| `/status` | Show active project, session stats (turns, tokens, thinking tokens, uptime, duration), and system status | `/status` |
+| `/projects` | List all configured projects and switch workspaces | `/projects` |
+| `/open <name>` | Switch to an existing project and restore its conversation state and stats | `/open myapp` |
+| `/new <name> <path>` | Create a new project (auto-creates missing directories) and set it active | `/new myapp /path/to/myapp` |
+| `/model <name>` | Switch active model (or `/model refresh` to reload from `agy models`) | `/model gemini-3.8-flash` |
+| `/effort <level>` | Set reasoning effort (`low`, `medium`, `high`) | `/effort high` |
+| `/dir` or `/ls [path]` | Scan workspace directory and generate an interactive HTML file tree | `/dir` or `/ls tests` |
+| `/file [-h] <path>` | Send a workspace file; use `-h` to render code, Markdown, diffs, or CSVs as standalone HTML | `/file -h bot.py` |
+| `/export` | Export current session state or latest output as a standalone HTML report | `/export` |
+| `/steer <instruction>` | Explicitly inject steering guidance into the running `agy` turn | `/steer Use async/await` |
+| `/stop` | Interrupt and terminate the active `agy` subprocess | `/stop` |
+| `/reset` | Clear `conversation_id` and reset turn/token counters for the active project | `/reset` |
+| `/delete <name>` | Remove a project from session configuration | `/delete myapp` |
 
-### 📄 文件多模板 HTML 动态渲染 (`/file -h`)
+### Dynamic Multi-Template HTML Rendering (`/file -h`)
 
-使用 `/file -h <path>` 时，网关会根据文件后缀名自动匹配专有渲染模板并输出 `<filename>.html`：
-- **代码文件** (`.py`, `.js`, `.ts`, `.html`, `.css`, `.json`, `.yaml`, `.sql`, `.sh`, `.rs`, `.go` 等)：生成带行号、语法着色高亮、一键代码复制和移动端自适应排版的 HTML 视图。
-- **Markdown 文件** (`.md`, `.markdown`)：解析并渲染为排版优美的排版文章视图（标题、列表、富文本、表格、代码块）。
-- **Diff / Patch 文件** (`.diff`, `.patch`)：统一补丁视图，绿底新增行、红底删除行、行号与变更块高亮。
-- **表格数据文件** (`.csv`, `.tsv`)：解析并渲染为响应式数据表格，支持表头固定与行计数。
-- **纯文本 / 日志 / 配置** (`.txt`, `.log`, `.env*`, `.gitignore`)：等宽控制台文本视图与行号。
-- **二进制 / 不支持的文件** (如图片、音视频、压缩包等)：自动优雅回退并发送原始原文件，不进行无效转换。
+When using `/file -h <path>`, the gateway selects a renderer based on file extension and outputs `<filename>.html`:
+- **Source Code** (`.py`, `.js`, `.ts`, `.html`, `.css`, `.json`, `.yaml`, `.sql`, `.sh`, `.rs`, `.go`, etc.): Line numbers, syntax highlighting, copy button, and mobile-friendly horizontal scrolling.
+- **Markdown** (`.md`, `.markdown`): Styled article layout supporting headings, lists, tables, and code blocks.
+- **Diff / Patch** (`.diff`, `.patch`): Unified diff viewer with green/red line highlighting and hunk markers.
+- **Tabular Data** (`.csv`, `.tsv`): Responsive table view with sticky headers and row counts.
+- **Plain Text / Logs / Configs** (`.txt`, `.log`, `.env*`, `.gitignore`): Monospace console view with line numbers.
+- **Binary / Unsupported Files**: Automatically falls back to sending the original raw file.
 
-### 中途引导 (Steering) 与系统提示词注入机制
+### Mid-Flight Steering & System Prompt Injection
 
-- **会话首轮系统提示词自动注入 (System Prompt Injection)**：
-  网关在每次启动全新 `agy` 会话（首轮）时，自动注入预设的高质量系统提示词，规范 `agy` 输出行为：
-  1. **简短/普通回答**：直接使用 Markdown 纯文本回复（网关自动转为 Telegram 富文本 HTML，窄屏阅读友好）。
-  2. **长篇/复杂内容（Diff、测试报告、长代码、大表格、调研报告等）**：引导 `agy` 生成自包含、移动友好的独立单页 HTML，并通过 `[AGY_FILE]` 协议交由网关作为附件发送。
-  3. **会话级持久与防重复注入**：系统提示仅在会话首轮（或 `/reset` 重置后的首轮）注入，后续多轮对话及 mid-flight Steering 不会重复追加提示词；提示词仅供模型理解，完全不污染 Telegram 用户的正文输出。
-  4. **灵活配置支持**：默认内置开箱即用的系统提示词规范；支持在 `.env` 中使用 `AGY_SYSTEM_PROMPT`（支持 `\n` 多行）或 `AGY_SYSTEM_PROMPT_FILE`（指向外部 Markdown/文本文件）进行自定义覆盖。
-
-- **Steering 引导**：当 agy 正在执行耗时任务时，用户直接输入新消息或发送 `/steer <指示>`，网关利用 `stream-json` 管道向 `stdin` 注入指令，Agent 将在完成当前步后无缝吸纳新指令继续作答。
-- **直接生成与发送 HTML 文件 (`[AGY_FILE]`)**：
-  agy 直接生成自包含、移动友好的独立单页 HTML（或直接生成工作区 HTML 文件），通过 `[AGY_FILE]` 协议交由网关直接发送，无需以 Markdown 作为中间格式转换：
+- **First-Turn System Prompt Injection**: When starting a fresh session (or after `/reset`), the gateway injects output formatting conventions once without repeating them across follow-up turns or steering messages. Supports overrides via `AGY_SYSTEM_PROMPT` or `AGY_SYSTEM_PROMPT_FILE` in `.env`.
+- **Mid-Flight Steering**: Sending a regular message, voice note, file, or `/steer <instruction>` while `agy` is running injects guidance via `stream-json` `stdin`, freezes the previous progress message, opens a new progress reply under your steering message, and sends a single consolidated final report upon completion.
+- **Direct Standalone HTML Export (`[AGY_FILE]`)**:
   ```text
   [AGY_FILE]
-  filename: diff_report.html      # 可选，导出的文件名（默认 report.html）
-  title: Code Diff Report         # 可选，HTML 页面标题（默认 agy Response）
+  filename: diff_report.html      # Optional (default: report.html)
+  title: Code Diff Report         # Optional (default: agy Response)
   ---
-  <直接独立 HTML 内容，或工作区生成的 HTML 文件路径>
+  <Standalone HTML content or workspace HTML file path>
   [END_AGY_FILE]
   ```
-  `---` 后的内容支持两种模式：
-  1. **工作区文件路径 (Workspace File Path)**：提供工作区相对或绝对路径（如 `runtime/artifacts/report.html` 或 `diff_report.html`），网关直接读取并发送该 HTML 文件。
-  2. **直接独立 HTML (Raw Standalone HTML)**：直接输出完整的 `<!DOCTYPE html><html>...</html>` 内容，网关直接作为 HTML 文件发送，不经过 Markdown 中转。
-  - **正文清洁**：网关在发送前自动从可见正文中剔除 `[AGY_FILE]` 块，正文仅保留摘要预览与已发送提示。
-  - **多文件支持**：单次回复支持多个 `[AGY_FILE]` 块，一次性导出多个文件。
-  - **移动优先**：自动确保移动端 `<meta name="viewport" content="width=device-width, initial-scale=1.0">`、代码与表格横向滚动自适应。
-- **直接提取工作区文件**：输入 `/file <路径>` 可直接调取并下载工作区内的任意代码或配置文件。
 
 ---
 
-## 架构与模块说明
+## Architecture & Module Overview
 
-每个 Python 模块均设计为高内聚、单一职责，且均支持独立命令行测试（规则 6）：
+Each Python module is single-purpose and supports standalone CLI verification:
 
-- `gateway/config.py` (`python -m gateway.config`): 配置加载与校验，包含 `DEFAULT_SYSTEM_PROMPT` 定义与 `AGY_SYSTEM_PROMPT` / `AGY_SYSTEM_PROMPT_FILE` 覆盖解析。
-- `gateway/session_manager.py` (`python -m gateway.session_manager`): 会话状态管理与多项目持久化 (`runtime/sessions.json`)。
-- `gateway/ui_keyboards.py` (`python -m gateway.ui_keyboards`): 交互式内联键盘构建器（多项目切换面板、模型切换、推理强度调节）。
-- `gateway/transcriber.py` (`python -m gateway.transcriber`): 基于 `faster-whisper` 的高性能离线语音识别转录引擎（多语种检测、模型单例缓存、异步非阻塞）。
-- `gateway/media_handlers.py` (`python -m gateway.media_handlers`): 语音消息与文件附件本地下载、语音实时转录与转发调度（自动保存至 `runtime/voice/` 与 `runtime/documents/`，支持中途 Steering）。
-- `gateway/commands.py` (`python -m gateway.commands`): 全部 14 个斜杠命令的业务逻辑与交互式 Callback 回调分发。
-- `gateway/dir_tree.py` (`python -m gateway.dir_tree`): 工作区目录树递归扫描与独立交互式 HTML 文件导航器生成。
-- `gateway/file_renderers.py` (`python -m gateway.file_renderers`): 代码、Markdown、Diff、CSV 表格等多类型文件的 HTML 渲染。
-- `gateway/message_formatter.py` (`python -m gateway.message_formatter`): Markdown 到 Telegram 原生富文本 HTML 转换、`[AGY_FILE]` 显式协议解析与提取、移动优先独立 HTML 报告生成与分块截断。
-- `gateway/agy_bridge.py` (`python -m gateway.agy_bridge "<prompt>"`): `agy` 子进程异步双向通信、`stream-json` 双向流解析、首轮系统提示词精准注入、Steering 注入与进程生命周期管理。
+- `gateway/config.py` (`python -m gateway.config`): Environment loading, validation, dynamic binary resolution, and system prompt configuration.
+- `gateway/session_manager.py` (`python -m gateway.session_manager`): Multi-project session persistence (`runtime/sessions.json`), LRU command stats, and token metrics.
+- `gateway/ui_keyboards.py` (`python -m gateway.ui_keyboards`): Inline keyboard builders, dynamic `agy models` discovery, adaptive LRU command menus, and WebApp viewer buttons.
+- `gateway/transcriber.py` (`python -m gateway.transcriber`): Offline `faster-whisper` speech-to-text transcription with lazy model caching.
+- `gateway/media_handlers.py` (`python -m gateway.media_handlers`): Voice/audio and document/photo download handlers with mid-flight steering routing.
+- `gateway/commands.py` (`python -m gateway.commands`): Slash command handlers and inline callback query routing.
+- `gateway/dir_tree.py` (`python -m gateway.dir_tree`): Recursive workspace directory scanner and interactive HTML file tree generator.
+- `gateway/file_renderers.py` (`python -m gateway.file_renderers`): Multi-format standalone HTML renderers for `/file -h`.
+- `gateway/message_formatter.py` (`python -m gateway.message_formatter`): Markdown-to-Telegram-HTML conversion, protocol block extractors (`[AGY_FILE]`, `[AGY_ACTIONS]`, `[AGY_VOICE]`), spoken summary distillation, and standalone HTML report generation.
+- `gateway/agy_bridge.py` (`python -m gateway.agy_bridge "<prompt>"`): Asynchronous `agy` subprocess manager, `stream-json` bidirectional streaming, keep-alive process pooling, and steering injection.
+- `gateway/ipc_router.py` (`python -m gateway.ipc_router`): Cross-project `[AGY_IPC]` message parsing, envelope formatting, and `runtime/ipc.log` auditing.
+- `gateway/voice_tts.py` (`python -m gateway.voice_tts`): Dynamic bilingual TTS synthesis (`edge-tts` + offline fallback) and OGG Opus conversion.
+- `gateway/webapp_server.py` (`python -m gateway.webapp_server`): Lightweight asynchronous HTTP server for Telegram Mini App document viewing.
+- `gateway/telegram_client.py` (`python -m gateway.telegram_client`): Async Telegram Bot API client with retries, HTML fallback, multipart uploads, and rate-limit backoff.
+- `gateway/bot.py`: Core orchestrator dispatching long-polling updates, streaming progress updates, steering rotation, and exports.
+- `main.py` (`python main.py`): CLI entry point supporting `--check-config` and `--smoke-test`.
 
-### 📚 架构设计与协议文档 (Design Documents)
+### Design Documents
 
-- [docs/cross_project_mesh_design.md](docs/cross_project_mesh_design.md): 跨项目去中心化多智能体通信协议与 Telegram 原生折叠置顶卡片设计方案 (`AGY_IPC` Protocol)。
-- [ROADMAP.md](ROADMAP.md): 网关演进规划与后续里程碑。
-- `gateway/telegram_client.py` (`python -m gateway.telegram_client`): 异步 Telegram Bot API 客户端（Long polling、流式编辑、`sendDocument` 文件多部件上传、429 限流退避）。
-- `gateway/bot.py` (`python -m gateway.bot`): 调度核心引擎、Telegram 长轮询事件分发、流式桥接生命周期与异常保护。
-- `main.py` (`python main.py`): 启动入口与 CLI 参数控制。
+- [docs/cross_project_mesh_design.md](docs/cross_project_mesh_design.md): Cross-project decentralized `AGY_IPC` protocol and Telegram pinned expandable card architecture.
+- [ROADMAP.md](ROADMAP.md): Project milestones and feature roadmap.
 
 ---
 
-## 测试与验证
+## Testing & Verification
 
-运行全部单元测试及集成冒烟测试：
+Run the full automated test suite:
 
 ```bash
 conda run -n agy-telegram pytest -v
-# 或
+# Or with venv:
 ./venv/bin/pytest -v
 ```
 
-测试覆盖范围（141 项全部通过）：
-- `test_config.py`: 配置解析、Token 格式验证、白名单过滤、默认 runtime 路径、默认系统提示词内容校验、WebApp 端口/URL 配置、环境变量及文件覆盖测试
-- `test_session_manager.py`: 会话 CRUD、持久化与恢复、并发状态保护、Legacy 迁移、累计 Token 与耗时统计、命令使用频次与 LRU 追踪、决策与动作状态暂存
-- `test_ui_keyboards.py`: 多项目内联键盘、模型选择菜单、推理强度切换菜单渲染、自适应 LRU 命令菜单生成（`/help` 置顶、Top 8 截断）、配额/技能/产物/帮助命令中心面板、决策选项键盘、智能后续动作键盘、持久快捷键与动态输入框占位词、Telegram WebApp 原生弹窗按钮
-- `test_webapp_server.py`: 零依赖纯异步 HTTP 服务启动与生命周期管理、文档注册、Telegram WebApp JS SDK 注入与主题自适应参数同步、`/health` 健康检查与路由防护
-- `test_message_formatter.py`: HTML 实体转义、Markdown 转 Telegram HTML、代码高亮、标签自闭合、表格转换、独立移动 HTML 文档导出、文件导出条件判断、`sanitize_filename`、`detect_content_mode`、`parse_agy_file_block`、`extract_agy_file_blocks`、`extract_agy_action_blocks`、可折叠引用块渲染、移动端视口与响应式元素验证
-- `test_dir_tree.py`: 目录树扫描、文件大小格式化与独立 HTML 导航器生成
-- `test_file_renderers.py`: 代码高亮转换、Markdown 渲染、Diff 补丁视图、CSV 响应式表格渲染与二进制回退
-- `test_agy_bridge.py`: 命令构建、stream-json 协议解析、Mock 管道流、声明式规则检测、跨轮次进程池长连接复用与空闲回收、`steer()` 注入与 `is_running()` 状态判断、跨项目工作区切换与首条消息事件完整传递
-- `test_telegram_client.py`: API 调用、HTML 实体解析失败自动降级、304 抑制、`send_document` 多部件上传、语音文件下载、自适应 `set_my_commands`、`set_message_reaction` Emoji 反应
-- `test_bot.py`: 所有斜杠命令路由（含 `/usage`, `/skills`, `/artifacts`）、集中式命令分发器、未授权拦截、流式处理管线、语音笔记/音频接收与转录、文件附件处理、中途 Steering 注入、`/dir` 目录浏览、`/file` 文件发送、`/export` 导出、产物一键下载、`ask_question` 原生决策选项与 `[AGY_ACTIONS]` 快捷按钮交互闭环、Telegram Mini App 实时弹窗集成、Telegram 网络异常抗逆与自动降级保护
-- `test_ipc_router.py`: 跨项目 `AGY_IPC` 网格通信路由、信封封包与解析、置顶折叠卡片渲染与审计日志记录
-- `test_transcriber.py`: faster-whisper 离线语音识别模型单例管理、同步与异步非阻塞音频转录
-- `test_voice_tts.py`: 动态双语 TTS 语音合成、Edge-TTS 集成与 OGG Opus 编码
-- `test_smoke_agy.py`: 真实的 `agy` CLI 联调冒烟测试
-
-
+Test coverage (**149 tests** across 14 test modules):
+- `tests/test_config.py`: Configuration loading, token validation, chat whitelist, default runtime paths, and system prompt overrides.
+- `tests/test_session_manager.py`: Session CRUD, persistence, legacy migration, token/duration stats, and LRU command tracking.
+- `tests/test_ui_keyboards.py`: Project switchers, dynamic `agy models` parsing and fallback discovery, effort keyboards, adaptive LRU menus, and WebApp buttons.
+- `tests/test_webapp_server.py`: Async WebApp lifecycle, document registration, Telegram WebApp SDK injection, and `/health` endpoint.
+- `tests/test_message_formatter.py`: HTML escaping, Markdown-to-HTML conversion, protocol extraction (`[AGY_FILE]`, `[AGY_ACTIONS]`, `[AGY_VOICE]`), spoken summary distillation, and mobile-responsive HTML exports.
+- `tests/test_dir_tree.py`: Directory tree scanning and interactive HTML navigator generation.
+- `tests/test_file_renderers.py`: Syntax highlighting, Markdown, diff/patch, CSV table rendering, and binary fallback.
+- `tests/test_agy_bridge.py`: Command construction, `stream-json` parsing, keep-alive process pooling, `steer()`, and project switching.
+- `tests/test_telegram_client.py`: API calls, HTML fallback, multipart uploads, voice downloads, and emoji reactions.
+- `tests/test_bot.py`: Slash command routing, unauthorized chat blocking, streaming pipeline, mid-flight steering rotation, voice/document handlers, TTS auto-send, and network error resilience.
+- `tests/test_ipc_router.py`: `[AGY_IPC]` parsing, envelope generation, pinned card formatting, and audit logging.
+- `tests/test_transcriber.py`: `faster-whisper` singleton caching and async audio transcription.
+- `tests/test_voice_tts.py`: Bilingual TTS synthesis and OGG Opus output.
+- `tests/test_smoke_agy.py`: Live `agy` CLI smoke test.

@@ -360,7 +360,10 @@ async def handle_cmd_model(bot: Any, chat_id: int, arg: str = "", edit_message_i
     cur_effort = session.effort or bot.config.default_effort or "high"
 
     # Dynamically fetch available models from agy CLI
-    agy_bin = getattr(bot.config, "agy_bin_path", "/Users/jim/.local/bin/agy")
+    if hasattr(bot.config, "get_resolved_agy_bin"):
+        agy_bin = bot.config.get_resolved_agy_bin()
+    else:
+        agy_bin = getattr(bot.config, "agy_bin_path", str(Path.home() / ".local" / "bin" / "agy"))
     models = await fetch_agy_models(agy_bin=agy_bin, force_refresh=force_refresh)
 
     text, reply_markup = build_model_keyboard(cur_model, cur_effort, models=models)

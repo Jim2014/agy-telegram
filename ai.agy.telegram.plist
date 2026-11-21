@@ -7,21 +7,21 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/opt/homebrew/Caskroom/miniconda/base/envs/agy-telegram/bin/python</string>
-        <string>/Users/jim/hermes-shared/agy-telegram/main.py</string>
+        <string>__PY_BIN__</string>
+        <string>__WORK_DIR__/main.py</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/jim/hermes-shared/agy-telegram</string>
+    <string>__WORK_DIR__</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/Caskroom/miniconda/base/envs/agy-telegram/bin:/Users/jim/.local/bin:/Users/jim/.gemini/antigravity-cli/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/jim/.hermes/bin:/Users/jim/.nvm/versions/node/v24.11.1/bin:/Users/jim/Library/pnpm:/opt/homebrew/Caskroom/miniconda/base/condabin</string>
+        <string>__PATH__</string>
         <key>HOME</key>
-        <string>/Users/jim</string>
+        <string>__HOME__</string>
         <key>USER</key>
-        <string>jim</string>
+        <string>__USER__</string>
     </dict>
 
     <key>RunAtLoad</key>
@@ -34,9 +34,9 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/jim/hermes-shared/agy-telegram/runtime/launchd.stdout.log</string>
+    <string>__WORK_DIR__/runtime/launchd.stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/jim/hermes-shared/agy-telegram/runtime/launchd.stderr.log</string>
+    <string>__WORK_DIR__/runtime/launchd.stderr.log</string>
 </dict>
 </plist>

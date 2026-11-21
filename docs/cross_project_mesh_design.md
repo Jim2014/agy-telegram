@@ -174,7 +174,7 @@ sequenceDiagram
 ### 5.1 Telegram API Constraints & Capabilities
 - **Multiple Pinned Messages**: Supported natively by Telegram. A pinned bar counter (`1/2`, `2/3`) appears at the top of the chat.
 - **Silent Pinning**: Calls `pin_chat_message(chat_id=..., message_id=..., disable_notification=True)` to avoid audible distractions.
-- **Native Expandable Block**: Uses `<blockquote expandable>...</blockquote>` HTML tags. Mobile users see a compact header with a clean `Show more / 展开` toggle.
+- **Native Expandable Block**: Uses `<blockquote expandable>...</blockquote>` HTML tags. Mobile users see a compact header with a clean `Show more` toggle.
 
 ### 5.2 Card Visual Layouts
 

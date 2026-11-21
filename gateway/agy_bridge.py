@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import signal
 import sys
 from dataclasses import dataclass, field
@@ -39,14 +40,16 @@ class AgyBridge:
 
     def __init__(
         self,
-        agy_bin: str = "/Users/jim/.local/bin/agy",
+        agy_bin: Optional[str] = None,
         default_working_dir: Optional[str] = None,
         timeout_seconds: int = 300,
         system_prompt: Optional[str] = None,
         idle_timeout_seconds: float = 300.0,
         keep_alive: bool = True,
     ) -> None:
-        self.agy_bin = agy_bin
+        local_bin = Path.home() / ".local" / "bin" / "agy"
+        default_bin = str(local_bin) if local_bin.is_file() else (shutil.which("agy") or str(local_bin))
+        self.agy_bin: str = agy_bin or default_bin
         self.default_working_dir = default_working_dir or os.getcwd()
         self.timeout_seconds = timeout_seconds
         self.system_prompt = system_prompt

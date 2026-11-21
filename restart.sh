@@ -48,7 +48,24 @@ enable_autostart() {
         exit 1
     fi
 
-    cp "$REPO_PLIST" "$LAUNCHD_PLIST"
+    WORK_DIR="$(cd "$(dirname "$0")" && pwd)"
+    LAUNCHD_PATH="$(dirname "$PY_BIN"):$HOME/.local/bin:$HOME/.gemini/antigravity-cli/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    "$PY_BIN" -c '
+import sys
+src, dst, py_bin, work_dir, home_dir, user_name, path_val = sys.argv[1:8]
+with open(src, "r", encoding="utf-8") as f:
+    txt = f.read()
+for k, v in (
+    ("__PY_BIN__", py_bin),
+    ("__WORK_DIR__", work_dir),
+    ("__HOME__", home_dir),
+    ("__USER__", user_name),
+    ("__PATH__", path_val),
+):
+    txt = txt.replace(k, v)
+with open(dst, "w", encoding="utf-8") as f:
+    f.write(txt)
+' "$REPO_PLIST" "$LAUNCHD_PLIST" "$PY_BIN" "$WORK_DIR" "$HOME" "${USER:-$(whoami)}" "$LAUNCHD_PATH"
     chmod 644 "$LAUNCHD_PLIST"
 
     # Unload first if previously loaded

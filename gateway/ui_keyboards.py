@@ -263,7 +263,7 @@ def parse_agy_models(output: str) -> List[Dict[str, Any]]:
 
 
 async def fetch_agy_models(
-    agy_bin: str = "/Users/jim/.local/bin/agy",
+    agy_bin: Optional[str] = None,
     force_refresh: bool = False,
     timeout: float = 6.0,
 ) -> List[Dict[str, Any]]:
@@ -274,10 +274,11 @@ async def fetch_agy_models(
     if not force_refresh and _CACHED_MODELS and now < _CACHED_MODELS_EXPIRY:
         return _CACHED_MODELS
 
-    # Resolve executable
-    resolved_bin = agy_bin
+    # Resolve executable dynamically from provided path, ~/.local/bin/agy, or PATH
+    default_bin = str(Path.home() / ".local" / "bin" / "agy")
+    resolved_bin = agy_bin or default_bin
     if not os.path.isfile(resolved_bin):
-        resolved_bin = shutil.which(agy_bin) or "/Users/jim/.local/bin/agy"
+        resolved_bin = shutil.which(resolved_bin) or shutil.which("agy") or default_bin
 
     if not os.path.isfile(resolved_bin) and not shutil.which(resolved_bin):
         logger.warning("agy binary not found at %s, using fallback models.", resolved_bin)

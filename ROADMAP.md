@@ -52,7 +52,7 @@ This document outlines the milestones and roadmap for integrating new Google Ant
 ### 📋 Milestone 7: Voice Broadcast & Spoken Audio Subsystem (Edge-TTS + Fallback)
 - [x] **7.1 `[AGY_VOICE]` Spoken Audio Protocol**: Added system prompt guidance and protocol parser for clean separation of spoken podcast narration from technical text/HTML formatting without length restrictions.
 - [x] **7.2 Edge-TTS & Local Fallback Engine**: High-fidelity neural voice synthesis (`zh-CN-XiaoxiaoNeural` / `en-US-JennyNeural`) generating native OGG Opus audio for Telegram `sendVoice` with graceful macOS `say` + `ffmpeg` offline fallback.
-- [x] **7.3 Interactive `/voice` Mode Switcher & On-Demand Playback**: Support `/voice disable`, `/voice autogen` (with `[ 🔊 播放语音 ]` button), and `/voice autoplay` modes with session persistence.
+- [x] **7.3 Interactive `/voice` Mode Switcher & On-Demand Playback**: Support `/voice disable`, `/voice autogen` (with `[ 🔊 Play Audio ]` button), and `/voice autoplay` modes with session persistence.
 - [x] **7.4 Complete Test Coverage**: 123/123 unit and integration tests passing.
 
 

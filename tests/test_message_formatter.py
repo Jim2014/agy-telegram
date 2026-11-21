@@ -471,7 +471,7 @@ def test_format_pinned_banner():
         projects={
             "alpha-strategy": {
                 "name": "alpha-strategy",
-                "path": "/Users/jim/projects/alpha",
+                "path": "/workspace/projects/alpha",
                 "conversation_id": "conv-12345678",
                 "total_tokens": 1500000,
                 "thinking_tokens": 120000,
@@ -488,7 +488,7 @@ def test_format_pinned_banner():
     assert "📌 <b>agy Workspace Hub</b>" in banner_idle
     assert "<code>alpha-strategy</code>" in banner_idle
     assert "🟢 <b>Ready</b>" in banner_idle
-    assert "/Users/jim/projects/alpha" in banner_idle
+    assert "/workspace/projects/alpha" in banner_idle
     assert "gemini-3.8-flash" in banner_idle
     assert "1.50M" in banner_idle
     assert "15 turns" in banner_idle
@@ -588,7 +588,7 @@ def test_markdown_tables_with_nested_formatting():
 | **agy-telegram** | **127 / 127 项通过 (100%)** | `2ac45cc` (feat: auto-create workspace directory...) | 🟢 正常运行中 |
 | **learner** | **36 / 36 项通过 (100%)** | `1893045` (feat: add interactive audio playback bar...) | 🟢 运行在 8901 端口 |
 
-1. [`gateway/commands.py`](file:///Users/jim/hermes-shared/agy-telegram/gateway/commands.py)
+1. [`gateway/commands.py`](file:///workspace/agy-telegram/gateway/commands.py)
 """
     res = markdown_to_telegram_html(sample)
     assert "<b>agy-telegram</b>" in res

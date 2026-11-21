@@ -1206,9 +1206,9 @@ class AgyTelegramBot:
                         blocks = []
                         for r in ipc_results:
                             if r.status == "SUCCESS" and r.response_content:
-                                blocks.append(f"<b>📬 [{escape_html(r.target_project)}] 协同结果：</b>\n{r.response_content}")
+                                blocks.append(f"<b>📬 [{escape_html(r.target_project)}] Collaboration Result:</b>\n{r.response_content}")
                             elif r.status == "ERROR":
-                                blocks.append(f"<b>⚠️ [{escape_html(r.target_project)}] 执行失败：</b>\n<i>{escape_html(r.error_message)}</i>")
+                                blocks.append(f"<b>⚠️ [{escape_html(r.target_project)}] Execution Failed:</b>\n<i>{escape_html(r.error_message)}</i>")
                         if blocks:
                             joined_blocks = "\n\n".join(blocks)
                             clean_text = f"{clean_text}\n\n{joined_blocks}".strip() if clean_text else joined_blocks

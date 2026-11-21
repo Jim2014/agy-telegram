@@ -70,7 +70,7 @@ I have executed all 126 automated tests and every test passed successfully. In t
 2. **Complete Meaning & Coverage (Acoustic-Friendly Adaptation)**: Convey all substantive results, decisions, architectural concepts, and reasoning from your response, but adapt it completely for auditory listening.
 3. **Natural Spoken Broadcast Tone**: Imagine speaking as an articulate tech podcast host or audiobook narrator. The narrative must flow smoothly and conversationally.
 4. **STRICTLY AVOID Unspeakable / Visual Artifacts**:
-   - **NEVER recite long file paths or URLs**: Instead of saying `/Users/jim/.../message_formatter.py`, say "the message formatter module" or "消息格式化模块".
+   - **NEVER recite long file paths or URLs**: Instead of saying `/path/to/message_formatter.py`, say "the message formatter module".
    - **NEVER read raw code syntax or symbols**: Do not read function signatures with brackets, colons, underscores, backticks, or variable names like `foo_bar_baz`. Explain what the code does or describe the logic in natural spoken words.
    - **NO Markdown or table markup**: Strip all asterisks, hashes, backticks, pipes, and dashes.
 5. **Do Not Include Buttons / Command Syntax**: NEVER repeat button choices, action menus (`[AGY_ACTIONS]`), decision lists, or slash commands.
