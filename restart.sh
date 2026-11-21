@@ -112,7 +112,7 @@ ensure_watchdog_stopped() {
             kill -9 "$wpid" 2>/dev/null
         fi
     else
-        pkill -f "runtime/watchdog.sh" 2>/dev/null || true
+        pkill -f "watchdog.sh" 2>/dev/null || true
     fi
     rm -f "$WATCHDOG_PIDFILE"
 }
@@ -186,8 +186,8 @@ case "${1:-}" in
                 exit 0
             fi
         fi
-        chmod +x runtime/watchdog.sh 2>/dev/null || true
-        nohup ./runtime/watchdog.sh >/dev/null 2>&1 &
+        chmod +x watchdog.sh 2>/dev/null || true
+        nohup ./watchdog.sh >/dev/null 2>&1 &
         wpid=$!
         echo $wpid > "$WATCHDOG_PIDFILE"
         sleep 1
@@ -297,8 +297,8 @@ fi
 
 # If this was a --do-restart, bring the watchdog supervisor back up.
 if [ "${RESTART_WATCH:-0}" = "1" ]; then
-    chmod +x runtime/watchdog.sh 2>/dev/null || true
-    nohup ./runtime/watchdog.sh >/dev/null 2>&1 &
+    chmod +x watchdog.sh 2>/dev/null || true
+    nohup ./watchdog.sh >/dev/null 2>&1 &
     echo $! > "$WATCHDOG_PIDFILE"
     sleep 1
     if [ -f "$WATCHDOG_PIDFILE" ] && kill -0 "$(cat "$WATCHDOG_PIDFILE")" 2>/dev/null; then

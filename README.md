@@ -40,7 +40,7 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 10. **Hardening & Auto-Healing**:
     - `ALLOWED_CHAT_IDS` whitelist authentication.
     - **Network Exception Resilience**: Wrapped Telegram API calls gracefully absorb transient `httpx.ReadError`, timeouts, and network hiccups without aborting streaming turns.
-    - **Watchdog Supervisor & macOS Autostart**: Includes `runtime/watchdog.sh` (`./restart.sh watch`) for crash auto-recovery within 10 seconds, plus macOS LaunchAgent integration (`./restart.sh autostart`).
+    - **Watchdog Supervisor & macOS Autostart**: Includes `watchdog.sh` (`./restart.sh watch`) for crash auto-recovery within 10 seconds, plus macOS LaunchAgent integration (`./restart.sh autostart`).
     - `/stop` immediately interrupts the active `agy` subprocess.
     - Automatic Telegram 4096-character chunk splitting, rate-limit throttling, and HTML fallback handling.
     - Comprehensive test suite (**152 tests** covering unit, network resilience, protocol parsing, and real `agy` CLI smoke testing). See [ROADMAP.md](ROADMAP.md) for planned milestones.
@@ -106,13 +106,13 @@ agy-telegram/
 │   ├── gateway.log       # Main gateway logs
 │   ├── gateway.pid       # Gateway process PID file
 │   ├── ipc.log           # Cross-project IPC audit log
-│   ├── watchdog.sh       # Watchdog auto-restart script
 │   ├── watchdog.log      # Watchdog logs
 │   ├── watchdog.pid      # Watchdog PID file
 │   └── sessions.json     # Persistent chat, project & stats store
 ├── gateway/              # Core Python gateway modules
 ├── tests/                # Unit, integration & smoke tests
 ├── restart.sh            # Service, watchdog & autostart control script
+├── watchdog.sh           # Watchdog auto-restart supervisor script
 ├── environment.yml       # Conda environment specification
 └── README.md
 ```
@@ -226,14 +226,21 @@ Or use `restart.sh` to start and manage the gateway in the **background** (and m
 # (macOS only) Disable macOS autostart
 ./restart.sh autostart-disable
 
+# Start crash auto-recovery watchdog supervisor (Linux / macOS)
+./restart.sh watch
+
 # Stop gateway (and watchdog if running)
 ./restart.sh stop
+
+# Stop only the watchdog
+./restart.sh stop-watch
 ```
 
-Logs are written to `runtime/gateway.log`:
+Logs are written to `runtime/gateway.log` and `runtime/watchdog.log`:
 
 ```bash
 tail -f -n 50 runtime/gateway.log
+tail -f -n 50 runtime/watchdog.log
 ```
 
 ### 4. First Chat in Telegram
