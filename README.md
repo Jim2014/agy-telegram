@@ -65,7 +65,7 @@ Generic multi-agent bot wrappers and remote terminal hacks often fall short when
 - **Voice Interaction (Offline STT + Bilingual TTS)**: Transcribes Telegram voice messages offline via `faster-whisper` and generates spoken audio summaries (`[AGY_VOICE]`) with on-demand playback buttons or auto-send (`/voice`).
 - **One-Tap Setup & Hardened Access Control**: Interactive `./setup.sh` wizard with live token verification and automatic Chat ID detection, **deny-by-default** authorization with **DM pairing** (`gateway.pairing`), crash watchdog (`watchdog.sh`), and macOS LaunchAgent autostart.
 - **Cross-Project Multi-Agent Mesh (`AGY_IPC`)**: Dispatches tasks across registered project directories with pinned expandable progress cards in Telegram and audit logging (`runtime/ipc.log`).
-- **Automated Test Suite**: **172 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, CLI script safety, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
+- **Automated Test Suite**: **178 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, CLI script safety, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
 
 ---
 
@@ -76,9 +76,9 @@ Generic multi-agent bot wrappers and remote terminal hacks often fall short when
 >
 > 1. **Platform Testing Scope (macOS Tested Only):**
 >    `agy-telegram` has only been tested on **macOS** (Apple Silicon). It should also work on **Linux** or inside a **Virtual Machine / Container** (note: macOS-specific features like `launchd` autostart and `say` offline TTS fallback are skipped on Linux, while Edge-TTS works cross-platform), though non-macOS environments have not been formally tested.
-> 2. **Unrestricted Tool & Shell Execution (`--dangerously-skip-permissions`):**
->    Because Telegram acts as a non-interactive headless bridge, `agy-telegram` launches `agy` with `--dangerously-skip-permissions`. This grants `agy` permission to use **all enabled tools** and **execute any shell command** without interactive confirmation prompts.
->    - **Strongly Recommended:** Run `agy-telegram` inside an **isolated container (Docker) or Virtual Machine (VM)**, or make sure you explicitly trust granting `agy` full tool and command-line permissions on the host machine.
+> 2. **Tool & Shell Execution Permissions (`AGY_PERMISSION_PRESET` / `/permissions`):**
+>    By default (`AGY_PERMISSION_PRESET=turbo`), `agy-telegram` launches `agy` with `--dangerously-skip-permissions` so autonomous tool calls never hang waiting on an interactive terminal prompt. You can switch anytime via `/permissions` (or `/perm`) to **`auto`** (uses macOS/Linux's native OS terminal sandbox via `--mode auto`), **`accept-edits`** (`--mode accept-edits`), or **`plan`** (read-only planning via `--mode plan`).
+>    - **Strongly Recommended:** Use `/permissions auto` (or `AGY_PERMISSION_PRESET=auto`) or run `agy-telegram` inside an **isolated container (Docker) or Virtual Machine (VM)** if you do not want unrestricted `turbo` execution on your host machine.
 >    - Always keep `ALLOW_ALL_CHATS=false` and configure `ALLOWED_CHAT_IDS` + DM pairing so unauthorized Telegram users cannot reach your bot.
 
 ---
@@ -215,9 +215,10 @@ AGY_BIN_PATH=~/.local/bin/agy
 # Default working directory (--add-dir). Leave empty to use the repository root.
 AGY_WORKING_DIR=
 
-# Default model and reasoning effort
+# Default model, reasoning effort, and permission preset (auto | accept-edits | plan | turbo)
 DEFAULT_MODEL=gemini-3.8-flash
 DEFAULT_EFFORT=high
+AGY_PERMISSION_PRESET=turbo
 
 # Streaming edit throttle interval in seconds (default: 1.0)
 STREAM_THROTTLE_SECONDS=1.0
@@ -323,6 +324,7 @@ tail -f -n 50 runtime/watchdog.log
 - **`/artifacts` Manager**: Lists generated HTML reports, diffs, and `scratch/` scripts with one-tap download buttons.
 - **`/projects` Switcher**: Interactive project buttons with `[ 🔄 Refresh ]` support.
 - **`/effort` Controls**: Instant `[ 🟢 Low ]`, `[ 🟡 Medium ]`, `[ 🔴 High ]` toggles.
+- **`/permissions` (`/perm`) Presets**: Switch between native OS-sandboxed `Auto`, `Accept Edits`, read-only `Plan`, and unrestricted `Turbo`.
 - **`/model` Selector**: Auto-discovers available models from `agy models` (with caching and `[ 🔄 Refresh ]`) for instant switching.
 
 ### Supported Commands & Inputs
@@ -345,6 +347,7 @@ tail -f -n 50 runtime/watchdog.log
 | `/new <name> <path>` | Create a new project (auto-creates missing directories) and set it active | `/new myapp /path/to/myapp` |
 | `/model <name>` | Switch active model (or `/model refresh` to reload from `agy models`) | `/model gemini-3.8-flash` |
 | `/effort <level>` | Set reasoning effort (`low`, `medium`, `high`) | `/effort high` |
+| `/permissions [preset]` | Switch permission preset (`auto`, `accept-edits`, `plan`, `turbo`); alias `/perm` | `/permissions auto` |
 | `/dir` or `/ls [path]` | Scan workspace directory and generate an interactive HTML file tree | `/dir` or `/ls tests` |
 | `/file [-h] <path>` | Send a workspace file; use `-h` to render code, Markdown, diffs, or CSVs as standalone HTML | `/file -h bot.py` |
 | `/export` | Export current session state or latest output as a standalone HTML report | `/export` |
@@ -419,7 +422,7 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-Test coverage (**172 tests** across 17 test modules):
+Test coverage (**178 tests** across 17 test modules):
 - `tests/test_config.py`: Configuration loading, token validation, deny-by-default chat whitelist, default runtime paths, and system prompt overrides.
 - `tests/test_pairing.py`: DM pairing code lifecycle, expiration, atomic `0600` persistence, revocation, and CLI commands.
 - `tests/test_setup_helper.py`: Telegram `getMe` verification, `getUpdates` Chat ID auto-detection, `.env` rendering/permissions (`0600`), and interactive onboarding flow.

@@ -11,6 +11,7 @@ _repo_root = str(Path(__file__).resolve().parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
+from gateway.agy_bridge import parse_permission_preset
 from gateway.dir_tree import generate_dir_tree_html, scan_directory_tree
 from gateway.file_renderers import render_file_to_html
 from gateway.message_formatter import (
@@ -26,6 +27,7 @@ from gateway.ui_keyboards import (
     build_help_keyboard,
     build_html_keyboard,
     build_model_keyboard,
+    build_permissions_keyboard,
     build_projects_keyboard,
     build_skills_keyboard,
     build_usage_keyboard,
@@ -52,6 +54,7 @@ async def handle_cmd_help(bot: Any, chat_id: int, edit_message_id: Optional[int]
         "• <code>/projects</code> — List & switch workspaces (<code>/open &lt;name&gt;</code>, <code>/new</code>)\n"
         "• <code>/model</code> — Switch model (<code>/model gemini-3.8-flash</code> | <code>pro</code>)\n"
         "• <code>/effort</code> — Set reasoning effort (<code>low</code> | <code>medium</code> | <code>high</code>)\n"
+        "• <code>/permissions</code> / <code>/perm</code> — Set permission preset (<code>auto</code> | <code>accept-edits</code> | <code>plan</code> | <code>turbo</code>)\n"
         "• <code>/skills</code> — Explore active agent skills & plugins\n"
         "• <code>/artifacts</code> — View & download conversation artifacts/scripts\n"
         "• <code>/dir</code> — Browse workspace file tree & interactive HTML navigator\n"
@@ -300,6 +303,7 @@ async def handle_cmd_status(bot: Any, chat_id: int) -> None:
     active_path = session.active_path() or bot.config.agy_working_dir or os.getcwd()
     model_str = session.model or bot.config.default_model or "gemini-3.8-flash"
     effort_str = session.effort or bot.config.default_effort or "high"
+    perm_str = session.permission_preset or getattr(bot.config, "default_permission_preset", "turbo")
     busy_status = "🔴 Busy (Running prompt)" if session.is_busy else "🟢 Idle"
 
     # Startup time + uptime
@@ -332,7 +336,8 @@ async def handle_cmd_status(bot: Any, chat_id: int) -> None:
         f"• <b>Active Project:</b> <code>{escape_html(active_proj)}</code>\n"
         f"• <b>Working Directory:</b> <code>{escape_html(active_path)}</code>\n"
         f"• <b>Model:</b> <code>{escape_html(model_str)}</code>\n"
-        f"• <b>Effort:</b> <code>{escape_html(effort_str)}</code>\n\n"
+        f"• <b>Effort:</b> <code>{escape_html(effort_str)}</code>\n"
+        f"• <b>Permissions:</b> <code>{escape_html(perm_str)}</code>\n\n"
         "📈 <b>Active Session Cumulative Stats:</b>\n"
         f"• <b>Conversation ID:</b> {conv_id}\n"
         f"• <b>Session Age:</b> <code>{sess_age_str}</code>\n"
@@ -395,6 +400,38 @@ async def handle_cmd_effort(bot: Any, chat_id: int, arg: str = "", edit_message_
     cur_effort = session.effort or bot.config.default_effort or "high"
 
     text, reply_markup = build_effort_keyboard(cur_model, cur_effort)
+
+    if edit_message_id:
+        await bot._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
+    else:
+        await bot._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+
+
+async def handle_cmd_permissions(bot: Any, chat_id: int, arg: str = "", edit_message_id: Optional[int] = None) -> None:
+    """Change or view permission preset (/permissions auto | accept-edits | plan | turbo)."""
+    session = bot.session_manager.get_session(chat_id)
+    if arg and arg.strip().lower() != "show":
+        raw_val = arg.strip().lower()
+        if raw_val in ("reset", "default"):
+            bot.session_manager.set_permission_preset(chat_id, None)
+        else:
+            parsed = parse_permission_preset(raw_val)
+            if parsed is None:
+                await bot._safe_send_message(
+                    chat_id=chat_id,
+                    text=(
+                        "⚠️ Invalid permission preset. Allowed: "
+                        "<code>auto</code>, <code>accept-edits</code>, <code>plan</code>, <code>turbo</code> (or <code>default</code>)."
+                    ),
+                )
+                return
+            bot.session_manager.set_permission_preset(chat_id, parsed)
+        asyncio.create_task(bot.update_pinned_banner(chat_id))
+
+    cur_preset = session.permission_preset or getattr(bot.config, "default_permission_preset", "turbo")
+    cur_model = session.model or bot.config.default_model or "gemini-3.8-flash"
+
+    text, reply_markup = build_permissions_keyboard(cur_preset, cur_model)
 
     if edit_message_id:
         await bot._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
@@ -1093,6 +1130,15 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
         effort_val = data[7:].strip()
         await handle_cmd_effort(bot, chat_id, arg=effort_val, edit_message_id=message_id)
         await bot._safe_answer_callback_query(cq_id, text=f"Reasoning effort set to {effort_val}")
+
+    elif data == "perm:show":
+        await bot._safe_answer_callback_query(cq_id)
+        await handle_cmd_permissions(bot, chat_id, edit_message_id=message_id)
+
+    elif data.startswith("perm:"):
+        perm_val = data[5:].strip()
+        await handle_cmd_permissions(bot, chat_id, arg=perm_val, edit_message_id=message_id)
+        await bot._safe_answer_callback_query(cq_id, text=f"Permission preset set to {perm_val}")
 
     elif data in ("model:show", "model:refresh"):
         hint = "Refreshing models from agy..." if data == "model:refresh" else None

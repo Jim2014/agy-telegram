@@ -10,6 +10,8 @@ from typing import Set
 
 from dotenv import load_dotenv
 
+from gateway.agy_bridge import normalize_permission_preset
+
 # Base directory for the agy-telegram project
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -112,6 +114,7 @@ class Config:
     agy_working_dir: str = ""
     default_model: str = "gemini-3.8-flash"
     default_effort: str = "high"
+    default_permission_preset: str = "turbo"
     stream_throttle_seconds: float = 1.0
     agy_timeout_seconds: int = 300
     log_level: str = "INFO"
@@ -170,6 +173,9 @@ class Config:
         default_effort = os.getenv("DEFAULT_EFFORT", "high").strip().lower()
         if default_effort not in ("low", "medium", "high"):
             default_effort = "medium"
+        default_permission_preset = normalize_permission_preset(
+            os.getenv("AGY_PERMISSION_PRESET", "turbo")
+        )
 
         try:
             stream_throttle = float(os.getenv("STREAM_THROTTLE_SECONDS", "1.0"))
@@ -241,6 +247,7 @@ class Config:
             agy_working_dir=working_dir,
             default_model=default_model,
             default_effort=default_effort,
+            default_permission_preset=default_permission_preset,
             stream_throttle_seconds=stream_throttle,
             agy_timeout_seconds=agy_timeout,
             log_level=log_level,
@@ -297,6 +304,7 @@ if __name__ == "__main__":
     print(f"agy Working Dir:       {cfg.agy_working_dir}")
     print(f"Default Model:         {cfg.default_model or '(agy default)'}")
     print(f"Default Effort:        {cfg.default_effort}")
+    print(f"Default Permissions:   {cfg.default_permission_preset}")
     print(f"Stream Throttle (s):   {cfg.stream_throttle_seconds}")
     print(f"Timeout (s):           {cfg.agy_timeout_seconds}")
     print(f"Log Level:             {cfg.log_level}")

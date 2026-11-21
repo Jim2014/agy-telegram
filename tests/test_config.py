@@ -10,6 +10,7 @@ def test_default_config():
     cfg = Config()
     assert cfg.default_model == "gemini-3.8-flash"
     assert cfg.default_effort == "high"
+    assert cfg.default_permission_preset == "turbo"
     assert cfg.stream_throttle_seconds == 1.0
     assert cfg.agy_timeout_seconds == 300
     assert cfg.log_file == "runtime/gateway.log"
@@ -105,4 +106,27 @@ def test_system_prompt_file_override(tmp_path):
     )
     cfg = Config.load(env_path=env_file)
     assert cfg.system_prompt == "# Custom Instructions\nFollow strict rules for output."
+
+
+def test_permission_preset_config(tmp_path):
+    env_auto = tmp_path / ".perm.env"
+    env_auto.write_text(
+        "BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz\n"
+        "AGY_PERMISSION_PRESET=auto\n"
+    )
+    assert Config.load(env_path=env_auto).default_permission_preset == "auto"
+
+    env_plan = tmp_path / ".plan.env"
+    env_plan.write_text(
+        "BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz\n"
+        "AGY_PERMISSION_PRESET=plan\n"
+    )
+    assert Config.load(env_path=env_plan).default_permission_preset == "plan"
+
+    env_bad = tmp_path / ".bad.env"
+    env_bad.write_text(
+        "BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz\n"
+        "AGY_PERMISSION_PRESET=unknown_mode\n"
+    )
+    assert Config.load(env_path=env_bad).default_permission_preset == "turbo"
 

@@ -739,5 +739,87 @@ async def test_switch_project_first_message_yields_events(monkeypatch, tmp_path)
     await bridge.stop()
 
 
+@pytest.mark.asyncio
+async def test_permission_preset_flags_and_warm_reuse_invalidation(monkeypatch, tmp_path):
+    from gateway.agy_bridge import normalize_permission_preset, parse_permission_preset
+
+    assert parse_permission_preset("auto") == "auto"
+    assert parse_permission_preset("sandbox") == "auto"
+    assert parse_permission_preset("accept_edits") == "accept-edits"
+    assert parse_permission_preset("plan") == "plan"
+    assert parse_permission_preset("bypass") == "turbo"
+    assert parse_permission_preset("invalid-preset") is None
+    assert normalize_permission_preset(None) == "turbo"
+    assert normalize_permission_preset("invalid-preset") == "turbo"
+
+    bridge = AgyBridge(agy_bin="/usr/bin/agy", default_working_dir=str(tmp_path), keep_alive=True)
+
+    cmd_turbo = bridge.build_command(prompt="hi", permission_preset="turbo")
+    assert "--dangerously-skip-permissions" in cmd_turbo
+    assert "--mode" not in cmd_turbo
+
+    for preset in ("auto", "accept-edits", "plan"):
+        cmd_mode = bridge.build_command(prompt="hi", permission_preset=preset)
+        assert "--dangerously-skip-permissions" not in cmd_mode
+        assert "--mode" in cmd_mode and preset in cmd_mode
+
+    class MockStdin:
+        def __init__(self):
+            self.closed = False
+        def write(self, data): pass
+        async def drain(self): pass
+        def is_closing(self): return self.closed
+        def close(self): self.closed = True
+
+    class MockStdout:
+        def __init__(self, lines):
+            self.lines = list(lines)
+        async def readline(self):
+            return self.lines.pop(0) if self.lines else b""
+
+    class MockProcess:
+        def __init__(self, pid, lines):
+            self.pid = pid
+            self.returncode = None
+            self.stdin = MockStdin()
+            self.stdout = MockStdout(lines)
+            self.stderr = MockStdout([])
+        async def wait(self):
+            self.returncode = 0
+            return 0
+        def terminate(self): self.returncode = 0
+        def kill(self): self.returncode = 0
+
+    p1 = MockProcess(101, [
+        b'{"event":"init","conversation_id":"conv-perm"}\n',
+        b'{"event":"result","result":{"conversation_id":"conv-perm","status":"SUCCESS","response":"t1"}}\n',
+    ])
+    p2 = MockProcess(102, [
+        b'{"event":"init","conversation_id":"conv-perm"}\n',
+        b'{"event":"result","result":{"conversation_id":"conv-perm","status":"SUCCESS","response":"t2"}}\n',
+    ])
+    spawned_cmds = []
+    procs = [p1, p2]
+
+    async def mock_exec(*args, **kwargs):
+        spawned_cmds.append(list(args))
+        return procs.pop(0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
+
+    res1 = [ev async for ev in bridge.run_streaming("turn 1", permission_preset="turbo")]
+    assert res1[-1].response == "t1"
+    assert "--dangerously-skip-permissions" in spawned_cmds[0]
+
+    # Switching from turbo -> auto must terminate p1 and spawn p2 with --mode auto
+    res2 = [ev async for ev in bridge.run_streaming("turn 2", conversation_id="conv-perm", permission_preset="auto")]
+    assert res2[-1].response == "t2"
+    assert p1.returncode == 0
+    assert len(spawned_cmds) == 2
+    assert "--mode" in spawned_cmds[1] and "auto" in spawned_cmds[1]
+
+    await bridge.stop()
+
+
 
 

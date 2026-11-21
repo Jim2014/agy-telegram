@@ -32,6 +32,7 @@ from gateway.commands import (
     handle_cmd_model as cmd_handle_model,
     handle_cmd_new as cmd_handle_new,
     handle_cmd_open as cmd_handle_open,
+    handle_cmd_permissions as cmd_handle_permissions,
     handle_cmd_projects as cmd_handle_projects,
     handle_cmd_reset as cmd_handle_reset,
     handle_cmd_skills as cmd_handle_skills,
@@ -659,6 +660,8 @@ class AgyTelegramBot:
             await self.handle_cmd_model(chat_id, arg)
         elif canonical_cmd == "effort":
             await self.handle_cmd_effort(chat_id, arg)
+        elif canonical_cmd == "permissions":
+            await self.handle_cmd_permissions(chat_id, arg)
         elif canonical_cmd == "dir":
             await self.handle_cmd_dir(chat_id, arg, message_id)
         elif canonical_cmd == "file":
@@ -745,6 +748,9 @@ class AgyTelegramBot:
     async def handle_cmd_effort(self, chat_id: int, arg: str = "", edit_message_id: Optional[int] = None) -> None:
         await cmd_handle_effort(self, chat_id, arg, edit_message_id)
 
+    async def handle_cmd_permissions(self, chat_id: int, arg: str = "", edit_message_id: Optional[int] = None) -> None:
+        await cmd_handle_permissions(self, chat_id, arg, edit_message_id)
+
     async def handle_cmd_dir(self, chat_id: int, arg: str = "", reply_to_id: Optional[int] = None) -> None:
         await cmd_handle_dir(self, chat_id, arg, reply_to_id)
 
@@ -777,6 +783,7 @@ class AgyTelegramBot:
         bridge: AgyBridge,
         effective_model: Optional[str],
         effective_effort: Optional[str],
+        effective_permission_preset: Optional[str] = None,
     ) -> Tuple[str, List[IPCResult]]:
         """Execute background cross-project IPC calls with pinned accordion cards and return injection."""
         session = self.session_manager.get_session(chat_id)
@@ -865,6 +872,7 @@ class AgyTelegramBot:
                     model=effective_model,
                     effort=effective_effort,
                     timeout_seconds=self.config.agy_timeout_seconds,
+                    permission_preset=effective_permission_preset,
                 ):
                     now = time.time()
                     if event.type == "init":
@@ -1116,6 +1124,7 @@ class AgyTelegramBot:
         active_proj = session.active_project or "default"
         effective_model = session.model or self.config.default_model or None
         effective_effort = session.effort or self.config.default_effort or None
+        effective_permission_preset = session.permission_preset or getattr(self.config, "default_permission_preset", "turbo")
         effective_dir = session.active_path() or self.config.agy_working_dir or None
 
         bridge = self.active_bridges.get(chat_id)
@@ -1148,6 +1157,7 @@ class AgyTelegramBot:
                 effort=effective_effort,
                 working_dir=effective_dir,
                 system_prompt=self.config.system_prompt,
+                permission_preset=effective_permission_preset,
             ):
                 now = time.time()
 
@@ -1277,6 +1287,7 @@ class AgyTelegramBot:
                     bridge=bridge,
                     effective_model=effective_model,
                     effective_effort=effective_effort,
+                    effective_permission_preset=effective_permission_preset,
                 )
                 if combined_return_text:
                     followup_text = ""
@@ -1287,6 +1298,7 @@ class AgyTelegramBot:
                         effort=effective_effort,
                         working_dir=effective_dir,
                         system_prompt=self.config.system_prompt,
+                        permission_preset=effective_permission_preset,
                     ):
                         if f_event.type in ("text", "text_delta"):
                             followup_text += (f_event.text_delta or getattr(f_event, "content", "") or "")

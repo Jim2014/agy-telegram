@@ -31,6 +31,38 @@ def model_supports_effort(model: Optional[str]) -> bool:
     return True
 
 
+VALID_PERMISSION_PRESETS = ("auto", "accept-edits", "plan", "turbo")
+
+_PERMISSION_PRESET_ALIASES: Dict[str, str] = {
+    "auto": "auto",
+    "sandbox": "auto",
+    "accept-edits": "accept-edits",
+    "accept_edits": "accept-edits",
+    "acceptedits": "accept-edits",
+    "edits": "accept-edits",
+    "plan": "plan",
+    "readonly": "plan",
+    "read-only": "plan",
+    "turbo": "turbo",
+    "bypass": "turbo",
+    "unrestricted": "turbo",
+    "skip": "turbo",
+    "dangerously-skip-permissions": "turbo",
+}
+
+
+def parse_permission_preset(raw: Optional[str]) -> Optional[str]:
+    """Parse a permission preset or alias into a canonical preset name, or None if invalid."""
+    if not raw:
+        return None
+    return _PERMISSION_PRESET_ALIASES.get(raw.strip().lower())
+
+
+def normalize_permission_preset(preset: Optional[str]) -> str:
+    """Normalize a permission preset value, defaulting empty or unknown values to 'turbo'."""
+    return parse_permission_preset(preset) or "turbo"
+
+
 @dataclass
 class AgyEvent:
     """An event emitted by the agy stream-json protocol."""
@@ -82,6 +114,7 @@ class AgyBridge:
         self._current_working_dir: Optional[str] = None
         self._current_model: Optional[str] = None
         self._current_effort: Optional[str] = None
+        self._current_permission_preset: Optional[str] = None
 
     def is_running(self) -> bool:
         """Check if the agy process is currently running and active."""
@@ -115,16 +148,21 @@ class AgyBridge:
         model: Optional[str] = None,
         effort: Optional[str] = None,
         working_dir: Optional[str] = None,
+        permission_preset: Optional[str] = None,
     ) -> List[str]:
         """Construct command line arguments for running agy in stream-json mode."""
+        eff_preset = normalize_permission_preset(permission_preset)
         cmd = [
             self.agy_bin,
             "--input-format",
             "stream-json",
             "--output-format",
             "stream-json",
-            "--dangerously-skip-permissions",
         ]
+        if eff_preset == "turbo":
+            cmd.append("--dangerously-skip-permissions")
+        else:
+            cmd.extend(["--mode", eff_preset])
 
         if conversation_id:
             cmd.extend(["--conversation", conversation_id])
@@ -215,6 +253,7 @@ class AgyBridge:
         effort: Optional[str] = None,
         working_dir: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        permission_preset: Optional[str] = None,
     ) -> AsyncIterator[AgyEvent]:
         """Run agy CLI with stream-json input/output and yield streaming AgyEvent instances."""
         self._is_stopped = False
@@ -230,6 +269,7 @@ class AgyBridge:
 
         effective_dir = working_dir or self.default_working_dir
         effective_effort = effort if model_supports_effort(model) else None
+        effective_preset = normalize_permission_preset(permission_preset)
         can_reuse = (
             self.is_running()
             and self._current_process is not None
@@ -239,6 +279,7 @@ class AgyBridge:
             and self._current_working_dir == effective_dir
             and self._current_model == model
             and self._current_effort == effective_effort
+            and self._current_permission_preset == effective_preset
             and self._reader_task is not None
             and not self._reader_task.done()
         )
@@ -274,6 +315,7 @@ class AgyBridge:
                 model=model,
                 effort=effort,
                 working_dir=effective_dir,
+                permission_preset=effective_preset,
             )
             if effective_dir:
                 Path(effective_dir).mkdir(parents=True, exist_ok=True)
@@ -291,6 +333,7 @@ class AgyBridge:
                 self._current_working_dir = effective_dir
                 self._current_model = model
                 self._current_effort = effective_effort
+                self._current_permission_preset = effective_preset
                 self._reader_task = asyncio.create_task(self._stdout_reader(process))
             except FileNotFoundError:
                 err_msg = f"agy binary not found at: {self.agy_bin}"
@@ -520,6 +563,7 @@ class AgyBridge:
         model: Optional[str] = None,
         effort: Optional[str] = None,
         timeout_seconds: int = 300,
+        permission_preset: Optional[str] = None,
     ) -> AsyncGenerator[AgyEvent, None]:
         """
         Run an isolated, single-turn agy worker in a specific target working directory.
@@ -531,6 +575,7 @@ class AgyBridge:
             model=model,
             effort=effort,
             working_dir=working_dir,
+            permission_preset=permission_preset,
         )
         Path(working_dir).mkdir(parents=True, exist_ok=True)
         logger.info("Spawning ephemeral agy worker in %s: %s", working_dir, " ".join(cmd[:6]))

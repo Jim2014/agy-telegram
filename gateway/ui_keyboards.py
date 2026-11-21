@@ -27,6 +27,7 @@ ALL_BOT_COMMAND_SPECS: List[Dict[str, Any]] = [
     {"command": "new", "description": "✨ New project (/new <name> <path>)", "default_priority": 70},
     {"command": "model", "description": "🧠 Switch model (Flash/Pro)", "default_priority": 65},
     {"command": "effort", "description": "⚡ Reasoning effort (low/med/high)", "default_priority": 60},
+    {"command": "permissions", "description": "🛡️ Permission preset (auto/plan/turbo)", "default_priority": 58},
     {"command": "skills", "description": "🧩 List active skills & plugins", "default_priority": 55},
     {"command": "artifacts", "description": "📦 Browse & download artifacts", "default_priority": 50},
     {"command": "dir", "description": "📁 Browse workspace file tree", "default_priority": 45},
@@ -53,6 +54,9 @@ COMMAND_ALIASES: Dict[str, str] = {
     "new": "new",
     "model": "model",
     "effort": "effort",
+    "permissions": "permissions",
+    "perm": "permissions",
+    "perms": "permissions",
     "skills": "skills",
     "plugins": "skills",
     "artifacts": "artifacts",
@@ -393,6 +397,67 @@ def build_effort_keyboard(
     return "\n".join(lines), {"inline_keyboard": keyboard}
 
 
+def build_permissions_keyboard(
+    current_preset: str,
+    current_model: str = "",
+) -> Tuple[str, Dict[str, Any]]:
+    """Build permission preset configuration message text and inline keyboard markup."""
+    presets = [
+        {
+            "id": "auto",
+            "name": "Auto",
+            "icon": "🛡️",
+            "desc": "Native OS terminal sandbox; workspace edits & safe commands auto-approved",
+        },
+        {
+            "id": "accept-edits",
+            "name": "Accept Edits",
+            "icon": "✏️",
+            "desc": "Workspace file edits auto-approved; unsandboxed shell commands soft-denied",
+        },
+        {
+            "id": "plan",
+            "name": "Plan",
+            "icon": "📋",
+            "desc": "Read-only planning & analysis; writes and unsandboxed commands soft-denied",
+        },
+        {
+            "id": "turbo",
+            "name": "Turbo",
+            "icon": "⚡",
+            "desc": "Unrestricted execution (--dangerously-skip-permissions)",
+        },
+    ]
+
+    lines = ["🛡️ <b>Permission Preset Setting:</b>\n"]
+    if current_model:
+        lines.append(f"• <b>Active Model:</b> <code>{escape_html(current_model)}</code>")
+    lines.append(f"• <b>Active Preset:</b> <code>{escape_html(current_preset)}</code>\n")
+    lines.append("<b>Available Presets:</b>")
+
+    rows: List[List[Dict[str, str]]] = []
+    cur_row: List[Dict[str, str]] = []
+    for p in presets:
+        is_active = current_preset == p["id"]
+        marker = "🌟 <b>[ACTIVE]</b> " if is_active else "• "
+        lines.append(f"{marker}{p['icon']} <b>{p['name']}</b> (<code>{p['id']}</code>)\n   <i>{p['desc']}</i>")
+        btn_label = f"✓ {p['icon']} {p['name']}" if is_active else f"{p['icon']} {p['name']}"
+        cur_row.append({"text": btn_label, "callback_data": f"perm:{p['id']}"})
+        if len(cur_row) == 2:
+            rows.append(cur_row)
+            cur_row = []
+    if cur_row:
+        rows.append(cur_row)
+
+    rows.append([
+        {"text": "🤖 Switch Model", "callback_data": "model:show"},
+        {"text": "📊 Status", "callback_data": "status"},
+    ])
+
+    lines.append("\n💡 <i>Tap a preset below or run /permissions &lt;auto|accept-edits|plan|turbo&gt;.</i>")
+    return "\n".join(lines), {"inline_keyboard": rows}
+
+
 def build_help_keyboard() -> Dict[str, Any]:
     """Build the master command center inline keyboard for /help."""
     return {
@@ -416,6 +481,9 @@ def build_help_keyboard() -> Dict[str, Any]:
             [
                 {"text": "🎙️ Voice Settings", "callback_data": "voice:show"},
                 {"text": "📄 HTML Settings", "callback_data": "html:show"},
+            ],
+            [
+                {"text": "🛡️ Permissions", "callback_data": "perm:show"},
             ],
         ]
     }

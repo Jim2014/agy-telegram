@@ -255,3 +255,19 @@ def test_html_mode_persistence(tmp_path):
     mgr2 = SessionManager(persistence_file=persist_file)
     assert mgr2.get_session(500).html_mode == "off"
 
+
+def test_permission_preset_persistence(tmp_path):
+    persist_file = tmp_path / "perm_sessions.json"
+    mgr1 = SessionManager(persistence_file=persist_file)
+    assert mgr1.get_session(600).permission_preset is None
+
+    mgr1.set_permission_preset(600, "auto")
+    assert mgr1.get_session(600).permission_preset == "auto"
+
+    mgr2 = SessionManager(persistence_file=persist_file)
+    assert mgr2.get_session(600).permission_preset == "auto"
+
+    mgr2.set_permission_preset(600, None)
+    mgr3 = SessionManager(persistence_file=persist_file)
+    assert mgr3.get_session(600).permission_preset is None
+

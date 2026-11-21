@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from gateway.agy_bridge import normalize_permission_preset
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,6 +23,7 @@ class ChatSession:
     projects: Dict[str, dict] = field(default_factory=dict)
     model: Optional[str] = None
     effort: Optional[str] = None
+    permission_preset: Optional[str] = None
     is_busy: bool = False
     created_at: float = field(default_factory=time.time)
     last_active_at: float = field(default_factory=time.time)
@@ -59,6 +62,7 @@ class ChatSession:
             "active_project": self.active_project,
             "model": self.model,
             "effort": self.effort,
+            "permission_preset": self.permission_preset,
             "created_at": self.created_at,
             "last_active_at": self.last_active_at,
             "projects": self.projects,
@@ -107,6 +111,7 @@ class ChatSession:
             projects=projects,
             model=data.get("model"),
             effort=data.get("effort"),
+            permission_preset=data.get("permission_preset"),
             created_at=float(data.get("created_at", time.time())),
             last_active_at=float(data.get("last_active_at", time.time())),
             command_stats=data.get("command_stats", {}),
@@ -359,6 +364,13 @@ class SessionManager:
                 session.effort = eff
         else:
             session.effort = None
+        session.last_active_at = time.time()
+        self.save()
+
+    def set_permission_preset(self, chat_id: int, preset: Optional[str]) -> None:
+        """Set or clear permission preset override (chat-level: auto, accept-edits, plan, turbo)."""
+        session = self.get_session(chat_id)
+        session.permission_preset = normalize_permission_preset(preset) if preset else None
         session.last_active_at = time.time()
         self.save()
 

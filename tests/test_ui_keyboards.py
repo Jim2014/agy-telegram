@@ -300,6 +300,31 @@ def test_build_html_keyboard_and_help_button():
 
     hk = build_help_keyboard()
     assert any(any(b["callback_data"] == "html:show" for b in row) for row in hk["inline_keyboard"])
+    assert any(any(b["callback_data"] == "perm:show" for b in row) for row in hk["inline_keyboard"])
+
+
+def test_build_permissions_keyboard_and_command_alias():
+    from gateway.ui_keyboards import (
+        ALL_BOT_COMMAND_SPECS,
+        COMMAND_ALIASES,
+        build_permissions_keyboard,
+    )
+
+    assert any(c["command"] == "permissions" for c in ALL_BOT_COMMAND_SPECS)
+    assert COMMAND_ALIASES["perm"] == "permissions"
+
+    text, kb = build_permissions_keyboard("auto", current_model="gemini-4-neon")
+    assert "Permission Preset Setting" in text
+    assert "gemini-4-neon" in text
+    assert "auto" in text
+
+    flat_buttons = [b for row in kb["inline_keyboard"] for b in row]
+    auto_btn = next(b for b in flat_buttons if b["callback_data"] == "perm:auto")
+    turbo_btn = next(b for b in flat_buttons if b["callback_data"] == "perm:turbo")
+    assert auto_btn["text"].startswith("✓")
+    assert not turbo_btn["text"].startswith("✓")
+    assert any(b["callback_data"] == "perm:accept-edits" for b in flat_buttons)
+    assert any(b["callback_data"] == "perm:plan" for b in flat_buttons)
 
 
 

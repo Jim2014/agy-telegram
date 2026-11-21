@@ -120,6 +120,7 @@ def main() -> None:
         print(f"• Working Directory:     {config.agy_working_dir}")
         print(f"• Default Model:         {config.default_model or '(default)'}")
         print(f"• Default Effort:        {config.default_effort}")
+        print(f"• Default Permissions:   {config.default_permission_preset}")
         print(f"• Stream Throttle:       {config.stream_throttle_seconds}s")
         print(f"• Log File:              {config.log_file}")
         print("========================================\n")

@@ -1718,6 +1718,71 @@ async def test_bot_deferred_restart_after_final_report(mock_bot, monkeypatch):
     assert mock_bot._restart_flag_file.exists() is False
 
 
+@pytest.mark.asyncio
+async def test_bot_permissions_command_and_callback(mock_bot):
+    # /permissions shows interactive preset keyboard
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/permissions", "message_id": 701}})
+    text = mock_bot.client.send_message.call_args[1]["text"]
+    assert "Permission Preset Setting" in text
+    assert "turbo" in text
+
+    # /perm auto switches session preset
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/perm auto", "message_id": 702}})
+    assert mock_bot.session_manager.get_session(100).permission_preset == "auto"
+    assert "auto" in mock_bot.client.send_message.call_args[1]["text"]
+
+    # Invalid preset shows warning without altering session
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/permissions invalid_mode", "message_id": 703}})
+    assert "Invalid permission preset" in mock_bot.client.send_message.call_args[1]["text"]
+    assert mock_bot.session_manager.get_session(100).permission_preset == "auto"
+
+    # Inline button callback perm:plan edits message & updates session
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_perm_plan",
+            "from": {"id": 100},
+            "message": {"chat": {"id": 100}, "message_id": 704},
+            "data": "perm:plan",
+        }
+    })
+    assert mock_bot.session_manager.get_session(100).permission_preset == "plan"
+    mock_bot.client.answer_callback_query.assert_called_with(
+        callback_query_id="cq_perm_plan",
+        text="Permission preset set to plan",
+        show_alert=False,
+    )
+
+    # /status reports active permission preset
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/status", "message_id": 705}})
+    assert "Permissions:" in mock_bot.client.send_message.call_args[1]["text"]
+    assert "plan" in mock_bot.client.send_message.call_args[1]["text"]
+
+    # /permissions default clears override back to None (config default)
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/permissions default", "message_id": 706}})
+    assert mock_bot.session_manager.get_session(100).permission_preset is None
+
+
+@pytest.mark.asyncio
+async def test_bot_handle_prompt_forwards_permission_preset(mock_bot, monkeypatch):
+    captured = {}
+
+    async def mock_stream(self, prompt, **kwargs):
+        captured.update(kwargs)
+        yield AgyEvent(type="init", conversation_id="conv-perm-fwd")
+        yield AgyEvent(type="result", response="Plan complete", duration_seconds=0.2)
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream)
+
+    mock_bot.session_manager.set_permission_preset(100, "accept-edits")
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "inspect codebase", "message_id": 707}})
+
+    assert captured["permission_preset"] == "accept-edits"
+
+
 
 
 
