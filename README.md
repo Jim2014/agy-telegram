@@ -411,7 +411,7 @@ Each Python module is single-purpose and supports standalone CLI verification:
 
 ## Testing & Verification
 
-Run the full automated test suite:
+Run the full automated test suite (also enforced on every push and pull request via [GitHub Actions CI](.github/workflows/test.yml)):
 
 ```bash
 conda run -n agy-telegram pytest -v

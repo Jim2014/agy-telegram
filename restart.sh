@@ -36,7 +36,7 @@ else
 fi
 
 is_launchd_loaded() {
-    launchctl list "$LAUNCHD_LABEL" >/dev/null 2>&1
+    command -v launchctl >/dev/null 2>&1 && launchctl list "$LAUNCHD_LABEL" >/dev/null 2>&1
 }
 
 enable_autostart() {
@@ -226,7 +226,10 @@ case "${1:-}" in
         if [ -n "$active_pid" ] && kill -0 "$active_pid" 2>/dev/null; then
             echo "✅ Gateway: Running (PID $active_pid)"
         else
-            lpid=$(launchctl list | awk -v lbl="$LAUNCHD_LABEL" '$3 == lbl {print $1}')
+            lpid=""
+            if command -v launchctl >/dev/null 2>&1; then
+                lpid=$(launchctl list 2>/dev/null | awk -v lbl="$LAUNCHD_LABEL" '$3 == lbl {print $1}')
+            fi
             if [ -n "$lpid" ] && [ "$lpid" != "-" ]; then
                 echo "✅ Gateway: Running under launchd (PID $lpid)"
             elif [ -n "$active_pid" ]; then
@@ -276,7 +279,10 @@ case "${1:-}" in
         if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null || true)" 2>/dev/null; then
             gw_alive=1
         elif is_launchd_loaded; then
-            lpid=$(launchctl list | awk -v lbl="$LAUNCHD_LABEL" '$3 == lbl {print $1}')
+            lpid=""
+            if command -v launchctl >/dev/null 2>&1; then
+                lpid=$(launchctl list 2>/dev/null | awk -v lbl="$LAUNCHD_LABEL" '$3 == lbl {print $1}')
+            fi
             if [ -n "$lpid" ] && [ "$lpid" != "-" ]; then
                 gw_alive=1
             fi
