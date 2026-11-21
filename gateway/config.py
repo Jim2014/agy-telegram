@@ -105,6 +105,9 @@ class Config:
 
     bot_token: str = ""
     allowed_chat_ids: Set[int] = field(default_factory=set)
+    allow_all_chats: bool = False
+    dm_pairing_enabled: bool = True
+    pairing_file: str = "runtime/pairing.json"
     agy_bin_path: str = field(default_factory=resolve_default_agy_bin)
     agy_working_dir: str = ""
     default_model: str = "gemini-3.8-flash"
@@ -137,7 +140,7 @@ class Config:
 
         bot_token = os.getenv("BOT_TOKEN", "").strip()
 
-        # Parse allowed chat IDs
+        # Parse allowed chat IDs and deny-by-default security flags
         raw_allowed = os.getenv("ALLOWED_CHAT_IDS", "").strip()
         allowed_chat_ids: Set[int] = set()
         if raw_allowed:
@@ -148,6 +151,9 @@ class Config:
                         allowed_chat_ids.add(int(item_str))
                     except ValueError:
                         pass
+        allow_all_chats = os.getenv("ALLOW_ALL_CHATS", "false").strip().lower() in ("true", "1", "yes")
+        dm_pairing_enabled = os.getenv("DM_PAIRING_ENABLED", "true").strip().lower() in ("true", "1", "yes")
+        pairing_file = os.getenv("PAIRING_FILE", "runtime/pairing.json").strip() or "runtime/pairing.json"
 
         # agy binary path
         agy_bin = os.getenv("AGY_BIN_PATH", "").strip()
@@ -228,6 +234,9 @@ class Config:
         return cls(
             bot_token=bot_token,
             allowed_chat_ids=allowed_chat_ids,
+            allow_all_chats=allow_all_chats,
+            dm_pairing_enabled=dm_pairing_enabled,
+            pairing_file=pairing_file,
             agy_bin_path=agy_bin,
             agy_working_dir=working_dir,
             default_model=default_model,
@@ -262,9 +271,9 @@ class Config:
         return True
 
     def is_chat_allowed(self, chat_id: int) -> bool:
-        """Check if chat_id is allowed to interact with the bot."""
-        if not self.allowed_chat_ids:
-            return True  # Empty whitelist = allow all
+        """Check if chat_id is explicitly allowed (deny-by-default unless ALLOW_ALL_CHATS=true)."""
+        if self.allow_all_chats:
+            return True
         return chat_id in self.allowed_chat_ids
 
     def get_resolved_agy_bin(self) -> str:
@@ -283,7 +292,7 @@ if __name__ == "__main__":
     print("=== agy-telegram Configuration ===")
     print(f"Base Directory:        {BASE_DIR}")
     print(f"Bot Token Configured:  {'YES (valid format)' if cfg.is_token_valid() else 'NO or invalid/placeholder'}")
-    print(f"Allowed Chat IDs:      {list(cfg.allowed_chat_ids) if cfg.allowed_chat_ids else 'ALL'}")
+    print(f"Allowed Chat IDs:      {list(cfg.allowed_chat_ids) if cfg.allowed_chat_ids else ('ALL (open access)' if cfg.allow_all_chats else 'NONE (deny-by-default / DM pairing)')}")
     print(f"agy Binary Path:       {cfg.get_resolved_agy_bin()} (exists: {os.path.exists(cfg.get_resolved_agy_bin())})")
     print(f"agy Working Dir:       {cfg.agy_working_dir}")
     print(f"Default Model:         {cfg.default_model or '(agy default)'}")

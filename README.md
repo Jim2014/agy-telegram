@@ -38,12 +38,12 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 8. **File & Photo Attachments + Telegram Mini App WebApp**: Send documents, source files, CSVs, or images directly in chat (saved to `runtime/documents/`) for `agy` analysis; generated HTML reports are served by the built-in WebApp server (`:8765`) with `[ 🌐 Open in Telegram ]` buttons.
 9. **Runtime Isolation & Git Safety**: Runtime logs (`runtime/gateway.log`), PID files (`runtime/gateway.pid`), session persistence (`runtime/sessions.json`), voice cache (`runtime/voice/`), and uploads (`runtime/documents/`) are isolated inside `runtime/` and excluded via `.gitignore`.
 10. **Hardening & Auto-Healing**:
-    - `ALLOWED_CHAT_IDS` whitelist authentication.
-    - **Network Exception Resilience**: Wrapped Telegram API calls gracefully absorb transient `httpx.ReadError`, timeouts, and network hiccups without aborting streaming turns.
+    - **Deny-by-Default & DM Pairing**: Blocks unknown chats unless listed in `ALLOWED_CHAT_IDS` (or `ALLOW_ALL_CHATS=true`). Unknown senders receive a temporary 8-character pairing code that owners can approve with one tap in Telegram (`[ ✅ Approve ]`) or via CLI (`python -m gateway.pairing approve <CODE>`).
+    - **Telegram Network Exception Resilience**: Wrapped Telegram API calls gracefully absorb transient `httpx.ReadError`, timeouts, and network hiccups without aborting streaming turns.
     - **Watchdog Supervisor & macOS Autostart**: Includes `watchdog.sh` (`./restart.sh watch`) for crash auto-recovery within 10 seconds, plus macOS LaunchAgent integration (`./restart.sh autostart`).
     - `/stop` immediately interrupts the active `agy` subprocess.
     - Automatic Telegram 4096-character chunk splitting, rate-limit throttling, and HTML fallback handling.
-    - Comprehensive test suite (**157 tests** covering unit, network resilience, protocol parsing, onboarding setup, and real `agy` CLI smoke testing). See [ROADMAP.md](ROADMAP.md) for planned milestones.
+    - Comprehensive test suite (**161 tests** covering unit, network resilience, protocol parsing, onboarding setup, DM pairing, and real `agy` CLI smoke testing). See [ROADMAP.md](ROADMAP.md) for planned milestones.
 11. **Cross-Project Multi-Agent Mesh (`AGY_IPC`) & Pinned Expandable Cards**:
     - **Decentralized Cross-Workspace Collaboration**: Agents can dispatch sub-tasks across registered project directories via `[AGY_IPC to="<target>"]...[END_AGY_IPC]` envelopes (`[AGY_INCOMING]`) and automatically return results to the main chat.
     - **Dedicated Pinned Progress Cards**: Maintains per-project pinned expandable cards (`<blockquote expandable>`) in Telegram tracking live tool execution and elapsed duration.
@@ -145,8 +145,8 @@ agy-telegram/
 
 ### Step 2: Find Your Telegram Chat ID (Security Whitelist)
 
-> [!WARNING]
-> If `ALLOWED_CHAT_IDS` is left empty, **anyone on Telegram** who finds your bot username can send prompts to your local `agy` CLI. Setting your own Chat ID is strongly recommended before starting the gateway.
+> [!NOTE]
+> `agy-telegram` enforces **deny-by-default + DM pairing** (`ALLOW_ALL_CHATS=false`, `DM_PAIRING_ENABLED=true`). If `ALLOWED_CHAT_IDS` is empty, unknown senders are denied and receive a pairing code you can approve from the terminal (`python -m gateway.pairing approve <CODE>`). Setting your own Chat ID in `ALLOWED_CHAT_IDS` also enables one-tap `[ ✅ Approve ]` / `[ ❌ Reject ]` notifications in Telegram.
 
 1. Search for [@userinfobot](https://t.me/userinfobot) on Telegram and press **Start**.
 2. Copy your numeric **Id** (for example, `123456789`).
@@ -165,9 +165,10 @@ Edit `.env` and fill in at least `BOT_TOKEN` and `ALLOWED_CHAT_IDS`:
 # Required: Bot token from @BotFather
 BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
 
-# Optional: Comma-separated Telegram Chat IDs allowed to access the bot.
-# Leave empty to allow all chats. Find your ID via @userinfobot on Telegram.
+# Comma-separated Telegram Chat IDs allowed to access the bot (deny-by-default if empty).
 ALLOWED_CHAT_IDS=
+ALLOW_ALL_CHATS=false
+DM_PAIRING_ENABLED=true
 
 # agy CLI binary path (defaults to ~/.local/bin/agy or agy in PATH)
 AGY_BIN_PATH=~/.local/bin/agy
@@ -345,6 +346,7 @@ Each Python module is single-purpose and supports standalone CLI verification:
 
 - `gateway/config.py` (`python -m gateway.config`): Environment loading, validation, dynamic binary resolution, and system prompt configuration.
 - `gateway/setup_helper.py` (`python -m gateway.setup_helper`): Interactive onboarding wizard for `.env` generation, Telegram `getMe` verification, and automatic `chat_id` detection.
+- `gateway/pairing.py` (`python -m gateway.pairing list|approve|revoke`): Deny-by-default DM pairing store (`runtime/pairing.json`) and CLI approval tool.
 - `gateway/session_manager.py` (`python -m gateway.session_manager`): Multi-project session persistence (`runtime/sessions.json`), LRU command stats, and token metrics.
 - `gateway/ui_keyboards.py` (`python -m gateway.ui_keyboards`): Inline keyboard builders, dynamic `agy models` discovery, adaptive LRU command menus, and WebApp viewer buttons.
 - `gateway/transcriber.py` (`python -m gateway.transcriber`): Offline `faster-whisper` speech-to-text transcription with lazy model caching.
@@ -378,8 +380,9 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-Test coverage (**157 tests** across 15 test modules):
-- `tests/test_config.py`: Configuration loading, token validation, chat whitelist, default runtime paths, and system prompt overrides.
+Test coverage (**161 tests** across 16 test modules):
+- `tests/test_config.py`: Configuration loading, token validation, deny-by-default chat whitelist, default runtime paths, and system prompt overrides.
+- `tests/test_pairing.py`: DM pairing code lifecycle, expiration, atomic `0600` persistence, revocation, and CLI commands.
 - `tests/test_setup_helper.py`: Telegram `getMe` verification, `getUpdates` Chat ID auto-detection, `.env` rendering/permissions (`0600`), and interactive onboarding flow.
 - `tests/test_session_manager.py`: Session CRUD, persistence, legacy migration, token/duration stats, and LRU command tracking.
 - `tests/test_ui_keyboards.py`: Project switchers, dynamic `agy models` parsing and fallback discovery, effort keyboards, adaptive LRU menus, and WebApp buttons.

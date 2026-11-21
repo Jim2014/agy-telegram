@@ -41,6 +41,7 @@ from gateway.commands import (
     handle_cmd_voice as cmd_handle_voice,
 )
 from gateway.config import Config
+from gateway.pairing import PairingManager
 from gateway.ipc_router import (
     IPCCall,
     IPCResult,
@@ -102,6 +103,7 @@ class AgyTelegramBot:
         self.config = config
         self.client = TelegramClient(bot_token=config.bot_token)
         self.session_manager = SessionManager(persistence_file=config.sessions_file)
+        self.pairing_manager = PairingManager(pairing_file=getattr(config, "pairing_file", "runtime/pairing.json"))
         self.active_bridges: Dict[int, AgyBridge] = {}
         self.active_progress_messages: Dict[int, int] = {}
         self.active_reply_to_ids: Dict[int, Optional[int]] = {}
@@ -368,7 +370,7 @@ class AgyTelegramBot:
         self.session_manager.save()
 
         for chat_id, session in sessions.items():
-            if not self.config.is_chat_allowed(chat_id):
+            if not self.is_chat_authorized(chat_id):
                 continue
             proj = session.active_project or "<i>(none)</i>"
             n = len(getattr(session, "projects", {}))
@@ -465,6 +467,14 @@ class AgyTelegramBot:
         """Gracefully shutdown the bot (alias for stop)."""
         await self.stop()
 
+    def is_chat_authorized(self, chat_id: int) -> bool:
+        """Check if chat_id is in config allowlist or approved via DM pairing."""
+        if self.config.is_chat_allowed(chat_id):
+            return True
+        if getattr(self.config, "dm_pairing_enabled", True) and self.pairing_manager.is_approved(chat_id):
+            return True
+        return False
+
     async def process_update(self, update: Dict[str, Any]) -> None:
         """Process a single Telegram update dict."""
         try:
@@ -481,13 +491,54 @@ class AgyTelegramBot:
             if not chat_id:
                 return
 
-            # Check authorization whitelist
-            if not self.config.is_chat_allowed(chat_id):
+            # Check authorization whitelist / DM pairing (deny-by-default)
+            if not self.is_chat_authorized(chat_id):
                 logger.warning("Unauthorized access attempt from chat_id %d", chat_id)
-                await self._safe_send_message(
-                    chat_id=chat_id,
-                    text="⛔ <b>Access Denied</b>\nThis bot is private and your chat ID is not authorized.",
-                )
+                if getattr(self.config, "dm_pairing_enabled", True):
+                    sender = message.get("from") or {}
+                    uname = sender.get("username") or message.get("chat", {}).get("username") or ""
+                    fname = sender.get("first_name") or message.get("chat", {}).get("first_name") or ""
+                    code, is_new = self.pairing_manager.create_or_get_pending(
+                        chat_id, username=uname, first_name=fname
+                    )
+                    if is_new and self.config.allowed_chat_ids:
+                        who = f"{escape_html(fname)} (@{escape_html(uname)})" if uname else (escape_html(fname) or "Telegram User")
+                        owner_kb = {
+                            "inline_keyboard": [
+                                [
+                                    {"text": "✅ Approve", "callback_data": f"pair:approve:{code}"},
+                                    {"text": "❌ Reject", "callback_data": f"pair:reject:{code}"},
+                                ]
+                            ]
+                        }
+                        for owner_id in sorted(self.config.allowed_chat_ids):
+                            await self._safe_send_message(
+                                chat_id=owner_id,
+                                text=(
+                                    f"🔐 <b>New DM Pairing Request</b>\n"
+                                    f"• <b>User:</b> {who}\n"
+                                    f"• <b>Chat ID:</b> <code>{chat_id}</code>\n"
+                                    f"• <b>Code:</b> <code>{code}</code>\n\n"
+                                    f"Tap a button below or run:\n"
+                                    f"<code>python -m gateway.pairing approve {code}</code>"
+                                ),
+                                reply_markup=owner_kb,
+                            )
+                    await self._safe_send_message(
+                        chat_id=chat_id,
+                        text=(
+                            "⛔ <b>Access Denied</b> — Pairing required.\n\n"
+                            f"• <b>Your Chat ID:</b> <code>{chat_id}</code>\n"
+                            f"• <b>Pairing Code:</b> <code>{code}</code>\n\n"
+                            f"Ask the owner to approve your request with:\n"
+                            f"<code>python -m gateway.pairing approve {code}</code>"
+                        ),
+                    )
+                else:
+                    await self._safe_send_message(
+                        chat_id=chat_id,
+                        text="⛔ <b>Access Denied</b>\nThis bot is private and your chat ID is not authorized.",
+                    )
                 return
 
             # Voice or audio message handling

@@ -1051,8 +1051,9 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
         await bot._safe_answer_callback_query(cq_id)
         return
 
-    # Check authorization whitelist
-    if not bot.config.is_chat_allowed(chat_id):
+    # Check authorization whitelist / DM pairing
+    authorized = bot.is_chat_authorized(chat_id) if hasattr(bot, "is_chat_authorized") else bot.config.is_chat_allowed(chat_id)
+    if not authorized:
         logger.warning("Unauthorized callback query from chat_id %d", chat_id)
         await bot._safe_answer_callback_query(cq_id, text="⛔ Access Denied", show_alert=True)
         return
@@ -1162,6 +1163,43 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
                         reply_to_id=message_id,
                     )
                 )
+    elif data.startswith("pair:"):
+        # Only primary configured owners (not paired guests) can approve/reject pairing requests
+        if not bot.config.is_chat_allowed(chat_id) or not hasattr(bot, "pairing_manager"):
+            await bot._safe_answer_callback_query(cq_id, text="⛔ Owner permission required", show_alert=True)
+            return
+        parts = data.split(":", 2)
+        if len(parts) == 3:
+            action, pcode = parts[1], parts[2].strip()
+            if action == "approve":
+                rec = bot.pairing_manager.approve_code(pcode)
+                if rec:
+                    await bot._safe_answer_callback_query(cq_id, text=f"✅ Approved chat {rec['chat_id']}")
+                    if message_id:
+                        await bot._safe_edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=f"✅ <b>Pairing Approved</b>\n• <b>Chat ID:</b> <code>{rec['chat_id']}</code>\n• <b>Code:</b> <code>{escape_html(pcode)}</code>",
+                        )
+                    await bot._safe_send_message(
+                        chat_id=int(rec["chat_id"]),
+                        text="✅ <b>Pairing Approved!</b>\nYou are now authorized. Send /help to get started.",
+                    )
+                else:
+                    await bot._safe_answer_callback_query(cq_id, text="⚠️ Code expired or already handled", show_alert=True)
+            elif action == "reject":
+                rec = bot.pairing_manager.reject_code(pcode)
+                if rec:
+                    await bot._safe_answer_callback_query(cq_id, text="❌ Rejected pairing request")
+                    if message_id:
+                        await bot._safe_edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=f"❌ <b>Pairing Rejected</b>\n• <b>Chat ID:</b> <code>{rec['chat_id']}</code>\n• <b>Code:</b> <code>{escape_html(pcode)}</code>",
+                        )
+                else:
+                    await bot._safe_answer_callback_query(cq_id, text="⚠️ Code expired or already handled", show_alert=True)
+
     elif data.startswith("unpin_ipc:"):
         target_proj = data[10:].strip()
         if message_id:

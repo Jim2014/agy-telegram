@@ -122,6 +122,8 @@ def test_run_interactive_setup_skip_network(tmp_path):
     saved = target.read_text(encoding="utf-8")
     assert "BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz" in saved
     assert "ALLOWED_CHAT_IDS=777888" in saved
+    assert "ALLOW_ALL_CHATS=false" in saved
+    assert "DM_PAIRING_ENABLED=true" in saved
     assert "AGY_BIN_PATH=/usr/local/bin/agy" in saved
     assert "HTML_MODE=explicit" in saved
     assert "TTS_MODE=autosend" in saved

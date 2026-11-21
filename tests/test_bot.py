@@ -17,6 +17,7 @@ def mock_bot(tmp_path):
         agy_working_dir=str(tmp_path),
         stream_throttle_seconds=0.01,
         sessions_file=str(tmp_path / "bot_sessions.json"),
+        pairing_file=str(tmp_path / "bot_pairing.json"),
     )
     bot = AgyTelegramBot(cfg)
     bot.client.send_message = AsyncMock(return_value={"message_id": 999})
@@ -213,9 +214,18 @@ async def test_bot_file_and_export_commands(mock_bot, tmp_path):
 
 @pytest.mark.asyncio
 async def test_bot_unauthorized_chat(mock_bot):
+    # 1. With DM pairing enabled (default), unauthorized chat gets a pairing code
     await mock_bot.process_update({"message": {"chat": {"id": 999}, "text": "Hello", "message_id": 1}})
+    last_call = mock_bot.client.send_message.call_args[1]
+    assert last_call["chat_id"] == 999
+    assert "Access Denied" in last_call["text"]
+    assert "Pairing Code" in last_call["text"]
+
+    # 2. With DM pairing disabled, unauthorized chat gets static private rejection
+    mock_bot.config.dm_pairing_enabled = False
+    await mock_bot.process_update({"message": {"chat": {"id": 998}, "text": "Hello", "message_id": 2}})
     mock_bot.client.send_message.assert_called_with(
-        chat_id=999,
+        chat_id=998,
         text="⛔ <b>Access Denied</b>\nThis bot is private and your chat ID is not authorized.",
     )
 
@@ -1515,6 +1525,56 @@ async def test_bot_html_mode_command_callbacks_and_behavior(mock_bot, monkeypatc
     mock_bot.client.send_document.reset_mock()
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "explain details", "message_id": 307}})
     assert mock_bot.client.send_document.called is True
+
+
+@pytest.mark.asyncio
+async def test_bot_dm_pairing_flow(mock_bot):
+    # Unknown chat 888 sends message -> denied with pairing code, owners (100, 200) notified
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({
+        "message": {
+            "chat": {"id": 888, "username": "guest", "first_name": "Guest"},
+            "from": {"id": 888, "username": "guest", "first_name": "Guest"},
+            "text": "hi",
+            "message_id": 401,
+        }
+    })
+    assert mock_bot.is_chat_authorized(888) is False
+
+    # Last message goes to guest 888 with Access Denied & Pairing Code
+    last_call = mock_bot.client.send_message.call_args[1]
+    assert last_call["chat_id"] == 888
+    assert "Access Denied" in last_call["text"]
+    assert "Pairing Code" in last_call["text"]
+
+    # Owner 100 received inline Approve/Reject notification
+    owner_calls = [c[1] for c in mock_bot.client.send_message.call_args_list if c[1]["chat_id"] == 100]
+    assert len(owner_calls) == 1
+    code_btn = owner_calls[0]["reply_markup"]["inline_keyboard"][0][0]
+    assert code_btn["callback_data"].startswith("pair:approve:")
+    pcode = code_btn["callback_data"].split(":")[-1]
+
+    # Non-owner cannot approve
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_unauth",
+            "from": {"id": 888},
+            "message": {"chat": {"id": 888}, "message_id": 500},
+            "data": f"pair:approve:{pcode}",
+        }
+    })
+    assert mock_bot.is_chat_authorized(888) is False
+
+    # Owner 100 clicks Approve -> chat 888 becomes authorized
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_approve",
+            "from": {"id": 100},
+            "message": {"chat": {"id": 100}, "message_id": 501},
+            "data": f"pair:approve:{pcode}",
+        }
+    })
+    assert mock_bot.is_chat_authorized(888) is True
 
 
 

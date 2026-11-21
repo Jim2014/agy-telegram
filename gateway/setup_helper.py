@@ -269,13 +269,24 @@ def run_interactive_setup(
                 print("  ⏱️ Timed out waiting for a Telegram message.")
 
     allowed_ids = _prompt_with_default(
-        "  ALLOWED_CHAT_IDS (comma-separated, empty = allow all)",
+        "  ALLOWED_CHAT_IDS (comma-separated, leave empty for deny-by-default DM pairing)",
         default=allowed_ids,
         input_fn=input_fn,
     ).replace(" ", "")
 
+    allow_all = "false"
+    dm_pairing = "true"
     if not allowed_ids:
-        print("  ⚠️ Warning: ALLOWED_CHAT_IDS is empty — anyone who finds your bot can access it.")
+        access_choice = _prompt_with_default(
+            "  No ALLOWED_CHAT_IDS set. Access policy: [1=DM Pairing (recommended), 2=Open Access (unsafe)]",
+            default="1",
+            input_fn=input_fn,
+        )
+        if access_choice.strip() == "2":
+            allow_all = "true"
+            print("  ⚠️ Open access enabled — anyone who finds your bot can access it.")
+        else:
+            print("  🔐 Deny-by-default + DM Pairing enabled. Approve senders via: python -m gateway.pairing approve <CODE>")
 
     # 3. agy Binary & Default Workspace
     print("\nStep 3: Antigravity CLI & Workspace Settings")
@@ -300,6 +311,8 @@ def run_interactive_setup(
     updates = {
         "BOT_TOKEN": bot_token,
         "ALLOWED_CHAT_IDS": allowed_ids,
+        "ALLOW_ALL_CHATS": allow_all,
+        "DM_PAIRING_ENABLED": dm_pairing,
         "AGY_BIN_PATH": agy_bin,
         "AGY_WORKING_DIR": working_dir,
         "HTML_MODE": html_mode,

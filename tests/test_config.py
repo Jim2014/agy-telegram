@@ -14,7 +14,9 @@ def test_default_config():
     assert cfg.agy_timeout_seconds == 300
     assert cfg.log_file == "runtime/gateway.log"
     assert cfg.sessions_file == "runtime/sessions.json"
-    assert cfg.is_chat_allowed(123456) is True
+    assert cfg.allow_all_chats is False
+    assert cfg.dm_pairing_enabled is True
+    assert cfg.is_chat_allowed(123456) is False
 
 
 def test_token_validation():
@@ -40,9 +42,13 @@ def test_chat_whitelist():
     assert cfg.is_chat_allowed(222) is True
     assert cfg.is_chat_allowed(333) is False
 
-    # Empty whitelist allows all
+    # Empty whitelist denies all by default
     cfg_empty = Config(allowed_chat_ids=set())
-    assert cfg_empty.is_chat_allowed(999) is True
+    assert cfg_empty.is_chat_allowed(999) is False
+
+    # Explicit open-access override allows all
+    cfg_open = Config(allowed_chat_ids=set(), allow_all_chats=True)
+    assert cfg_open.is_chat_allowed(999) is True
 
 
 def test_load_from_env_file(tmp_path):
