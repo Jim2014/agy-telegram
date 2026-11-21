@@ -7,6 +7,8 @@ from gateway.ipc_router import (
     format_incoming_envelope,
     format_pinned_accordion_card,
     format_return_envelope,
+    log_trace_span,
+    validate_ipc_call,
 )
 
 
@@ -165,3 +167,77 @@ def test_format_pinned_accordion_card_renders_markdown_and_prevents_nested_block
     assert "**Project Status" not in card
     assert card.count("<blockquote") == 1
     assert card.count("</blockquote>") == 1
+
+
+def test_validate_ipc_call_cycles_and_max_hops():
+    # Normal call passes
+    ok_call = IPCCall(target_project="learner", content="Check", source_project="admin", hop_count=2)
+    assert validate_ipc_call(ok_call, max_hops=3, visited_projects=("admin",)) is None
+
+    # Self-delegation blocked
+    self_call = IPCCall(target_project="admin", content="Loop", source_project="admin", hop_count=1)
+    res_self = validate_ipc_call(self_call, max_hops=3)
+    assert res_self is not None and res_self[0] == "CYCLE_DETECTED"
+
+    # Transitive cycle blocked (admin -> learner -> admin)
+    trans_call = IPCCall(target_project="admin", content="Return loop", source_project="learner", hop_count=2)
+    res_trans = validate_ipc_call(trans_call, max_hops=3, visited_projects=("admin", "learner"))
+    assert res_trans is not None and res_trans[0] == "CYCLE_DETECTED"
+    assert "admin -> learner -> admin" in res_trans[1]
+
+    # Exceeding max_hops blocked
+    deep_call = IPCCall(target_project="news", content="Too deep", source_project="learner", hop_count=4)
+    res_hop = validate_ipc_call(deep_call, max_hops=3, visited_projects=("admin", "learner"))
+    assert res_hop is not None and res_hop[0] == "MAX_HOPS_EXCEEDED"
+
+
+def test_extract_ipc_attrs_envelope_card_and_trace_jsonl(tmp_path):
+    import json
+
+    raw = '[AGY_IPC to="news" trace_id="tr1234567890abcd" hop="2" path="admin->learner"]Fetch headlines[END_AGY_IPC]'
+    _, calls = extract_ipc_calls(raw, default_source="learner")
+    assert len(calls) == 1
+    assert calls[0].trace_id == "tr1234567890abcd"
+    assert calls[0].hop_count == 2
+    assert calls[0].visited_projects == ("admin", "learner")
+
+    env = format_incoming_envelope(
+        source="learner",
+        target="news",
+        body="Fetch headlines",
+        hop_count=2,
+        trace_id="tr1234567890abcd",
+        visited_projects=("admin", "learner", "news"),
+    )
+    assert 'trace_id="tr1234567890abcd"' in env
+    assert 'path="admin->learner->news"' in env
+
+    card = format_pinned_accordion_card(
+        target_project="news",
+        source_project="learner",
+        task_preview="Fetch headlines",
+        tools_log=[],
+        status_text="Running",
+        trace_id="tr1234567890abcd",
+    )
+    assert "<code>tr123456</code>" in card
+
+    tf = tmp_path / "traces.jsonl"
+    rec = log_trace_span(
+        trace_id="tr1234567890abcd",
+        span_id="sp1122334455",
+        parent_span_id="sp0000000000",
+        operation="ipc_call",
+        status="SUCCESS",
+        duration_ms=42.5,
+        source_project="learner",
+        target_project="news",
+        hop=2,
+        trace_file=tf,
+    )
+    assert rec["trace_id"] == "tr1234567890abcd"
+    lines = tf.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    parsed = json.loads(lines[0])
+    assert parsed["parent_span_id"] == "sp0000000000"
+    assert parsed["duration_ms"] == 42.5

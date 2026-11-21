@@ -9,7 +9,7 @@ from gateway.agy_bridge import AgyBridge, AgyEvent
 def test_build_command():
     bridge = AgyBridge(agy_bin="/usr/bin/agy", default_working_dir="/workspace")
 
-    # Fresh session
+    # Fresh session defaults to sandboxed 'auto' mode
     cmd1 = bridge.build_command(prompt="hello")
     assert cmd1 == [
         "/usr/bin/agy",
@@ -17,7 +17,8 @@ def test_build_command():
         "stream-json",
         "--output-format",
         "stream-json",
-        "--dangerously-skip-permissions",
+        "--mode",
+        "auto",
         "--new-project",
         "--add-dir",
         "/workspace",
@@ -749,8 +750,8 @@ async def test_permission_preset_flags_and_warm_reuse_invalidation(monkeypatch, 
     assert parse_permission_preset("plan") == "plan"
     assert parse_permission_preset("bypass") == "turbo"
     assert parse_permission_preset("invalid-preset") is None
-    assert normalize_permission_preset(None) == "turbo"
-    assert normalize_permission_preset("invalid-preset") == "turbo"
+    assert normalize_permission_preset(None) == "auto"
+    assert normalize_permission_preset("invalid-preset") == "auto"
 
     bridge = AgyBridge(agy_bin="/usr/bin/agy", default_working_dir=str(tmp_path), keep_alive=True)
 

@@ -64,8 +64,8 @@ Generic multi-agent bot wrappers and remote terminal hacks often fall short when
 - **Rich Mobile-First Output & WebApp Viewer**: Converts Markdown to Telegram HTML, renders code/diffs/CSVs/directory trees as mobile-friendly standalone HTML (`/file -h`, `/dir`, `/html`), and serves previews in an embedded Telegram Mini App (`:8765`).
 - **Voice Interaction (Offline STT + Bilingual TTS)**: Transcribes Telegram voice messages offline via `faster-whisper` and generates spoken audio summaries (`[AGY_VOICE]`) with on-demand playback buttons or auto-send (`/voice`).
 - **One-Tap Setup & Hardened Access Control**: Interactive `./setup.sh` wizard with live token verification and automatic Chat ID detection, **deny-by-default** authorization with **DM pairing** (`gateway.pairing`), crash watchdog (`watchdog.sh`), and macOS LaunchAgent autostart.
-- **Cross-Project Multi-Agent Mesh (`AGY_IPC`)**: Dispatches tasks across registered project directories with pinned expandable progress cards in Telegram and audit logging (`runtime/ipc.log`).
-- **Automated Test Suite**: **178 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, CLI script safety, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
+- **Cross-Project Multi-Agent Mesh (`AGY_IPC`)**: Dispatches tasks across registered project directories with cycle detection, `max_hops` limits (`IPC_MAX_HOPS`), UUID `trace_id` propagation, pinned expandable progress cards, and structured audit/span logs (`runtime/ipc.log`, `runtime/traces.jsonl`).
+- **Automated Test Suite**: **181 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, CLI script safety, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
 
 ---
 
@@ -77,8 +77,8 @@ Generic multi-agent bot wrappers and remote terminal hacks often fall short when
 > 1. **Platform Testing Scope (macOS Tested Only):**
 >    `agy-telegram` has only been tested on **macOS** (Apple Silicon). It should also work on **Linux** or inside a **Virtual Machine / Container** (note: macOS-specific features like `launchd` autostart and `say` offline TTS fallback are skipped on Linux, while Edge-TTS works cross-platform), though non-macOS environments have not been formally tested.
 > 2. **Tool & Shell Execution Permissions (`AGY_PERMISSION_PRESET` / `/permissions`):**
->    By default (`AGY_PERMISSION_PRESET=turbo`), `agy-telegram` launches `agy` with `--dangerously-skip-permissions` so autonomous tool calls never hang waiting on an interactive terminal prompt. You can switch anytime via `/permissions` (or `/perm`) to **`auto`** (uses macOS/Linux's native OS terminal sandbox via `--mode auto`), **`accept-edits`** (`--mode accept-edits`), or **`plan`** (read-only planning via `--mode plan`).
->    - **Strongly Recommended:** Use `/permissions auto` (or `AGY_PERMISSION_PRESET=auto`) or run `agy-telegram` inside an **isolated container (Docker) or Virtual Machine (VM)** if you do not want unrestricted `turbo` execution on your host machine.
+>    By default (`AGY_PERMISSION_PRESET=auto`), `agy-telegram` launches `agy` with `--mode auto` (native OS terminal sandbox on macOS/Linux; workspace edits and safe reversible commands auto-approved while high-risk unsandboxed commands are blocked). You can switch anytime via `/permissions` (or `/perm`) to **`accept-edits`**, **`plan`** (read-only analysis), or **`turbo`** (`--dangerously-skip-permissions`).
+>    - **Strongly Recommended:** Keep `auto` (default) or run `agy-telegram` inside an **isolated container (Docker) or Virtual Machine (VM)** if you switch to unrestricted `turbo` mode.
 >    - Always keep `ALLOW_ALL_CHATS=false` and configure `ALLOWED_CHAT_IDS` + DM pairing so unauthorized Telegram users cannot reach your bot.
 
 ---
@@ -157,6 +157,7 @@ agy-telegram/
 │   ├── gateway.log       # Main gateway logs
 │   ├── gateway.pid       # Gateway process PID file
 │   ├── ipc.log           # Cross-project IPC audit log
+│   ├── traces.jsonl      # Structured OpenTelemetry-style turn & IPC spans
 │   ├── watchdog.log      # Watchdog logs
 │   ├── watchdog.pid      # Watchdog PID file
 │   └── sessions.json     # Persistent chat, project & stats store
@@ -218,7 +219,11 @@ AGY_WORKING_DIR=
 # Default model, reasoning effort, and permission preset (auto | accept-edits | plan | turbo)
 DEFAULT_MODEL=gemini-3.8-flash
 DEFAULT_EFFORT=high
-AGY_PERMISSION_PRESET=turbo
+AGY_PERMISSION_PRESET=auto
+
+# Cross-project IPC max hops & structured JSONL trace spans
+IPC_MAX_HOPS=3
+TRACES_FILE=runtime/traces.jsonl
 
 # Streaming edit throttle interval in seconds (default: 1.0)
 STREAM_THROTTLE_SECONDS=1.0
@@ -422,7 +427,7 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-Test coverage (**178 tests** across 17 test modules):
+Test coverage (**181 tests** across 17 test modules):
 - `tests/test_config.py`: Configuration loading, token validation, deny-by-default chat whitelist, default runtime paths, and system prompt overrides.
 - `tests/test_pairing.py`: DM pairing code lifecycle, expiration, atomic `0600` persistence, revocation, and CLI commands.
 - `tests/test_setup_helper.py`: Telegram `getMe` verification, `getUpdates` Chat ID auto-detection, `.env` rendering/permissions (`0600`), and interactive onboarding flow.
@@ -435,7 +440,7 @@ Test coverage (**178 tests** across 17 test modules):
 - `tests/test_agy_bridge.py`: Command construction, `stream-json` parsing, keep-alive process pooling, `steer()`, and project switching.
 - `tests/test_telegram_client.py`: API calls, HTML fallback, multipart uploads, voice downloads, and emoji reactions.
 - `tests/test_bot.py`: Slash command routing, unauthorized chat blocking, streaming pipeline, mid-flight steering rotation, voice/document handlers, TTS auto-send, and network error resilience.
-- `tests/test_ipc_router.py`: `[AGY_IPC]` parsing, envelope generation, pinned card formatting, and audit logging.
+- `tests/test_ipc_router.py`: `[AGY_IPC]` parsing, cycle & `max_hops` guardrails, envelope generation, pinned card formatting, and JSONL trace logging.
 - `tests/test_transcriber.py`: `faster-whisper` singleton caching and async audio transcription.
 - `tests/test_voice_tts.py`: Bilingual TTS synthesis and OGG Opus output.
 - `tests/test_restart_script.py`: `restart.sh` `--help`, `--status` alias, and unknown-flag rejection checks.

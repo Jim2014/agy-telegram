@@ -45,13 +45,18 @@ from gateway.commands import (
 from gateway.config import Config
 from gateway.pairing import PairingManager
 from gateway.ipc_router import (
+    DEFAULT_MAX_HOPS,
     IPCCall,
     IPCResult,
     extract_ipc_calls,
     format_incoming_envelope,
     format_pinned_accordion_card,
     format_return_envelope,
+    generate_span_id,
+    generate_trace_id,
     log_ipc_event,
+    log_trace_span,
+    validate_ipc_call,
 )
 from gateway.media_handlers import (
     handle_document_message as mh_handle_document_message,
@@ -784,18 +789,49 @@ class AgyTelegramBot:
         effective_model: Optional[str],
         effective_effort: Optional[str],
         effective_permission_preset: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        visited_projects: Optional[Tuple[str, ...]] = None,
     ) -> Tuple[str, List[IPCResult]]:
-        """Execute background cross-project IPC calls with pinned accordion cards and return injection."""
+        """Execute background cross-project IPC calls with cycle/hop guardrails, traces, and pinned cards."""
         session = self.session_manager.get_session(chat_id)
         results: List[IPCResult] = []
         return_envelopes: List[str] = []
+        eff_trace_id = trace_id or generate_trace_id()
+        base_visited = tuple(visited_projects) if visited_projects else (active_proj,)
+        max_hops = getattr(self.config, "ipc_max_hops", DEFAULT_MAX_HOPS)
+        trace_path = Path(getattr(self.config, "traces_file", "runtime/traces.jsonl"))
 
         for call in ipc_calls:
             target = call.target_project
-            if target not in session.projects:
-                avail = ", ".join(session.projects.keys()) or "none"
-                err_msg = f"Target project '{target}' is not registered in session. Available projects: {avail}"
-                logger.warning("IPC call failed: %s", err_msg)
+            child_span_id = generate_span_id()
+
+            violation = validate_ipc_call(call, max_hops=max_hops, visited_projects=base_visited)
+            if violation:
+                code, err_msg = violation
+                logger.warning("IPC call blocked (%s) [trace=%s]: %s", code, eff_trace_id[:8], err_msg)
+                log_ipc_event(
+                    active_proj,
+                    target,
+                    "BLOCKED",
+                    f"{code}: {err_msg} | hop={call.hop_count}",
+                    trace_id=eff_trace_id,
+                )
+                log_trace_span(
+                    trace_id=eff_trace_id,
+                    span_id=child_span_id,
+                    parent_span_id=parent_span_id,
+                    operation="ipc_call",
+                    status=code,
+                    duration_ms=0.0,
+                    source_project=active_proj,
+                    target_project=target,
+                    hop=call.hop_count,
+                    model=effective_model or "",
+                    permission_preset=effective_permission_preset or "",
+                    error=err_msg,
+                    trace_file=trace_path,
+                )
                 results.append(
                     IPCResult(
                         target_project=target,
@@ -803,6 +839,53 @@ class AgyTelegramBot:
                         status="ERROR",
                         response_content="",
                         error_message=err_msg,
+                        trace_id=eff_trace_id,
+                        span_id=child_span_id,
+                        hop_count=call.hop_count,
+                        blocked_reason=code,
+                    )
+                )
+                return_envelopes.append(
+                    format_return_envelope(
+                        source=target,
+                        target=active_proj,
+                        body=f"Error ({code}): {err_msg}",
+                        status="ERROR",
+                        trace_id=eff_trace_id,
+                    )
+                )
+                continue
+
+            if target not in session.projects:
+                avail = ", ".join(session.projects.keys()) or "none"
+                err_msg = f"Target project '{target}' is not registered in session. Available projects: {avail}"
+                logger.warning("IPC call failed [trace=%s]: %s", eff_trace_id[:8], err_msg)
+                log_trace_span(
+                    trace_id=eff_trace_id,
+                    span_id=child_span_id,
+                    parent_span_id=parent_span_id,
+                    operation="ipc_call",
+                    status="UNREGISTERED_PROJECT",
+                    duration_ms=0.0,
+                    source_project=active_proj,
+                    target_project=target,
+                    hop=call.hop_count,
+                    model=effective_model or "",
+                    permission_preset=effective_permission_preset or "",
+                    error=err_msg,
+                    trace_file=trace_path,
+                )
+                results.append(
+                    IPCResult(
+                        target_project=target,
+                        source_project=active_proj,
+                        status="ERROR",
+                        response_content="",
+                        error_message=err_msg,
+                        trace_id=eff_trace_id,
+                        span_id=child_span_id,
+                        hop_count=call.hop_count,
+                        blocked_reason="UNREGISTERED_PROJECT",
                     )
                 )
                 return_envelopes.append(
@@ -811,6 +894,7 @@ class AgyTelegramBot:
                         target=active_proj,
                         body=f"Error: {err_msg}",
                         status="ERROR",
+                        trace_id=eff_trace_id,
                     )
                 )
                 continue
@@ -819,13 +903,20 @@ class AgyTelegramBot:
             target_path = target_proj_info.get("path") or self.config.agy_working_dir or os.getcwd()
 
             # 1. Unpin old card if present, send fresh card with inline unpin button and pin it
-            log_ipc_event(active_proj, target, "DISPATCH", f"Task: {call.content[:100]} | hop={call.hop_count}")
+            log_ipc_event(
+                active_proj,
+                target,
+                "DISPATCH",
+                f"Task: {call.content[:100]} | hop={call.hop_count}",
+                trace_id=eff_trace_id,
+            )
             card_text = format_pinned_accordion_card(
                 target_project=target,
                 source_project=active_proj,
                 task_preview=call.content,
                 tools_log=[],
                 status_text="Starting background worker in workspace...",
+                trace_id=eff_trace_id,
             )
             old_pin_id = session.pinned_ipc_message_ids.get(target)
             if old_pin_id:
@@ -850,11 +941,14 @@ class AgyTelegramBot:
                     pass
 
             # 2. Run ephemeral worker in target workspace with clean isolated conversation
+            next_visited = base_visited + (target,)
             envelope_prompt = format_incoming_envelope(
                 source=active_proj,
                 target=target,
                 body=call.content,
                 hop_count=call.hop_count,
+                trace_id=eff_trace_id,
+                visited_projects=next_visited,
             )
 
             tools_log: List[str] = []
@@ -879,7 +973,7 @@ class AgyTelegramBot:
                         if event.conversation_id:
                             session.projects[target]["conversation_id"] = event.conversation_id
                             self.session_manager.save()
-                            log_ipc_event(target, active_proj, "INIT", f"Target conv_id={event.conversation_id}")
+                            log_ipc_event(target, active_proj, "INIT", f"Target conv_id={event.conversation_id}", trace_id=eff_trace_id)
 
                     elif event.type == "tool":
                         t_sum = format_tool_summary(
@@ -893,7 +987,7 @@ class AgyTelegramBot:
                                 tools_log[-1] = t_sum
                             else:
                                 tools_log.append(t_sum)
-                        log_ipc_event(target, active_proj, "TOOL", f"{event.tool_name} [{event.tool_state}]")
+                        log_ipc_event(target, active_proj, "TOOL", f"{event.tool_name} [{event.tool_state}]", trace_id=eff_trace_id)
 
                     elif event.type in ("text", "text_delta"):
                         target_accumulated_text += (event.text_delta or getattr(event, "content", "") or "")
@@ -920,6 +1014,7 @@ class AgyTelegramBot:
                             tools_log=tools_log,
                             status_text="Executing tools in workspace...",
                             duration_seconds=now - target_start,
+                            trace_id=eff_trace_id,
                         )
                         await self._safe_edit_message_text(
                             chat_id=chat_id,
@@ -945,6 +1040,22 @@ class AgyTelegramBot:
                 active_proj,
                 "COMPLETE" if not is_error else "FAILED",
                 f"Status: {'SUCCESS' if not is_error else 'ERROR'} | Duration: {dur:.2f}s | Summary: {final_body[:120]}",
+                trace_id=eff_trace_id,
+            )
+            log_trace_span(
+                trace_id=eff_trace_id,
+                span_id=child_span_id,
+                parent_span_id=parent_span_id,
+                operation="ipc_call",
+                status="ERROR" if is_error else "SUCCESS",
+                duration_ms=round(dur * 1000, 1),
+                source_project=active_proj,
+                target_project=target,
+                hop=call.hop_count,
+                model=effective_model or "",
+                permission_preset=effective_permission_preset or "",
+                error=error_reason if is_error else "",
+                trace_file=trace_path,
             )
 
             # 3. Update pinned card to final state (Completed 🟢 or Error 🔴)
@@ -958,6 +1069,7 @@ class AgyTelegramBot:
                 is_error=is_error,
                 duration_seconds=dur,
                 final_reply=final_body,
+                trace_id=eff_trace_id,
             )
             if pin_msg_id:
                 await self._safe_edit_message_text(
@@ -975,6 +1087,9 @@ class AgyTelegramBot:
                 duration_seconds=dur,
                 error_message=error_reason if is_error else "",
                 tools_executed=tools_log,
+                trace_id=eff_trace_id,
+                span_id=child_span_id,
+                hop_count=call.hop_count,
             )
             results.append(res)
 
@@ -984,6 +1099,7 @@ class AgyTelegramBot:
                     target=active_proj,
                     body=final_body if not is_error else f"Error in {target}: {error_reason}\nLogs:\n" + "\n".join(tools_log),
                     status="ERROR" if is_error else "SUCCESS",
+                    trace_id=eff_trace_id,
                 )
             )
 
@@ -1124,7 +1240,7 @@ class AgyTelegramBot:
         active_proj = session.active_project or "default"
         effective_model = session.model or self.config.default_model or None
         effective_effort = session.effort or self.config.default_effort or None
-        effective_permission_preset = session.permission_preset or getattr(self.config, "default_permission_preset", "turbo")
+        effective_permission_preset = session.permission_preset or getattr(self.config, "default_permission_preset", "auto")
         effective_dir = session.active_path() or self.config.agy_working_dir or None
 
         bridge = self.active_bridges.get(chat_id)
@@ -1141,6 +1257,8 @@ class AgyTelegramBot:
         created_files: List[Path] = []
         accumulated_text = ""
         start_time = time.time()
+        turn_trace_id = generate_trace_id()
+        turn_span_id = generate_span_id()
         last_edit_time = time.time()
         last_edited_content = ""
         final_event: Optional[AgyEvent] = None
@@ -1278,7 +1396,12 @@ class AgyTelegramBot:
             clean_text, agy_files = extract_agy_file_blocks(final_raw)
 
             # 2.5 Process cross-project [AGY_IPC] communication calls
-            clean_text, ipc_calls = extract_ipc_calls(clean_text, default_source=active_proj)
+            clean_text, ipc_calls = extract_ipc_calls(
+                clean_text,
+                default_source=active_proj,
+                default_trace_id=turn_trace_id,
+                default_visited=(active_proj,),
+            )
             if ipc_calls:
                 combined_return_text, ipc_results = await self._handle_ipc_calls(
                     chat_id=chat_id,
@@ -1288,6 +1411,9 @@ class AgyTelegramBot:
                     effective_model=effective_model,
                     effective_effort=effective_effort,
                     effective_permission_preset=effective_permission_preset,
+                    trace_id=turn_trace_id,
+                    parent_span_id=turn_span_id,
+                    visited_projects=(active_proj,),
                 )
                 if combined_return_text:
                     followup_text = ""
@@ -1325,6 +1451,20 @@ class AgyTelegramBot:
                         if blocks:
                             joined_blocks = "\n\n".join(blocks)
                             clean_text = f"{clean_text}\n\n{joined_blocks}".strip() if clean_text else joined_blocks
+
+            # Record root agent_turn structured trace span
+            log_trace_span(
+                trace_id=turn_trace_id,
+                span_id=turn_span_id,
+                operation="agent_turn",
+                status="ERROR" if (final_event and getattr(final_event, "status", "") == "ERROR") else "SUCCESS",
+                duration_ms=round((time.time() - start_time) * 1000, 1),
+                source_project=active_proj,
+                tokens=total_tokens,
+                model=effective_model or "",
+                permission_preset=effective_permission_preset or "",
+                trace_file=Path(getattr(self.config, "traces_file", "runtime/traces.jsonl")),
+            )
 
             # 3. Auto-export long responses as standalone HTML document (respecting per-chat html_mode)
             effective_html_mode = self.session_manager.normalize_html_mode(

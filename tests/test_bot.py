@@ -18,6 +18,7 @@ def mock_bot(tmp_path):
         stream_throttle_seconds=0.01,
         sessions_file=str(tmp_path / "bot_sessions.json"),
         pairing_file=str(tmp_path / "bot_pairing.json"),
+        traces_file=str(tmp_path / "traces.jsonl"),
     )
     bot = AgyTelegramBot(cfg)
     bot.client.send_message = AsyncMock(return_value={"message_id": 999})
@@ -1725,7 +1726,7 @@ async def test_bot_permissions_command_and_callback(mock_bot):
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/permissions", "message_id": 701}})
     text = mock_bot.client.send_message.call_args[1]["text"]
     assert "Permission Preset Setting" in text
-    assert "turbo" in text
+    assert "auto" in text
 
     # /perm auto switches session preset
     mock_bot.client.send_message.reset_mock()
@@ -1781,6 +1782,75 @@ async def test_bot_handle_prompt_forwards_permission_preset(mock_bot, monkeypatc
     await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "inspect codebase", "message_id": 707}})
 
     assert captured["permission_preset"] == "accept-edits"
+
+
+@pytest.mark.asyncio
+async def test_bot_ipc_guardrails_and_trace_correlation(mock_bot, tmp_path):
+    import json
+    from gateway.ipc_router import IPCCall
+
+    mock_bot.session_manager.create_project(100, "admin", str(tmp_path / "admin"))
+    mock_bot.session_manager.create_project(100, "learner", str(tmp_path / "learner"))
+    mock_bot.session_manager.open_project(100, "admin")
+
+    bridge = AgyBridge()
+    spawn_calls = []
+
+    async def mock_worker(**kwargs):
+        spawn_calls.append(kwargs)
+        yield AgyEvent(type="init", conversation_id="conv-worker-1")
+        yield AgyEvent(type="result", status="SUCCESS", response="Done from learner")
+
+    bridge.run_ephemeral_worker = mock_worker
+
+    # 1. Cycle call (admin -> admin) and over-max-hop call (hop=4 > 3) must be blocked without spawning workers
+    blocked_calls = [
+        IPCCall(target_project="admin", content="Self loop", source_project="admin", hop_count=1),
+        IPCCall(target_project="learner", content="Too deep", source_project="admin", hop_count=4),
+    ]
+    ret_env, res_list = await mock_bot._handle_ipc_calls(
+        chat_id=100,
+        ipc_calls=blocked_calls,
+        active_proj="admin",
+        bridge=bridge,
+        effective_model="gemini-4-neon",
+        effective_effort="high",
+        trace_id="traceabc12345678",
+        parent_span_id="spanroot0001",
+        visited_projects=("admin",),
+    )
+    assert len(spawn_calls) == 0
+    assert res_list[0].blocked_reason == "CYCLE_DETECTED"
+    assert res_list[1].blocked_reason == "MAX_HOPS_EXCEEDED"
+    assert "CYCLE_DETECTED" in ret_env and "MAX_HOPS_EXCEEDED" in ret_env
+
+    # 2. Valid IPC call spawns worker with trace_id/path envelope, shows trace in pinned card, and logs JSONL span
+    valid_call = IPCCall(target_project="learner", content="Run unit tests", source_project="admin", hop_count=1)
+    ret_ok, res_ok = await mock_bot._handle_ipc_calls(
+        chat_id=100,
+        ipc_calls=[valid_call],
+        active_proj="admin",
+        bridge=bridge,
+        effective_model="gemini-4-neon",
+        effective_effort="high",
+        effective_permission_preset="auto",
+        trace_id="traceabc12345678",
+        parent_span_id="spanroot0001",
+        visited_projects=("admin",),
+    )
+    assert len(spawn_calls) == 1
+    assert 'trace_id="traceabc12345678"' in spawn_calls[0]["prompt"]
+    assert 'path="admin->learner"' in spawn_calls[0]["prompt"]
+    assert res_ok[0].status == "SUCCESS"
+    assert res_ok[0].trace_id == "traceabc12345678"
+    assert "traceabc" in mock_bot.client.edit_message_text.call_args[1]["text"]
+
+    traces_file = Path(mock_bot.config.traces_file)
+    assert traces_file.is_file()
+    spans = [json.loads(line) for line in traces_file.read_text(encoding="utf-8").splitlines()]
+    assert len(spans) == 3
+    assert [s["status"] for s in spans] == ["CYCLE_DETECTED", "MAX_HOPS_EXCEEDED", "SUCCESS"]
+    assert all(s["trace_id"] == "traceabc12345678" and s["parent_span_id"] == "spanroot0001" for s in spans)
 
 
 

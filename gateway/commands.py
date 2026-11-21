@@ -303,7 +303,7 @@ async def handle_cmd_status(bot: Any, chat_id: int) -> None:
     active_path = session.active_path() or bot.config.agy_working_dir or os.getcwd()
     model_str = session.model or bot.config.default_model or "gemini-3.8-flash"
     effort_str = session.effort or bot.config.default_effort or "high"
-    perm_str = session.permission_preset or getattr(bot.config, "default_permission_preset", "turbo")
+    perm_str = session.permission_preset or getattr(bot.config, "default_permission_preset", "auto")
     busy_status = "🔴 Busy (Running prompt)" if session.is_busy else "🟢 Idle"
 
     # Startup time + uptime
@@ -428,7 +428,7 @@ async def handle_cmd_permissions(bot: Any, chat_id: int, arg: str = "", edit_mes
             bot.session_manager.set_permission_preset(chat_id, parsed)
         asyncio.create_task(bot.update_pinned_banner(chat_id))
 
-    cur_preset = session.permission_preset or getattr(bot.config, "default_permission_preset", "turbo")
+    cur_preset = session.permission_preset or getattr(bot.config, "default_permission_preset", "auto")
     cur_model = session.model or bot.config.default_model or "gemini-3.8-flash"
 
     text, reply_markup = build_permissions_keyboard(cur_preset, cur_model)

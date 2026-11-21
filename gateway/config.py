@@ -114,7 +114,9 @@ class Config:
     agy_working_dir: str = ""
     default_model: str = "gemini-3.8-flash"
     default_effort: str = "high"
-    default_permission_preset: str = "turbo"
+    default_permission_preset: str = "auto"
+    ipc_max_hops: int = 3
+    traces_file: str = "runtime/traces.jsonl"
     stream_throttle_seconds: float = 1.0
     agy_timeout_seconds: int = 300
     log_level: str = "INFO"
@@ -174,8 +176,13 @@ class Config:
         if default_effort not in ("low", "medium", "high"):
             default_effort = "medium"
         default_permission_preset = normalize_permission_preset(
-            os.getenv("AGY_PERMISSION_PRESET", "turbo")
+            os.getenv("AGY_PERMISSION_PRESET", "auto")
         )
+        try:
+            ipc_max_hops = max(1, int(os.getenv("IPC_MAX_HOPS", "3")))
+        except ValueError:
+            ipc_max_hops = 3
+        traces_file = os.getenv("TRACES_FILE", "runtime/traces.jsonl").strip() or "runtime/traces.jsonl"
 
         try:
             stream_throttle = float(os.getenv("STREAM_THROTTLE_SECONDS", "1.0"))
@@ -248,6 +255,8 @@ class Config:
             default_model=default_model,
             default_effort=default_effort,
             default_permission_preset=default_permission_preset,
+            ipc_max_hops=ipc_max_hops,
+            traces_file=traces_file,
             stream_throttle_seconds=stream_throttle,
             agy_timeout_seconds=agy_timeout,
             log_level=log_level,

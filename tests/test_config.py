@@ -10,7 +10,9 @@ def test_default_config():
     cfg = Config()
     assert cfg.default_model == "gemini-3.8-flash"
     assert cfg.default_effort == "high"
-    assert cfg.default_permission_preset == "turbo"
+    assert cfg.default_permission_preset == "auto"
+    assert cfg.ipc_max_hops == 3
+    assert cfg.traces_file == "runtime/traces.jsonl"
     assert cfg.stream_throttle_seconds == 1.0
     assert cfg.agy_timeout_seconds == 300
     assert cfg.log_file == "runtime/gateway.log"
@@ -127,6 +129,11 @@ def test_permission_preset_config(tmp_path):
     env_bad.write_text(
         "BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz\n"
         "AGY_PERMISSION_PRESET=unknown_mode\n"
+        "IPC_MAX_HOPS=5\n"
+        "TRACES_FILE=runtime/custom_traces.jsonl\n"
     )
-    assert Config.load(env_path=env_bad).default_permission_preset == "turbo"
+    cfg_bad = Config.load(env_path=env_bad)
+    assert cfg_bad.default_permission_preset == "auto"
+    assert cfg_bad.ipc_max_hops == 5
+    assert cfg_bad.traces_file == "runtime/custom_traces.jsonl"
 

@@ -59,8 +59,8 @@ def parse_permission_preset(raw: Optional[str]) -> Optional[str]:
 
 
 def normalize_permission_preset(preset: Optional[str]) -> str:
-    """Normalize a permission preset value, defaulting empty or unknown values to 'turbo'."""
-    return parse_permission_preset(preset) or "turbo"
+    """Normalize a permission preset value, defaulting empty or unknown values to 'auto'."""
+    return parse_permission_preset(preset) or "auto"
 
 
 @dataclass
