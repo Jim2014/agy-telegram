@@ -45,7 +45,7 @@ Generic multi-agent bot wrappers and remote terminal hacks often fall short when
 - **Voice Interaction (Offline STT + Bilingual TTS)**: Transcribes Telegram voice messages offline via `faster-whisper` and generates spoken audio summaries (`[AGY_VOICE]`) with on-demand playback buttons or auto-send (`/voice`).
 - **One-Tap Setup & Hardened Access Control**: Interactive `./setup.sh` wizard with live token verification and automatic Chat ID detection, **deny-by-default** authorization with **DM pairing** (`gateway.pairing`), crash watchdog (`watchdog.sh`), and macOS LaunchAgent autostart.
 - **Cross-Project Multi-Agent Mesh (`AGY_IPC`)**: Dispatches tasks across registered project directories with pinned expandable progress cards in Telegram and audit logging (`runtime/ipc.log`).
-- **Automated Test Suite**: **162 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
+- **Automated Test Suite**: **165 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, CLI script safety, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
 
 ---
 
@@ -399,7 +399,7 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-Test coverage (**162 tests** across 16 test modules):
+Test coverage (**165 tests** across 17 test modules):
 - `tests/test_config.py`: Configuration loading, token validation, deny-by-default chat whitelist, default runtime paths, and system prompt overrides.
 - `tests/test_pairing.py`: DM pairing code lifecycle, expiration, atomic `0600` persistence, revocation, and CLI commands.
 - `tests/test_setup_helper.py`: Telegram `getMe` verification, `getUpdates` Chat ID auto-detection, `.env` rendering/permissions (`0600`), and interactive onboarding flow.
@@ -415,6 +415,7 @@ Test coverage (**162 tests** across 16 test modules):
 - `tests/test_ipc_router.py`: `[AGY_IPC]` parsing, envelope generation, pinned card formatting, and audit logging.
 - `tests/test_transcriber.py`: `faster-whisper` singleton caching and async audio transcription.
 - `tests/test_voice_tts.py`: Bilingual TTS synthesis and OGG Opus output.
+- `tests/test_restart_script.py`: `restart.sh` `--help`, `--status` alias, and unknown-flag rejection checks.
 - `tests/test_smoke_agy.py`: Live `agy` CLI smoke test.
 
 ---

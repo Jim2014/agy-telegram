@@ -3,7 +3,7 @@
 # Usage:
 #   ./restart.sh          restart (or start) the gateway
 #   ./restart.sh stop     stop the gateway (and watchdog if running)
-#   ./restart.sh status   show whether gateway and watchdog are running
+#   ./restart.sh status   show whether gateway and watchdog are running (alias: --status)
 #   ./restart.sh watch    start the watchdog auto-restart supervisor
 #   ./restart.sh stop-watch stop only the watchdog supervisor
 #   ./restart.sh --detached   schedule kill+restart in a detached background
@@ -11,6 +11,7 @@
 #                             from a bot-spawned agy that is a child of the
 #                             gateway: the gateway is never killed in-place)
 #   ./restart.sh --check  config validation only
+#   ./restart.sh --help   show this help message
 set -u
 cd "$(dirname "$0")" || exit 1
 mkdir -p runtime
@@ -141,6 +142,20 @@ ensure_stopped() {
 }
 
 case "${1:-}" in
+    -h|--help|help)
+        echo "Usage: ./restart.sh [command]"
+        echo "  (no args)           Restart (or start) the gateway"
+        echo "  status | --status   Show gateway, launchd, watchdog, and WebApp health"
+        echo "  stop | --stop       Stop the gateway (and watchdog if running)"
+        echo "  watch | --watch     Start the watchdog auto-restart supervisor"
+        echo "  stop-watch          Stop only the watchdog supervisor"
+        echo "  autostart           Enable macOS LaunchAgent autostart"
+        echo "  autostart-disable   Disable macOS LaunchAgent autostart"
+        echo "  autostart-status    Check macOS LaunchAgent status"
+        echo "  --check             Validate configuration only"
+        echo "  --detached          Schedule a detached restart safely"
+        exit 0
+        ;;
     --check)
         $PY_BIN main.py --check-config
         exit $?
@@ -151,7 +166,7 @@ case "${1:-}" in
     autostart-disable|disable-autostart|uninstall-service|uninstall-autostart)
         disable_autostart
         ;;
-    autostart-status)
+    autostart-status|--autostart-status)
         if [ -f "$LAUNCHD_PLIST" ]; then
             if is_launchd_loaded; then
                 echo "🚀 Autostart: Enabled & Loaded in launchd ($LAUNCHD_LABEL)"
@@ -163,7 +178,7 @@ case "${1:-}" in
         fi
         exit 0
         ;;
-    stop)
+    stop|--stop)
         ensure_watchdog_stopped
         if is_launchd_loaded; then
             echo "🛑 Stopping gateway via launchctl..."
@@ -173,12 +188,12 @@ case "${1:-}" in
         echo "🛑 Gateway and watchdog stopped."
         exit 0
         ;;
-    stop-watch)
+    stop-watch|--stop-watch)
         ensure_watchdog_stopped
         echo "🛑 Watchdog stopped."
         exit 0
         ;;
-    watch)
+    watch|--watch)
         if [ -f "$WATCHDOG_PIDFILE" ]; then
             wpid=$(cat "$WATCHDOG_PIDFILE" 2>/dev/null || true)
             if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
@@ -200,7 +215,7 @@ case "${1:-}" in
         fi
         exit 0
         ;;
-    status)
+    status|--status)
         active_pid=""
         if [ -f "$PIDFILE" ]; then
             active_pid=$(cat "$PIDFILE" 2>/dev/null || true)
@@ -288,6 +303,14 @@ case "${1:-}" in
         # through to the inline restart below; the watchdog is resumed after.
         ensure_watchdog_stopped
         RESTART_WATCH=1
+        ;;
+    "")
+        # Default: restart (or start) the gateway
+        ;;
+    *)
+        echo "❌ Unknown command or flag: $1"
+        echo "Run './restart.sh --help' for valid options."
+        exit 1
         ;;
 esac
 
