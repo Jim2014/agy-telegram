@@ -252,7 +252,31 @@ case "${1:-}" in
         # Fire-and-forget: hand the kill+restart to an independent background
         # process so THIS caller (which may itself be a child of the gateway,
         # e.g. a bot-spawned agy) never kills its own ancestor in place.
+        # If an active agy turn is in progress, queue runtime/restart.requested
+        # so the gateway delivers the full final report first before restarting!
         SELF_ABS="$(cd "$(dirname "$0")" && pwd)/restart.sh"
+        TURN_LOCK="runtime/turn_active.lock"
+        RESTART_FLAG="runtime/restart.requested"
+        gw_alive=0
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null || true)" 2>/dev/null; then
+            gw_alive=1
+        elif is_launchd_loaded; then
+            lpid=$(launchctl list | awk -v lbl="$LAUNCHD_LABEL" '$3 == lbl {print $1}')
+            if [ -n "$lpid" ] && [ "$lpid" != "-" ]; then
+                gw_alive=1
+            fi
+        fi
+
+        if [ "$gw_alive" -eq 1 ] && [ -f "$TURN_LOCK" ]; then
+            touch "$RESTART_FLAG"
+            # Safety fallback after 120s in case the active turn hangs unexpectedly
+            nohup bash -c "sleep 120; if [ -f '$RESTART_FLAG' ]; then rm -f '$RESTART_FLAG' '$TURN_LOCK'; exec '$SELF_ABS' --do-restart; fi" >/dev/null 2>&1 &
+            disown 2>/dev/null || true
+            echo "🔄 Active turn detected — restart queued."
+            echo "   Gateway will restart automatically right after delivering the final report."
+            exit 0
+        fi
+
         nohup bash -c "sleep 1; exec '$SELF_ABS' --do-restart" >/dev/null 2>&1 &
         disown 2>/dev/null || true
         echo "🔄 Restart scheduled in background (detached)."

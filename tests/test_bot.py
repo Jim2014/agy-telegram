@@ -1577,6 +1577,41 @@ async def test_bot_dm_pairing_flow(mock_bot):
     assert mock_bot.is_chat_authorized(888) is True
 
 
+@pytest.mark.asyncio
+async def test_bot_deferred_restart_after_final_report(mock_bot, monkeypatch):
+    """Verify a queued restart waits until after the final report is sent to Telegram."""
+    events_order = []
+
+    async def mock_edit_record(chat_id, message_id, text, **kwargs):
+        if "Final deferred report" in text:
+            events_order.append("final_report_sent")
+        return {"message_id": message_id}
+
+    mock_bot.client.edit_message_text = AsyncMock(side_effect=mock_edit_record)
+
+    def mock_spawn_restart():
+        events_order.append("restart_spawned")
+
+    monkeypatch.setattr(mock_bot, "_spawn_detached_restart", mock_spawn_restart)
+
+    async def mock_stream(self, prompt, **kwargs):
+        yield AgyEvent(type="init", conversation_id="conv-restart-1")
+        # Turn lock must exist while agy is running
+        assert mock_bot._turn_lock_file.is_file() is True
+        # Simulate restart.sh --detached queuing restart.requested mid-turn
+        mock_bot._restart_flag_file.write_text("1", encoding="utf-8")
+        assert "restart_spawned" not in events_order
+        yield AgyEvent(type="result", response="Final deferred report body", duration_seconds=0.5)
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream)
+
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "update and restart", "message_id": 601}})
+
+    assert events_order == ["final_report_sent", "restart_spawned"]
+    assert mock_bot._turn_lock_file.exists() is False
+    assert mock_bot._restart_flag_file.exists() is False
+
+
 
 
 

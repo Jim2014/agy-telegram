@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -107,6 +108,10 @@ class AgyTelegramBot:
         self.active_bridges: Dict[int, AgyBridge] = {}
         self.active_progress_messages: Dict[int, int] = {}
         self.active_reply_to_ids: Dict[int, Optional[int]] = {}
+        self._active_prompt_count: int = 0
+        self._runtime_dir: Path = Path(config.sessions_file).parent if config.sessions_file else Path("runtime")
+        self._turn_lock_file: Path = self._runtime_dir / "turn_active.lock"
+        self._restart_flag_file: Path = self._runtime_dir / "restart.requested"
         self.running = False
         self.bot_info: Dict[str, Any] = {}
         self.started_at = time.time()
@@ -409,6 +414,7 @@ class AgyTelegramBot:
             return
 
         self.running = True
+        self._clear_stale_turn_markers()
         print("🚀 agy-telegram gateway is running! Press Ctrl+C to stop.\n")
 
         if self.webapp_server:
@@ -466,6 +472,30 @@ class AgyTelegramBot:
     async def shutdown(self) -> None:
         """Gracefully shutdown the bot (alias for stop)."""
         await self.stop()
+
+    def _clear_stale_turn_markers(self) -> None:
+        """Remove stale turn/restart lock files on startup."""
+        for p in (self._turn_lock_file, self._restart_flag_file):
+            try:
+                p.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def _spawn_detached_restart(self) -> None:
+        """Launch restart.sh --do-restart in a detached session after final response delivery."""
+        restart_script = Path(__file__).resolve().parent.parent / "restart.sh"
+        if not restart_script.is_file():
+            logger.warning("Cannot execute deferred restart: %s not found.", restart_script)
+            return
+        logger.info("Executing deferred gateway restart now that final report has been delivered.")
+        subprocess.Popen(
+            [str(restart_script), "--do-restart"],
+            cwd=str(restart_script.parent),
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
     def is_chat_authorized(self, chat_id: int) -> bool:
         """Check if chat_id is in config allowlist or approved via DM pairing."""
@@ -1052,6 +1082,13 @@ class AgyTelegramBot:
                 session = self.session_manager.get_session(chat_id)
 
         self.session_manager.set_busy(chat_id, True)
+        self._active_prompt_count += 1
+        try:
+            self._runtime_dir.mkdir(parents=True, exist_ok=True)
+            self._turn_lock_file.write_text(str(os.getpid()), encoding="utf-8")
+        except Exception:
+            pass
+        turn_post_tasks: List[asyncio.Task] = []
         session.pending_decisions = []
         session.pending_actions = []
         asyncio.create_task(self.update_pinned_banner(chat_id, is_busy=True))
@@ -1337,6 +1374,9 @@ class AgyTelegramBot:
                 has_exports = bool(valid_exports or auto_export_content)
                 voice_block = distill_spoken_summary(clean_text, has_exports=has_exports, max_chars=1200)
 
+            target_msg_id = self.active_progress_messages.get(chat_id, msg_id)
+            target_reply_id = self.active_reply_to_ids.get(chat_id, reply_to_id)
+
             voice_btn: Optional[Dict[str, Any]] = None
             voice_id: Optional[str] = None
             if voice_block and getattr(self.config, "tts_enabled", True):
@@ -1347,22 +1387,20 @@ class AgyTelegramBot:
                     text=voice_block.text,
                     lang=voice_block.lang,
                 )
-            target_msg_id = self.active_progress_messages.get(chat_id, msg_id)
-            target_reply_id = self.active_reply_to_ids.get(chat_id, reply_to_id)
-
-            # If triggered by voice input, ALWAYS autosend the voice response regardless of configuration
-            if is_voice_input or effective_tts_mode in ("autosend", "autoplay", "direct", "auto"):
-                asyncio.create_task(
-                    self._generate_and_send_voice(
-                        chat_id=chat_id,
-                        text=voice_block.text,
-                        lang=voice_block.lang,
-                        voice_id=voice_id,
-                        reply_to_id=target_reply_id,
+                # If triggered by voice input, ALWAYS autosend the voice response regardless of configuration
+                if is_voice_input or effective_tts_mode in ("autosend", "autoplay", "direct", "auto"):
+                    v_task = asyncio.create_task(
+                        self._generate_and_send_voice(
+                            chat_id=chat_id,
+                            text=voice_block.text,
+                            lang=voice_block.lang,
+                            voice_id=voice_id,
+                            reply_to_id=target_reply_id,
+                        )
                     )
-                )
-            elif effective_tts_mode in ("ondemand", "autogen", "script", "manual"):
-                voice_btn = build_voice_play_button(voice_id)
+                    turn_post_tasks.append(v_task)
+                elif effective_tts_mode in ("ondemand", "autogen", "script", "manual"):
+                    voice_btn = build_voice_play_button(voice_id)
 
             # 5. Extract [AGY_ACTIONS] suggested next steps from clean_text
             clean_text, action_items = extract_agy_action_blocks(clean_text)
@@ -1518,7 +1556,29 @@ class AgyTelegramBot:
             self.active_progress_messages.pop(chat_id, None)
             self.active_reply_to_ids.pop(chat_id, None)
             self.session_manager.set_busy(chat_id, False)
-            asyncio.create_task(self.update_pinned_banner(chat_id, is_busy=False))
+            banner_task = asyncio.create_task(self.update_pinned_banner(chat_id, is_busy=False))
+            turn_post_tasks.append(banner_task)
+
+            self._active_prompt_count = max(0, self._active_prompt_count - 1)
+            if self._active_prompt_count == 0:
+                try:
+                    self._turn_lock_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                if self._restart_flag_file.is_file():
+                    try:
+                        self._restart_flag_file.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    if turn_post_tasks:
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.gather(*turn_post_tasks, return_exceptions=True),
+                                timeout=15.0,
+                            )
+                        except Exception:
+                            pass
+                    self._spawn_detached_restart()
 
 
 if __name__ == "__main__":

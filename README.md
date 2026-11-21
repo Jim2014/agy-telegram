@@ -43,7 +43,7 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
     - **Watchdog Supervisor & macOS Autostart**: Includes `watchdog.sh` (`./restart.sh watch`) for crash auto-recovery within 10 seconds, plus macOS LaunchAgent integration (`./restart.sh autostart`).
     - `/stop` immediately interrupts the active `agy` subprocess.
     - Automatic Telegram 4096-character chunk splitting, rate-limit throttling, and HTML fallback handling.
-    - Comprehensive test suite (**161 tests** covering unit, network resilience, protocol parsing, onboarding setup, DM pairing, and real `agy` CLI smoke testing). See [ROADMAP.md](ROADMAP.md) for planned milestones.
+    - Comprehensive test suite (**162 tests** covering unit, network resilience, protocol parsing, onboarding setup, DM pairing, deferred restarts, and real `agy` CLI smoke testing). See [ROADMAP.md](ROADMAP.md) for planned milestones.
 11. **Cross-Project Multi-Agent Mesh (`AGY_IPC`) & Pinned Expandable Cards**:
     - **Decentralized Cross-Workspace Collaboration**: Agents can dispatch sub-tasks across registered project directories via `[AGY_IPC to="<target>"]...[END_AGY_IPC]` envelopes (`[AGY_INCOMING]`) and automatically return results to the main chat.
     - **Dedicated Pinned Progress Cards**: Maintains per-project pinned expandable cards (`<blockquote expandable>`) in Telegram tracking live tool execution and elapsed duration.
@@ -380,7 +380,7 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-Test coverage (**161 tests** across 16 test modules):
+Test coverage (**162 tests** across 16 test modules):
 - `tests/test_config.py`: Configuration loading, token validation, deny-by-default chat whitelist, default runtime paths, and system prompt overrides.
 - `tests/test_pairing.py`: DM pairing code lifecycle, expiration, atomic `0600` persistence, revocation, and CLI commands.
 - `tests/test_setup_helper.py`: Telegram `getMe` verification, `getUpdates` Chat ID auto-detection, `.env` rendering/permissions (`0600`), and interactive onboarding flow.
