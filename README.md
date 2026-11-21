@@ -1,5 +1,10 @@
 # agy-telegram — Direct Telegram Gateway for agy (Antigravity CLI)
 
+[![Tests](https://github.com/Jim2014/agy-telegram/actions/workflows/test.yml/badge.svg)](https://github.com/Jim2014/agy-telegram/actions/workflows/test.yml)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
+![Zero Open Ports](https://img.shields.io/badge/network-zero%20open%20ports-informational.svg)
+
 A lightweight, real-time Telegram gateway for interacting directly with `agy` (Antigravity CLI) from Telegram. Stream **thinking progress, tool calls, and live partial outputs**, send **mid-flight steering instructions**, and control workspaces with `/` slash commands — without any intermediate proxy overhead.
 
 ---
@@ -7,6 +12,8 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
 ## Table of Contents
 - [Live Demos](#live-demos)
 - [Why agy-telegram?](#why-agy-telegram)
+- [Engineering Challenges Solved](#engineering-challenges-solved)
+- [System Architecture & Execution Flow](#system-architecture--execution-flow)
 - [Main Features](#main-features)
 - [⚠️ Limitations & Security Notice](#%EF%B8%8F-limitations--security-notice)
 - [Prerequisites](#prerequisites)
@@ -55,6 +62,71 @@ Generic multi-agent bot wrappers and remote terminal hacks often fall short when
 
 ---
 
+## Engineering Challenges Solved
+
+- **Zero-Proxy Bidirectional `stream-json` Steering & Warm Process Pool (`gateway/agy_bridge.py`):** A single-coroutine stdout reader queue prevents asyncio `readuntil()` collisions while allowing live `stdin` steering and keeping the active `agy` subprocess warm across turns—automatically restarting whenever the model, reasoning effort, permission preset, or workspace changes.
+- **Follow-Up Prompt Deduplication (`gateway/agy_bridge.py`, `gateway/config.py`):** Injects the full ~6.9 KB output protocol guide only on fresh sessions, while resumed and warm-reused turns receive only a compact single-line `COMPACT_TURN_REMINDER` (~96% per-turn protocol token overhead reduction).
+- **Defense-in-Depth Security & Zero Listening Ports (`gateway/session_manager.py`, `gateway/pairing.py`, `main.py`):** Defaults to `agy --mode auto` (native OS terminal sandbox), isolates `permission_preset` per project so an elevated `turbo` workspace never leaks into cross-project IPC or scheduled runs, enforces deny-by-default DM pairing with `0600` atomic stores, redacts `/bot<token>` URLs from logs, and delivers standalone mobile HTML directly via Telegram with zero open local HTTP ports.
+- **Loop-Safe Multi-Hop `AGY_IPC` Mesh & Structured Span Tracing (`gateway/ipc_router.py`, `gateway/bot.py`):** Enforces server-side hop depth (`max(hop_count, len(visited))`), self-delegation and transitive cycle detection, non-clobbering ephemeral workers (`last_ipc_conversation_id`), and auto-rotated `runtime/traces.jsonl` logging `agent_turn`, nested `ipc_call`, and `scheduled_task` spans across `SUCCESS`, `TIMEOUT`, `ERROR`, and `CANCELLED` exits.
+- **Concurrency-Safe Orchestration & Self-Restart Handshake (`gateway/bot.py`, `gateway/telegram_client.py`, `restart.sh`):** Per-chat `asyncio.Lock` eliminates double-message admission races, `getUpdates` propagates HTTP `409 Conflict` for clean polling backoff, `/busy` switches cleanly between immediate `steer` and FIFO `queue` draining, and `runtime/turn_active.lock` + `runtime/restart.requested` defers restarts until active final reports finish sending.
+- **Zero-Dependency Cron & Quiet Heartbeat Scheduler (`gateway/scheduler.py`):** Pure-Python interval (`30m`, `6h`, `1d`) and POSIX 5-field cron matcher (`0 8 * * 1-5`) with per-task overlap protection, isolated ephemeral workers, and `HEARTBEAT_OK` alert suppression.
+
+---
+
+## System Architecture & Execution Flow
+
+### Overall Gateway Architecture
+
+```mermaid
+flowchart LR
+    TG["Telegram Bot API (Long-Polling + 409 Backoff)"] <--> SEC["Security Gate (Whitelist + DM Pairing + Token Redaction)"]
+    SEC <--> BOT["AgyTelegramBot Orchestrator (Per-Chat Lock + Steer / Queue)"]
+    BOT --> BRIDGE["Warm AgyBridge Pool (stream-json + Compact Reminder)"]
+    BRIDGE --> AGY["agy CLI (--mode auto / Per-Project Presets)"]
+    BOT --> IPC["AGY_IPC Mesh (Cycle & Server-Side Max-Hops Guards)"]
+    SCHED["TaskScheduler (Interval / POSIX Cron + HEARTBEAT_OK)"] --> WORKER["Isolated Ephemeral Workers (Per-Project Preset)"]
+    IPC --> WORKER
+    BOT --> OUT["Mobile Standalone HTML & Bilingual Voice Notes"]
+    BOT --> OBS["Auto-Rotated runtime/traces.jsonl & runtime/ipc.log"]
+    WORKER --> OBS
+```
+
+### Mid-Flight Steering, Queue Policy & Multi-Hop IPC Sequence
+
+```mermaid
+sequenceDiagram
+    participant U as Telegram User
+    participant B as AgyTelegramBot
+    participant P as Warm AgyBridge
+    participant R as ipc_router
+    participant W as Ephemeral Worker
+
+    U->>B: Send Turn 1 prompt
+    B->>B: Acquire per-chat lock & mark busy
+    B->>P: Launch agy with full DEFAULT_SYSTEM_PROMPT
+    P-->>B: Stream tool calls & partial deltas
+    U->>B: Send follow-up message while busy
+    alt Busy Policy = steer
+        B->>P: Inject steering via stdin & rotate progress card
+    else Busy Policy = queue
+        B-->>U: Acknowledge FIFO queue position (#N)
+    end
+    P-->>B: Emit result (with optional AGY_IPC block)
+    opt Cross-project AGY_IPC present
+        B->>R: Validate cycle & server-side hop depth
+        R-->>B: Allowed (trace_id & span_id attached)
+        B->>W: Run isolated worker under target project preset
+        W-->>B: Return result (preserve target conversation_id)
+    end
+    B->>B: Write root & child spans to runtime/traces.jsonl
+    B-->>U: Deliver final report, standalone HTML & audio
+    opt Queued messages waiting
+        B->>B: Drain next queued turn sequentially
+    end
+```
+
+---
+
 ## Main Features
 
 - **Direct Real-Time Streaming via Telegram**: Built on Telegram Long-Polling (no public IP or webhook required) to stream `agy` thinking progress, live tool calls, and partial outputs directly to mobile.
@@ -87,7 +159,7 @@ Generic multi-agent bot wrappers and remote terminal hacks often fall short when
 ## Disclaimer
 
 - **Terms Compliance & Personal Single-User Use:** `agy-telegram` invokes the official, unmodified local `agy` CLI binary in headless mode and does **not** extract, scrape, or proxy Google OAuth tokens. Users are responsible for complying with Google Antigravity's Terms of Service—keep `ALLOW_ALL_CHATS=false` with `ALLOWED_CHAT_IDS` restricted strictly to **your own personal Telegram account**, and do not use this gateway for multi-user sharing, quota harvesting, or commercial redistribution.
-- **Use at Your Own Risk:** This software is provided *"AS IS"*, without warranty of any kind. Because `agy-telegram` enables autonomous AI execution with unrestricted local tool and shell permissions (`--dangerously-skip-permissions`), **you are solely responsible** for any commands executed, files modified or deleted, system changes, API/model quota usage, or unintended behavior resulting from running this tool. The author and contributors assume no liability for any damages or data loss.
+- **Use at Your Own Risk:** This software is provided *"AS IS"*, without warranty of any kind. Because `agy-telegram` enables autonomous AI execution with local tool and shell permissions (sandboxed `--mode auto` by default, and optionally unrestricted `--dangerously-skip-permissions` in `turbo` mode), **you are solely responsible** for any commands executed, files modified or deleted, system changes, API/model quota usage, or unintended behavior resulting from running this tool. The author and contributors assume no liability for any damages or data loss.
 - **No Official Affiliation:** `agy-telegram` is an independent open-source project and is not affiliated with, endorsed by, or officially connected to Google, Antigravity, or Telegram.
 
 ---

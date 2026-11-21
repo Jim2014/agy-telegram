@@ -31,3 +31,9 @@ jobs:
 
       - name: Run pytest suite
         run: pytest -v
+
+      - name: Run standalone module self-tests
+        run: |
+          python -m gateway.scheduler --self-test
+          python -m gateway.ipc_router
+          python -m gateway.session_manager
