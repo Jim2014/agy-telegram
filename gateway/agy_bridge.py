@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import sys
@@ -14,6 +15,20 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+_EFFORT_SUFFIX_RE = re.compile(r"-(low|medium|high|xhigh|max)$", re.IGNORECASE)
+
+
+def model_supports_effort(model: Optional[str]) -> bool:
+    """Return False when the model manages reasoning effort internally or pins it in its ID."""
+    if not model:
+        return True
+    normalized = model.strip().lower()
+    if "orchestrator" in normalized:
+        return False
+    if _EFFORT_SUFFIX_RE.search(normalized):
+        return False
+    return True
 
 
 @dataclass
@@ -123,7 +138,7 @@ class AgyBridge:
         if model:
             cmd.extend(["--model", model])
 
-        if effort:
+        if effort and model_supports_effort(model):
             cmd.extend(["--effort", effort])
 
         return cmd
@@ -214,6 +229,7 @@ class AgyBridge:
                 break
 
         effective_dir = working_dir or self.default_working_dir
+        effective_effort = effort if model_supports_effort(model) else None
         can_reuse = (
             self.is_running()
             and self._current_process is not None
@@ -222,7 +238,7 @@ class AgyBridge:
             and (self._current_conv_id == conversation_id)
             and self._current_working_dir == effective_dir
             and self._current_model == model
-            and self._current_effort == effort
+            and self._current_effort == effective_effort
             and self._reader_task is not None
             and not self._reader_task.done()
         )
@@ -274,7 +290,7 @@ class AgyBridge:
                 self._current_conv_id = conversation_id
                 self._current_working_dir = effective_dir
                 self._current_model = model
-                self._current_effort = effort
+                self._current_effort = effective_effort
                 self._reader_task = asyncio.create_task(self._stdout_reader(process))
             except FileNotFoundError:
                 err_msg = f"agy binary not found at: {self.agy_bin}"
@@ -298,6 +314,7 @@ class AgyBridge:
                 process.stdin.write(init_payload.encode("utf-8"))
                 await process.stdin.drain()
 
+        got_result = False
         try:
             # Stream events from dedicated event queue
             while True:
@@ -309,6 +326,7 @@ class AgyBridge:
                     break
 
                 if event.type == "result":
+                    got_result = True
                     async with self._lock:
                         self._pending_turns -= 1
                         has_more_turns = (self._pending_turns > 0)
@@ -334,19 +352,23 @@ class AgyBridge:
                         # Final result for the entire exchange
                         yield event
                         if self.keep_alive:
-                            self._start_idle_timer()
+                            if event.status == "ERROR" and process.returncode is not None:
+                                self._current_process = None
+                            else:
+                                self._start_idle_timer()
                         break
                 else:
                     yield event
 
-            if not self.keep_alive:
+            if not self.keep_alive or (not got_result and not self._is_stopped):
                 await process.wait()
 
                 # Check if non-zero exit and no result event was generated
-                if process.returncode != 0 and not self._is_stopped:
+                if process.returncode != 0 and not self._is_stopped and not got_result:
                     stderr_bytes = await process.stderr.read()
                     stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
                     logger.warning("agy exited with code %d. Stderr: %s", process.returncode, stderr_text)
+                    self._current_process = None
                     if stderr_text:
                         yield AgyEvent(
                             type="error",
@@ -439,11 +461,15 @@ class AgyBridge:
 
         elif event_name == "result":
             res = data.get("result", {})
+            response_text = res.get("response", "")
+            error_text = res.get("error", "")
+            if not response_text and error_text:
+                response_text = f"⚠️ agy error: {error_text}"
             return AgyEvent(
                 type="result",
                 conversation_id=res.get("conversation_id"),
                 status=res.get("status", "SUCCESS"),
-                response=res.get("response", ""),
+                response=response_text,
                 duration_seconds=res.get("duration_seconds"),
                 usage=res.get("usage", {}),
                 payload=res,

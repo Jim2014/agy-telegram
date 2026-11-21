@@ -41,6 +41,49 @@ def test_build_command():
     assert "/custom/dir" in cmd2
 
 
+def test_build_command_omits_effort_for_orchestrator_and_pinned_models():
+    from gateway.agy_bridge import model_supports_effort
+
+    bridge = AgyBridge(agy_bin="/usr/bin/agy", default_working_dir="/workspace")
+
+    # Orchestrator and effort-suffixed models must NOT pass --effort
+    for model_id in (
+        "gemini-pro-orchestrator-neon",
+        "gemini-pro-orchestrator-g1-pro",
+        "gemini-4-neon-xhigh",
+        "claude-opus-5-5-low",
+        "gpt-oss-120b-medium",
+    ):
+        assert model_supports_effort(model_id) is False
+        cmd = bridge.build_command(prompt="hi", model=model_id, effort="high")
+        assert "--model" in cmd and model_id in cmd
+        assert "--effort" not in cmd
+
+    # Standard configurable models DO pass --effort
+    for model_id in ("gemini-4-neon", "gemini-4-hydrogen", "gemini-3.8-flash", None):
+        assert model_supports_effort(model_id) is True
+        cmd = bridge.build_command(prompt="hi", model=model_id, effort="high")
+        assert "--effort" in cmd and "high" in cmd
+
+
+def test_parse_line_surfaces_result_error():
+    bridge = AgyBridge()
+    err_line = json.dumps({
+        "event": "result",
+        "result": {
+            "conversation_id": "",
+            "status": "ERROR",
+            "response": "",
+            "error": 'invalid model selection: --effort is not supported for model "gemini-pro-orchestrator-neon"',
+        },
+    })
+    ev = bridge._parse_line(err_line)
+    assert ev.type == "result"
+    assert ev.status == "ERROR"
+    assert "invalid model selection" in ev.response
+    assert "gemini-pro-orchestrator-neon" in ev.response
+
+
 def test_parse_line():
     bridge = AgyBridge()
 

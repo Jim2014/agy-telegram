@@ -240,7 +240,10 @@ def parse_agy_models(output: str) -> List[Dict[str, Any]]:
         if not clean_name or clean_name == base_id:
             clean_name = " ".join(word.capitalize() for word in base_id.split("-"))
 
-        if "flash" in base_id.lower():
+        if "orchestrator" in base_id.lower():
+            icon = "🎼"
+            desc = "Multi-model Orchestrator (dynamic planning & execution)"
+        elif "flash" in base_id.lower():
             icon = "⚡"
             desc = "Fast multimodal model with dynamic reasoning"
         elif "pro" in base_id.lower():
