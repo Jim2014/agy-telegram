@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import signal
 import sys
 import time
@@ -26,6 +27,7 @@ from gateway.commands import (
     handle_cmd_export as cmd_handle_export,
     handle_cmd_file as cmd_handle_file,
     handle_cmd_help as cmd_handle_help,
+    handle_cmd_html as cmd_handle_html,
     handle_cmd_model as cmd_handle_model,
     handle_cmd_new as cmd_handle_new,
     handle_cmd_open as cmd_handle_open,
@@ -587,6 +589,8 @@ class AgyTelegramBot:
             )
         elif canonical_cmd == "voice":
             await self.handle_cmd_voice(chat_id, arg, message_id=message_id)
+        elif canonical_cmd == "html":
+            await self.handle_cmd_html(chat_id, arg, message_id=message_id)
         elif canonical_cmd == "stop":
             await self.handle_cmd_stop(chat_id)
         else:
@@ -598,6 +602,9 @@ class AgyTelegramBot:
     # Backward-compatible command and media delegation wrappers
     async def handle_cmd_voice(self, chat_id: int, arg: str = "", message_id: Optional[int] = None, edit_message_id: Optional[int] = None) -> None:
         await cmd_handle_voice(self, chat_id, arg, edit_message_id=edit_message_id)
+
+    async def handle_cmd_html(self, chat_id: int, arg: str = "", message_id: Optional[int] = None, edit_message_id: Optional[int] = None) -> None:
+        await cmd_handle_html(self, chat_id, arg, edit_message_id=edit_message_id)
 
     async def handle_cmd_help(self, chat_id: int) -> None:
         await cmd_handle_help(self, chat_id)
@@ -1213,13 +1220,16 @@ class AgyTelegramBot:
                             joined_blocks = "\n\n".join(blocks)
                             clean_text = f"{clean_text}\n\n{joined_blocks}".strip() if clean_text else joined_blocks
 
-            # 3. Auto-export long responses as standalone HTML document
+            # 3. Auto-export long responses as standalone HTML document (respecting per-chat html_mode)
+            effective_html_mode = self.session_manager.normalize_html_mode(
+                getattr(session, "html_mode", None) or getattr(self.config, "html_mode", "auto")
+            )
             auto_export_content: Optional[str] = None
             auto_export_name = ""
             auto_export_title = ""
 
-            if not agy_files and should_export_as_file(prompt, clean_text):
-                is_diff = "diff" in prompt.lower() or "```diff" in clean_text or "diff --git" in clean_text or "--- a/" in clean_text
+            if effective_html_mode == "auto" and not agy_files and should_export_as_file(prompt, clean_text):
+                is_diff = bool(re.search(r"\bdiff\b", prompt.lower())) or "```diff" in clean_text or "diff --git" in clean_text or "--- a/" in clean_text
                 prefix = "diff" if is_diff else "report"
                 auto_export_name = f"{prefix}_{active_proj}_{int(time.time())}.html"
                 auto_export_title = f"{active_proj} {'Diff' if is_diff else 'Report'}"
@@ -1238,23 +1248,24 @@ class AgyTelegramBot:
                     + clean_text
                 )
 
-            # Check explicit agy_files and collect render errors
+            # Check explicit agy_files and collect render errors (skipped only if html_mode == 'off')
             export_errors: List[str] = []
             valid_exports: List[Tuple[AgyFileBlock, str]] = []
-            for af in agy_files:
-                html_data, err_msg = render_agy_file(
-                    af,
-                    base_dir=effective_dir,
-                    metadata={
-                        "model": effective_model or self.config.default_model,
-                        "project": active_proj,
-                        "conversation_id": conv_id,
-                    },
-                )
-                if html_data:
-                    valid_exports.append((af, html_data))
-                elif err_msg:
-                    export_errors.append(f"Failed to export file {af.filename}: {err_msg}")
+            if effective_html_mode != "off":
+                for af in agy_files:
+                    html_data, err_msg = render_agy_file(
+                        af,
+                        base_dir=effective_dir,
+                        metadata={
+                            "model": effective_model or self.config.default_model,
+                            "project": active_proj,
+                            "conversation_id": conv_id,
+                        },
+                    )
+                    if html_data:
+                        valid_exports.append((af, html_data))
+                    elif err_msg:
+                        export_errors.append(f"Failed to export file {af.filename}: {err_msg}")
 
             if valid_exports:
                 if len(valid_exports) == 1:

@@ -34,6 +34,7 @@ ALL_BOT_COMMAND_SPECS: List[Dict[str, Any]] = [
     {"command": "export", "description": "📄 Export conversation as HTML", "default_priority": 35},
     {"command": "steer", "description": "🎯 Steer running prompt", "default_priority": 30},
     {"command": "voice", "description": "🎙️ Configure voice notes mode", "default_priority": 28},
+    {"command": "html", "description": "📄 Configure HTML attachment mode", "default_priority": 27},
     {"command": "pin", "description": "📌 Pin workspace status banner", "default_priority": 26},
     {"command": "stop", "description": "🛑 Interrupt running agy prompt", "default_priority": 25},
     {"command": "reset", "description": "🔄 Clear active conversation", "default_priority": 20},
@@ -64,6 +65,8 @@ COMMAND_ALIASES: Dict[str, str] = {
     "voice": "voice",
     "tts": "voice",
     "audio": "voice",
+    "html": "html",
+    "html_mode": "html",
     "pin": "pin",
     "banner": "pin",
     "stop": "stop",
@@ -402,6 +405,7 @@ def build_help_keyboard() -> Dict[str, Any]:
             ],
             [
                 {"text": "🎙️ Voice Settings", "callback_data": "voice:show"},
+                {"text": "📄 HTML Settings", "callback_data": "html:show"},
             ],
         ]
     }
@@ -611,6 +615,46 @@ def build_voice_keyboard(current_mode: str) -> Tuple[str, Dict[str, Any]]:
 def build_voice_play_button(voice_id: str) -> Dict[str, Any]:
     """Build an inline button to generate/send the voice note to chat."""
     return {"text": "🔊 Send Audio", "callback_data": f"voice:{voice_id}"}
+
+
+def build_html_keyboard(current_mode: str) -> Tuple[str, Dict[str, Any]]:
+    """
+    Build interactive inline keyboard for selecting automatic HTML attachment mode.
+    Options:
+      - auto: Auto-export long responses (>=2000 chars), large code/diffs, and explicit [AGY_FILE] blocks.
+      - explicit: Only attach HTML when agy explicitly emits [AGY_FILE] (skip fallback auto-export).
+      - off: Disable automatic HTML file attachments on normal replies (manual /export and /file -h still work).
+    """
+    raw_mode = (current_mode.lower() if current_mode else "auto").strip()
+    if raw_mode in ("explicit", "manual", "ondemand", "agy_file"):
+        mode = "explicit"
+    elif raw_mode in ("off", "disable", "disabled", "none"):
+        mode = "off"
+    else:
+        mode = "auto"
+
+    modes = [
+        ("auto", "⚡ Auto-Export (Long Replies & Diffs)"),
+        ("explicit", "📝 Explicit Only ([AGY_FILE] Blocks)"),
+        ("off", "🔴 Disabled (Text Only in Replies)"),
+    ]
+    buttons = []
+    for m_id, label in modes:
+        prefix = "🔘 " if m_id == mode else "⚪ "
+        buttons.append([{"text": f"{prefix}{label}", "callback_data": f"html_mode:{m_id}"}])
+
+    buttons.append([{"text": "📖 Back to Help", "callback_data": "help:show"}])
+
+    text = (
+        "📄 <b>HTML Attachment Settings</b>\n\n"
+        f"• <b>Current Mode:</b> <code>{mode}</code>\n\n"
+        "<b>Available Modes:</b>\n"
+        "• <b>⚡ Auto-Export:</b> Automatically attach standalone HTML reports for long responses (≥2000 chars), large code/diff blocks, or <code>[AGY_FILE]</code> exports.\n"
+        "• <b>📝 Explicit Only:</b> Only attach HTML files when the agent explicitly emits an <code>[AGY_FILE]</code> report block.\n"
+        "• <b>🔴 Disabled:</b> Keep normal replies strictly as Telegram messages without auto-attaching HTML files (manual <code>/export</code> and <code>/file -h</code> still work).\n\n"
+        "💡 <i>Tap an option below or run <code>/html &lt;auto|explicit|off&gt;</code> in chat.</i>"
+    )
+    return text, {"inline_keyboard": buttons}
 
 
 def build_ipc_accordion_keyboard(target_project: str) -> Dict[str, Any]:

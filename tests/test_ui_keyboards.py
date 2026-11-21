@@ -258,6 +258,23 @@ def test_build_voice_keyboard_and_play_button():
     assert btn["callback_data"] == "voice:v_123_456"
 
 
+def test_build_html_keyboard_and_help_button():
+    from gateway.ui_keyboards import build_help_keyboard, build_html_keyboard
+
+    text, kb = build_html_keyboard("explicit")
+    assert "HTML Attachment Settings" in text
+    rows = kb["inline_keyboard"]
+    assert len(rows) == 4
+    assert "🔘" in rows[1][0]["text"]  # explicit active
+    assert "⚪" in rows[0][0]["text"]  # auto inactive
+    assert rows[0][0]["callback_data"] == "html_mode:auto"
+    assert rows[1][0]["callback_data"] == "html_mode:explicit"
+    assert rows[2][0]["callback_data"] == "html_mode:off"
+
+    hk = build_help_keyboard()
+    assert any(any(b["callback_data"] == "html:show" for b in row) for row in hk["inline_keyboard"])
+
+
 
 
 

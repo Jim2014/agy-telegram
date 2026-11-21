@@ -577,8 +577,12 @@ def should_export_as_file(prompt: str, response_text: str) -> bool:
     - Response contains extensive code blocks (> 1000 chars)
     """
     p_lower = prompt.lower()
-    # Explicit user requests
-    if any(k in p_lower for k in ("发我文件", "发文件", "导出文件", "生成文件", "生成html", "发我html", "export file", "send file", "as file", "export html", "diff", "补丁", "报告")):
+    # Explicit user requests (whole-word match for 'diff' to avoid 'different'/'difference')
+    explicit_phrases = (
+        "发我文件", "发文件", "导出文件", "生成文件", "生成html", "发我html",
+        "export file", "send file", "as file", "export html", "补丁", "报告",
+    )
+    if any(k in p_lower for k in explicit_phrases) or re.search(r"\bdiff\b", p_lower):
         return True
 
     # Large content threshold

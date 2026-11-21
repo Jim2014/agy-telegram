@@ -1453,6 +1453,70 @@ async def test_bot_text_query_generates_fallback_ondemand_voice_button(mock_bot,
     assert any("🔊 Send Audio" in btn["text"] for row in markup["inline_keyboard"] for btn in row)
 
 
+@pytest.mark.asyncio
+async def test_bot_html_mode_command_callbacks_and_behavior(mock_bot, monkeypatch):
+    session = mock_bot.session_manager.get_session(100)
+    assert session.html_mode == "auto"
+
+    # 1. /html command shows settings keyboard
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/html", "message_id": 301}})
+    assert "HTML Attachment Settings" in mock_bot.client.send_message.call_args[1]["text"]
+
+    # 2. Callback html_mode:explicit switches mode
+    mock_bot.client.edit_message_text.reset_mock()
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_html_1",
+            "from": {"id": 100},
+            "message": {"chat": {"id": 100}, "message_id": 900},
+            "data": "html_mode:explicit",
+        }
+    })
+    assert session.html_mode == "explicit"
+    mock_bot.client.answer_callback_query.assert_called_with(
+        callback_query_id="cq_html_1",
+        text="HTML mode: explicit",
+        show_alert=False,
+    )
+
+    # 3. Long response (>2000 chars) in explicit mode does NOT auto-attach HTML
+    long_resp = "Detailed line.\n" * 200
+
+    async def mock_stream_long(self, prompt, **kwargs):
+        yield AgyEvent(type="result", response=long_resp, duration_seconds=1.0)
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream_long)
+    mock_bot.client.send_document.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "explain details", "message_id": 302}})
+    assert mock_bot.client.send_document.called is False
+
+    # 4. Explicit [AGY_FILE] block in explicit mode DOES send document
+    explicit_resp = "Summary.\n\n[AGY_FILE]\nfilename: explicit_report.html\ntitle: Report\n---\n<h1>Hello</h1>\n[END_AGY_FILE]"
+
+    async def mock_stream_explicit(self, prompt, **kwargs):
+        yield AgyEvent(type="result", response=explicit_resp, duration_seconds=1.0)
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream_explicit)
+    mock_bot.client.send_document.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "report please", "message_id": 303}})
+    assert mock_bot.client.send_document.called is True
+
+    # 5. In off mode, even [AGY_FILE] is suppressed in normal replies
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/html off", "message_id": 304}})
+    assert session.html_mode == "off"
+    mock_bot.client.send_document.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "report please", "message_id": 305}})
+    assert mock_bot.client.send_document.called is False
+
+    # 6. In auto mode, long response auto-attaches HTML
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/html auto", "message_id": 306}})
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream_long)
+    mock_bot.client.send_document.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "explain details", "message_id": 307}})
+    assert mock_bot.client.send_document.called is True
+
+
 
 
 

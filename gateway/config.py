@@ -123,6 +123,7 @@ class Config:
     tts_voice_zh: str = "zh-CN-XiaoxiaoNeural"
     tts_voice_en: str = "en-US-JennyNeural"
     whisper_model_size: str = "base"
+    html_mode: str = "auto"  # "auto" | "explicit" | "off"
 
     @classmethod
     def load(cls, env_path: str | Path | None = None) -> Config:
@@ -215,6 +216,15 @@ class Config:
         tts_voice_en = os.getenv("TTS_VOICE_EN", "en-US-JennyNeural").strip() or "en-US-JennyNeural"
         whisper_model_size = os.getenv("WHISPER_MODEL_SIZE", "base").strip().lower() or "base"
 
+        # HTML attachment mode ("auto" | "explicit" | "off")
+        raw_html_mode = os.getenv("HTML_MODE", "auto").strip().lower()
+        if raw_html_mode in ("explicit", "manual", "ondemand", "agy_file"):
+            html_mode = "explicit"
+        elif raw_html_mode in ("off", "disable", "disabled", "none"):
+            html_mode = "off"
+        else:
+            html_mode = "auto"
+
         return cls(
             bot_token=bot_token,
             allowed_chat_ids=allowed_chat_ids,
@@ -236,6 +246,7 @@ class Config:
             tts_voice_zh=tts_voice_zh,
             tts_voice_en=tts_voice_en,
             whisper_model_size=whisper_model_size,
+            html_mode=html_mode,
         )
 
     def is_token_valid(self) -> bool:

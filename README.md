@@ -40,7 +40,7 @@ A lightweight, real-time Telegram gateway for interacting directly with `agy` (A
     - **Watchdog Supervisor & macOS Autostart**: Includes `runtime/watchdog.sh` (`./restart.sh watch`) for crash auto-recovery within 10 seconds, plus macOS LaunchAgent integration (`./restart.sh autostart`).
     - `/stop` immediately interrupts the active `agy` subprocess.
     - Automatic Telegram 4096-character chunk splitting, rate-limit throttling, and HTML fallback handling.
-    - Comprehensive test suite (**149 tests** covering unit, network resilience, protocol parsing, and real `agy` CLI smoke testing). See [ROADMAP.md](ROADMAP.md) for planned milestones.
+    - Comprehensive test suite (**152 tests** covering unit, network resilience, protocol parsing, and real `agy` CLI smoke testing). See [ROADMAP.md](ROADMAP.md) for planned milestones.
 11. **Cross-Project Multi-Agent Mesh (`AGY_IPC`) & Pinned Expandable Cards**:
     - **Decentralized Cross-Workspace Collaboration**: Agents can dispatch sub-tasks across registered project directories via `[AGY_IPC to="<target>"]...[END_AGY_IPC]` envelopes (`[AGY_INCOMING]`) and automatically return results to the main chat.
     - **Dedicated Pinned Progress Cards**: Maintains per-project pinned expandable cards (`<blockquote expandable>`) in Telegram tracking live tool execution and elapsed duration.
@@ -148,6 +148,9 @@ STREAM_THROTTLE_SECONDS=1.0
 # Subprocess timeout in seconds (default: 300)
 AGY_TIMEOUT_SECONDS=300
 
+# Default HTML attachment mode (auto | explicit | off)
+HTML_MODE=auto
+
 # Logging level (INFO / DEBUG) and runtime file paths
 LOG_LEVEL=INFO
 LOG_FILE=runtime/gateway.log
@@ -214,7 +217,7 @@ tail -f -n 50 runtime/watchdog.log
 
 ### Adaptive Slash Menu & Interactive Controls
 
-- **Adaptive Pure-LRU Command Menu**: All 19 commands are registered in the Telegram `/` menu. `/help` stays pinned at position 0, while the most recently used commands automatically float to the top per chat.
+- **Adaptive Pure-LRU Command Menu**: All 20 commands are registered in the Telegram `/` menu. `/help` stays pinned at position 0, while the most recently used commands automatically float to the top per chat.
 - **Pinned Workspace Status Banner (`/pin`)**: Keeps a live pinned status banner at the top of the chat displaying active project, workspace path, model, token totals, uptime, and quick-action buttons (`[ 📊 Status ]`, `[ 📁 Projects ]`, `[ 🪙 Quota ]`, `[ 📖 Help ]`).
 - **Interactive Decision & Action Buttons (`[AGY_ACTIONS]`)**: Renders one-tap inline buttons under responses when `ask_question` or `[AGY_ACTIONS]` blocks are returned.
 - **Expandable Tool Progress (`<blockquote expandable>`)**: Keeps long tool logs compact on mobile while letting you expand details in place.
@@ -234,6 +237,7 @@ tail -f -n 50 runtime/watchdog.log
 | **🎙️ Voice / Audio message** | Downloaded locally and transcribed offline via `faster-whisper`; steers automatically if busy | 🎙️ Send a voice note |
 | **📎 File / Photo attachment** | Saved to `runtime/documents/` and passed with metadata to `agy`; supports mid-flight steering | 📎 Upload code, docs, or images |
 | `/voice [mode]` | Configure TTS mode: `disable`, `autogen` (on-demand button), or `autoplay` | `/voice` or `/voice autoplay` |
+| `/html [mode]` | Configure HTML attachment mode: `auto` (long replies & diffs), `explicit` (`[AGY_FILE]` only), or `off` | `/html` or `/html explicit` |
 | `/pin` or `/banner` | Refresh and pin the live workspace status banner at the top of the chat | `/pin` |
 | `/help` | Show interactive command center dashboard | `/help` |
 | `/usage` or `/quota` | Zero-token real-time query of Antigravity quota limits and reset timers | `/usage` |
@@ -317,7 +321,7 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-Test coverage (**149 tests** across 14 test modules):
+Test coverage (**152 tests** across 14 test modules):
 - `tests/test_config.py`: Configuration loading, token validation, chat whitelist, default runtime paths, and system prompt overrides.
 - `tests/test_session_manager.py`: Session CRUD, persistence, legacy migration, token/duration stats, and LRU command tracking.
 - `tests/test_ui_keyboards.py`: Project switchers, dynamic `agy models` parsing and fallback discovery, effort keyboards, adaptive LRU menus, and WebApp buttons.

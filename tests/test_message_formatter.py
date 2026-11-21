@@ -211,8 +211,9 @@ def test_should_export_as_file():
     diff_text = "```diff\ndiff --git a/a.py b/a.py\n+ new line\n- old line\n" + "extra " * 100 + "```"
     assert should_export_as_file("show diff", diff_text) is True
 
-    # Short normal response should NOT export
+    # Short normal response should NOT export (including words like 'different'/'difference')
     assert should_export_as_file("Hello", "Hi there, how can I help?") is False
+    assert should_export_as_file("What is the difference between A and B?", "Short explanation.") is False
 
 
 def test_generate_standalone_html():

@@ -24,6 +24,7 @@ from gateway.ui_keyboards import (
     build_artifacts_keyboard,
     build_effort_keyboard,
     build_help_keyboard,
+    build_html_keyboard,
     build_model_keyboard,
     build_projects_keyboard,
     build_skills_keyboard,
@@ -56,6 +57,8 @@ async def handle_cmd_help(bot: Any, chat_id: int, edit_message_id: Optional[int]
         "• <code>/dir</code> — Browse workspace file tree & interactive HTML navigator\n"
         "• <code>/file &lt;path&gt;</code> — Send workspace file document to Telegram\n"
         "• <code>/export</code> — Export conversation report as standalone HTML\n"
+        "• <code>/voice</code> — Configure voice podcast broadcast mode\n"
+        "• <code>/html</code> — Configure automatic HTML attachment mode\n"
         "• <code>/steer &lt;text&gt;</code> — Steer/guide currently running agy prompt\n"
         "• <code>/stop</code> — Interrupt currently executing agy prompt\n"
         "• <code>/reset</code> — Clear conversation history for active project\n\n"
@@ -439,6 +442,33 @@ async def handle_cmd_voice(bot: Any, chat_id: int, arg: str = "", edit_message_i
 
     cur_mode = session.tts_mode or getattr(bot.config, "tts_mode", "ondemand")
     text, reply_markup = build_voice_keyboard(cur_mode)
+
+    if edit_message_id:
+        await bot._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
+    else:
+        await bot._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+
+
+async def handle_cmd_html(bot: Any, chat_id: int, arg: str = "", edit_message_id: Optional[int] = None) -> None:
+    """Configure automatic HTML attachment mode (/html auto | explicit | off)."""
+    session = bot.session_manager.get_session(chat_id)
+    if arg and arg.lower() != "show":
+        val = arg.strip().lower()
+        if val in ("auto", "on", "enable", "all"):
+            bot.session_manager.set_html_mode(chat_id, "auto")
+        elif val in ("explicit", "manual", "ondemand", "agy_file"):
+            bot.session_manager.set_html_mode(chat_id, "explicit")
+        elif val in ("off", "disable", "disabled", "none"):
+            bot.session_manager.set_html_mode(chat_id, "off")
+        else:
+            await bot._safe_send_message(
+                chat_id=chat_id,
+                text="⚠️ Usage: <code>/html auto</code> | <code>/html explicit</code> | <code>/html off</code>",
+            )
+            return
+
+    cur_mode = getattr(session, "html_mode", None) or getattr(bot.config, "html_mode", "auto")
+    text, reply_markup = build_html_keyboard(cur_mode)
 
     if edit_message_id:
         await bot._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
@@ -1102,6 +1132,15 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
     elif data == "voice:show":
         await bot._safe_answer_callback_query(cq_id)
         await handle_cmd_voice(bot, chat_id, edit_message_id=message_id)
+
+    elif data == "html:show":
+        await bot._safe_answer_callback_query(cq_id)
+        await handle_cmd_html(bot, chat_id, edit_message_id=message_id)
+
+    elif data.startswith("html_mode:"):
+        html_mode_val = data[10:].strip()
+        await handle_cmd_html(bot, chat_id, arg=html_mode_val, edit_message_id=message_id)
+        await bot._safe_answer_callback_query(cq_id, text=f"HTML mode: {html_mode_val}")
 
     elif data.startswith("tts:"):
         tts_mode_val = data[4:].strip()

@@ -31,6 +31,7 @@ class ChatSession:
     pinned_message_id: Optional[int] = None
     pinned_ipc_message_ids: Dict[str, int] = field(default_factory=dict)
     tts_mode: str = "autogen"  # "disable" | "autogen" | "autoplay"
+    html_mode: str = "auto"  # "auto" | "explicit" | "off"
     pending_voice_data: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     @property
@@ -66,6 +67,7 @@ class ChatSession:
             "pinned_message_id": self.pinned_message_id,
             "pinned_ipc_message_ids": self.pinned_ipc_message_ids,
             "tts_mode": self.tts_mode,
+            "html_mode": self.html_mode,
             "pending_voice_data": dict(list(self.pending_voice_data.items())[-100:]),
         }
 
@@ -112,6 +114,7 @@ class ChatSession:
             pinned_message_id=data.get("pinned_message_id"),
             pinned_ipc_message_ids=pinned_ipc_ids,
             tts_mode=data.get("tts_mode", "autogen"),
+            html_mode=data.get("html_mode", "auto"),
             pending_voice_data=data.get("pending_voice_data", {}),
         )
 
@@ -369,6 +372,23 @@ class SessionManager:
             session.tts_mode = "disable"
         else:
             session.tts_mode = "ondemand"
+        session.last_active_at = time.time()
+        self.save()
+
+    @staticmethod
+    def normalize_html_mode(mode: Optional[str]) -> str:
+        """Normalize HTML attachment mode aliases into 'auto', 'explicit', or 'off'."""
+        val = (mode or "").strip().lower()
+        if val in ("explicit", "manual", "ondemand", "agy_file"):
+            return "explicit"
+        if val in ("off", "disable", "disabled", "none"):
+            return "off"
+        return "auto"
+
+    def set_html_mode(self, chat_id: int, mode: str) -> None:
+        """Set HTML attachment mode ('auto', 'explicit', 'off')."""
+        session = self.get_session(chat_id)
+        session.html_mode = self.normalize_html_mode(mode)
         session.last_active_at = time.time()
         self.save()
 

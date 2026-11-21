@@ -240,3 +240,18 @@ def test_command_usage_tracking(tmp_path):
     assert s2.command_stats["usage"] == 2
     assert s2.command_stats["skills"] == 1
 
+
+def test_html_mode_persistence(tmp_path):
+    persist_file = tmp_path / "html_mode.json"
+    mgr1 = SessionManager(persistence_file=persist_file)
+    assert mgr1.get_session(500).html_mode == "auto"
+
+    mgr1.set_html_mode(500, "explicit")
+    assert mgr1.get_session(500).html_mode == "explicit"
+
+    mgr1.set_html_mode(500, "disable")
+    assert mgr1.get_session(500).html_mode == "off"
+
+    mgr2 = SessionManager(persistence_file=persist_file)
+    assert mgr2.get_session(500).html_mode == "off"
+
