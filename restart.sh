@@ -283,7 +283,12 @@ case "${1:-}" in
             fi
         fi
 
-        if [ "$gw_alive" -eq 1 ] && [ -f "$TURN_LOCK" ]; then
+        turn_lock_fresh=0
+        if [ -f "$TURN_LOCK" ] && find "$TURN_LOCK" -mmin -15 2>/dev/null | grep -q .; then
+            turn_lock_fresh=1
+        fi
+
+        if [ -f "$TURN_LOCK" ] && { [ "$gw_alive" -eq 1 ] || [ "$turn_lock_fresh" -eq 1 ]; }; then
             touch "$RESTART_FLAG"
             # Safety fallback after 120s in case the active turn hangs unexpectedly
             nohup bash -c "sleep 120; if [ -f '$RESTART_FLAG' ]; then rm -f '$RESTART_FLAG' '$TURN_LOCK'; exec '$SELF_ABS' --do-restart; fi" >/dev/null 2>&1 &

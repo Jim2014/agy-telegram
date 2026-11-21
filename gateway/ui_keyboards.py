@@ -34,10 +34,12 @@ ALL_BOT_COMMAND_SPECS: List[Dict[str, Any]] = [
     {"command": "file", "description": "📎 Send workspace file document", "default_priority": 40},
     {"command": "export", "description": "📄 Export conversation as HTML", "default_priority": 35},
     {"command": "steer", "description": "🎯 Steer running prompt", "default_priority": 30},
+    {"command": "busy", "description": "🔀 Busy input policy (steer/queue)", "default_priority": 29},
     {"command": "voice", "description": "🎙️ Configure voice notes mode", "default_priority": 28},
     {"command": "html", "description": "📄 Configure HTML attachment mode", "default_priority": 27},
     {"command": "pin", "description": "📌 Pin workspace status banner", "default_priority": 26},
     {"command": "stop", "description": "🛑 Interrupt running agy prompt", "default_priority": 25},
+    {"command": "schedule", "description": "⏰ Cron & heartbeat background tasks", "default_priority": 24},
     {"command": "reset", "description": "🔄 Clear active conversation", "default_priority": 20},
     {"command": "delete", "description": "🗑️ Delete a project (/delete <name>)", "default_priority": 10},
 ]
@@ -66,6 +68,11 @@ COMMAND_ALIASES: Dict[str, str] = {
     "file": "file",
     "export": "export",
     "steer": "steer",
+    "busy": "busy",
+    "queue": "busy",
+    "schedule": "schedule",
+    "cron": "schedule",
+    "heartbeat": "schedule",
     "voice": "voice",
     "tts": "voice",
     "audio": "voice",
@@ -734,6 +741,82 @@ def build_ipc_accordion_keyboard(target_project: str) -> Dict[str, Any]:
             ]
         ]
     }
+
+
+def build_busy_mode_keyboard(current_mode: str, queued_count: int = 0) -> Tuple[str, Dict[str, Any]]:
+    """Build interactive inline keyboard for switching steer-vs-queue busy-input policy."""
+    mode = "queue" if (current_mode or "").strip().lower() in ("queue", "queued", "wait") else "steer"
+    lines = [
+        "🔀 <b>Busy Input Handling Policy</b>\n",
+        f"• <b>Active Policy:</b> <code>{mode}</code>",
+        f"• <b>Queued Messages:</b> <code>{queued_count}</code>\n",
+        "<b>Modes:</b>",
+        f"{'🌟 <b>[ACTIVE]</b> ' if mode == 'steer' else '• '}🎯 <b>Steer</b> (<code>steer</code>) — Messages arriving mid-turn steer the active session immediately via stdin.",
+        f"{'🌟 <b>[ACTIVE]</b> ' if mode == 'queue' else '• '}📥 <b>Queue</b> (<code>queue</code>) — Messages wait in a FIFO queue (up to 10) and run sequentially after the active turn finishes (<code>/steer</code> still steers explicitly).",
+        "\n💡 <i>Tap a mode below or run /busy &lt;steer|queue|clear&gt;.</i>",
+    ]
+
+    buttons: List[List[Dict[str, str]]] = [
+        [
+            {"text": "✓ 🎯 Steer" if mode == "steer" else "🎯 Steer", "callback_data": "busy:steer"},
+            {"text": "✓ 📥 Queue" if mode == "queue" else "📥 Queue", "callback_data": "busy:queue"},
+        ]
+    ]
+    if queued_count > 0:
+        buttons.append([{"text": f"🧹 Clear Queue ({queued_count})", "callback_data": "busy:clear"}])
+    buttons.append([
+        {"text": "📊 Status", "callback_data": "status"},
+        {"text": "📖 Help", "callback_data": "help:show"},
+    ])
+    return "\n".join(lines), {"inline_keyboard": buttons}
+
+
+def build_schedules_keyboard(tasks: List[Any]) -> Tuple[str, Dict[str, Any]]:
+    """Build interactive dashboard and controls for cron & heartbeat scheduled tasks."""
+    lines = [f"⏰ <b>Scheduled Cron &amp; Heartbeat Tasks ({len(tasks)})</b>\n"]
+    buttons: List[List[Dict[str, str]]] = []
+
+    if not tasks:
+        lines.append("<i>No scheduled tasks configured yet.</i>\n")
+    else:
+        for t in tasks:
+            icon = "💓" if getattr(t, "kind", "cron") == "heartbeat" else "⏰"
+            state_icon = "🟢" if getattr(t, "enabled", True) else "⏸️"
+            next_ts = float(getattr(t, "next_run_at", 0.0) or 0.0)
+            next_str = time.strftime("%m-%d %H:%M", time.localtime(next_ts)) if next_ts > 0 else "paused"
+            if not getattr(t, "enabled", True):
+                next_str = "paused"
+            last_st = getattr(t, "last_status", "") or "never"
+            prompt_prev = str(getattr(t, "prompt", "")).strip().replace("\n", " ")
+            if len(prompt_prev) > 65:
+                prompt_prev = prompt_prev[:62] + "..."
+            tid = escape_html(str(t.task_id))
+            proj = escape_html(str(t.project))
+            sched = escape_html(str(t.schedule))
+            lines.append(
+                f"{icon} {state_icon} <code>{tid}</code> [<b>{proj}</b>] (<code>{sched}</code>)\n"
+                f"   Next: <code>{next_str}</code> | Runs: {int(getattr(t, 'run_count', 0))} | Last: <code>{escape_html(last_st)}</code>\n"
+                f"   <i>{escape_html(prompt_prev)}</i>"
+            )
+            toggle_lbl = "⏸️ Pause" if getattr(t, "enabled", True) else "▶️ Resume"
+            buttons.append([
+                {"text": f"{toggle_lbl} {t.task_id}", "callback_data": f"sched:toggle:{t.task_id}"},
+                {"text": "▶ Run Now", "callback_data": f"sched:run:{t.task_id}"},
+                {"text": "🗑 Del", "callback_data": f"sched:del:{t.task_id}"},
+            ])
+
+    lines.append(
+        "\n<b>Quick Usage:</b>\n"
+        "• <code>/schedule add 30m | Check tests</code>\n"
+        "• <code>/schedule add 0 8 * * * | news | Daily AI briefing</code>\n"
+        "• <code>/heartbeat 15m | Check disk &amp; repo status</code>\n"
+        "• <code>/schedule pause &lt;id&gt;</code> · <code>resume &lt;id&gt;</code> · <code>run &lt;id&gt;</code> · <code>del &lt;id&gt;</code>"
+    )
+    buttons.append([
+        {"text": "🔄 Refresh", "callback_data": "sched:refresh"},
+        {"text": "📊 Status", "callback_data": "status"},
+    ])
+    return "\n".join(lines), {"inline_keyboard": buttons}
 
 
 if __name__ == "__main__":

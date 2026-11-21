@@ -19,6 +19,7 @@ def mock_bot(tmp_path):
         sessions_file=str(tmp_path / "bot_sessions.json"),
         pairing_file=str(tmp_path / "bot_pairing.json"),
         traces_file=str(tmp_path / "traces.jsonl"),
+        schedules_file=str(tmp_path / "bot_schedules.json"),
     )
     bot = AgyTelegramBot(cfg)
     bot.client.send_message = AsyncMock(return_value={"message_id": 999})
@@ -2004,6 +2005,159 @@ async def test_bot_polling_backoff_on_409_conflict(mock_bot, monkeypatch):
     assert len(attempts) == 2
     assert all(flag is True for _, flag in attempts)
     assert sleep_delays == [5]
+
+
+@pytest.mark.asyncio
+async def test_bot_busy_queue_policy_drains_and_stop_clears(mock_bot, monkeypatch):
+    # Switch busy mode to queue via /busy queue
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/busy queue", "message_id": 900}})
+    assert mock_bot.session_manager.get_session(100).busy_mode == "queue"
+
+    executed_prompts = []
+    turn1_started = asyncio.Event()
+    turn1_release = asyncio.Event()
+
+    async def mock_stream(self, prompt, **kwargs):
+        executed_prompts.append(prompt)
+        yield AgyEvent(type="init", conversation_id="conv-q-1")
+        if prompt == "First prompt":
+            turn1_started.set()
+            await turn1_release.wait()
+        yield AgyEvent(type="result", response=f"Done: {prompt}", duration_seconds=0.1)
+
+    monkeypatch.setattr(AgyBridge, "run_streaming", mock_stream)
+
+    # Start turn 1, then send turn 2 & turn 3 while busy -> queued sequentially instead of steering
+    t1 = asyncio.create_task(
+        mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "First prompt", "message_id": 901}})
+    )
+    await turn1_started.wait()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "Queued second", "message_id": 902}})
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "Queued third", "message_id": 903}})
+
+    assert len(mock_bot._prompt_queues[100]) == 2
+    last_sent = mock_bot.client.send_message.call_args[1]["text"]
+    assert "Queued (#2)" in last_sent
+
+    turn1_release.set()
+    await t1
+    # Allow background queue drain tasks to complete all 3 turns sequentially
+    for _ in range(20):
+        if len(executed_prompts) >= 3 and not mock_bot.session_manager.is_busy(100):
+            break
+        await asyncio.sleep(0.02)
+
+    assert executed_prompts == ["First prompt", "Queued second", "Queued third"]
+    assert mock_bot._prompt_queues.get(100, []) == []
+
+    # Verify /stop clears pending queued items
+    mock_bot._prompt_queues[100] = [{"prompt": "Drop me", "reply_to_id": 904, "is_voice_input": False}]
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/stop", "message_id": 905}})
+    assert mock_bot._prompt_queues.get(100, []) == []
+
+
+@pytest.mark.asyncio
+async def test_bot_schedule_heartbeat_commands_isolation_and_traces(mock_bot, tmp_path, monkeypatch):
+    import json
+
+    mock_bot.session_manager.create_project(100, "admin", str(tmp_path / "admin"))
+    mock_bot.session_manager.create_project(100, "learner", str(tmp_path / "learner"))
+    mock_bot.session_manager.open_project(100, "admin")
+    mock_bot.session_manager.set_permission_preset(100, "turbo")
+
+    # Add cron task targeting 'learner' and heartbeat task on 'admin'
+    await mock_bot.process_update({
+        "message": {"chat": {"id": 100}, "text": "/schedule add 30m | learner | Run suite", "message_id": 910}
+    })
+    assert "Scheduled Cron Created" in mock_bot.client.send_message.call_args[1]["text"]
+
+    await mock_bot.process_update({
+        "message": {"chat": {"id": 100}, "text": "/heartbeat 15m | Check workspace health", "message_id": 911}
+    })
+    assert "Scheduled Heartbeat Created" in mock_bot.client.send_message.call_args[1]["text"]
+
+    tasks = mock_bot.scheduler.list_tasks(chat_id=100)
+    assert len(tasks) == 2
+    cron_task, hb_task = tasks[0], tasks[1]
+
+    captured_worker = []
+
+    async def mock_ephemeral(self, **kwargs):
+        captured_worker.append(kwargs)
+        prompt_txt = kwargs["prompt"]
+        if "[AGY_HEARTBEAT" in prompt_txt and "quiet" in mock_mode["state"]:
+            yield AgyEvent(type="result", status="SUCCESS", response="HEARTBEAT_OK")
+        elif "[AGY_HEARTBEAT" in prompt_txt:
+            yield AgyEvent(type="result", status="SUCCESS", response="Disk warning: 92% used.")
+        else:
+            yield AgyEvent(type="result", status="SUCCESS", response="All tests green.")
+
+    mock_mode = {"state": "quiet"}
+    monkeypatch.setattr(AgyBridge, "run_ephemeral_worker", mock_ephemeral)
+
+    # 1. Execute cron task on 'learner' while 'admin' is turbo -> runs under isolated 'auto' preset
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot._execute_scheduled_task(cron_task)
+    assert captured_worker[-1]["permission_preset"] == "auto"
+    assert "Scheduled · learner" in mock_bot.client.send_message.call_args[1]["text"]
+
+    # 2. Execute quiet heartbeat -> suppresses Telegram notification
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot._execute_scheduled_task(hb_task)
+    assert mock_bot.client.send_message.call_count == 0
+
+    # 3. Execute alerting heartbeat -> delivers Heartbeat Alert to Telegram
+    mock_mode["state"] = "alert"
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot._execute_scheduled_task(hb_task)
+    assert "Heartbeat Alert · admin" in mock_bot.client.send_message.call_args[1]["text"]
+    assert "Disk warning" in mock_bot.client.send_message.call_args[1]["text"]
+
+    spans = [json.loads(line) for line in Path(mock_bot.config.traces_file).read_text(encoding="utf-8").splitlines()]
+    assert len(spans) == 3
+    assert all(s["operation"] == "scheduled_task" for s in spans)
+    assert spans[1]["metadata"]["quiet_heartbeat"] is True
+    assert spans[2]["metadata"]["quiet_heartbeat"] is False
+
+    # 4. Inline toggle & delete callbacks work cleanly
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_sched_tog",
+            "from": {"id": 100},
+            "message": {"chat": {"id": 100}, "message_id": 912},
+            "data": f"sched:toggle:{cron_task.task_id}",
+        }
+    })
+    assert mock_bot.scheduler.get_task(cron_task.task_id).enabled is False
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_sched_del",
+            "from": {"id": 100},
+            "message": {"chat": {"id": 100}, "message_id": 912},
+            "data": f"sched:del:{cron_task.task_id}",
+        }
+    })
+    assert mock_bot.scheduler.get_task(cron_task.task_id) is None
+
+
+def test_main_token_redacting_filter():
+    import logging
+    from main import _TokenRedactingFilter
+
+    filt = _TokenRedactingFilter()
+    rec = logging.LogRecord(
+        name="httpx",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg='HTTP Request: POST %s "HTTP/1.1 200 OK"',
+        args=("https://api.telegram.org/bot123456789:ABCdefSecretTokenXYZ/getUpdates",),
+        exc_info=None,
+    )
+    assert filt.filter(rec) is True
+    formatted = rec.getMessage()
+    assert "ABCdefSecretTokenXYZ" not in formatted
+    assert "/bot<REDACTED>/getUpdates" in formatted
 
 
 

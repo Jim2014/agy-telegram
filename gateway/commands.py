@@ -23,12 +23,14 @@ from gateway.message_formatter import (
 )
 from gateway.ui_keyboards import (
     build_artifacts_keyboard,
+    build_busy_mode_keyboard,
     build_effort_keyboard,
     build_help_keyboard,
     build_html_keyboard,
     build_model_keyboard,
     build_permissions_keyboard,
     build_projects_keyboard,
+    build_schedules_keyboard,
     build_skills_keyboard,
     build_usage_keyboard,
     build_voice_keyboard,
@@ -61,6 +63,8 @@ async def handle_cmd_help(bot: Any, chat_id: int, edit_message_id: Optional[int]
         "• <code>/export</code> — Export conversation report as standalone HTML\n"
         "• <code>/voice</code> — Configure voice podcast broadcast mode\n"
         "• <code>/html</code> — Configure automatic HTML attachment mode\n"
+        "• <code>/busy</code> — Set busy input policy (<code>steer</code> | <code>queue</code> | <code>clear</code>)\n"
+        "• <code>/schedule</code> / <code>/heartbeat</code> — Manage recurring cron &amp; heartbeat tasks\n"
         "• <code>/steer &lt;text&gt;</code> — Steer/guide currently running agy prompt\n"
         "• <code>/stop</code> — Interrupt currently executing agy prompt\n"
         "• <code>/reset</code> — Clear conversation history for active project\n\n"
@@ -303,6 +307,11 @@ async def handle_cmd_status(bot: Any, chat_id: int) -> None:
     model_str = session.model or bot.config.default_model or "gemini-3.8-flash"
     effort_str = session.effort or bot.config.default_effort or "high"
     perm_str = session.get_permission_preset(default=getattr(bot.config, "default_permission_preset", "auto"))
+    busy_mode_str = bot.session_manager.normalize_busy_mode(
+        getattr(session, "busy_mode", None) or getattr(bot.config, "busy_mode", "steer")
+    )
+    queued_cnt = len(getattr(bot, "_prompt_queues", {}).get(chat_id, []))
+    sched_cnt = len(bot.scheduler.list_tasks(chat_id=chat_id)) if hasattr(bot, "scheduler") else 0
     busy_status = "🔴 Busy (Running prompt)" if session.is_busy else "🟢 Idle"
 
     # Startup time + uptime
@@ -336,7 +345,11 @@ async def handle_cmd_status(bot: Any, chat_id: int) -> None:
         f"• <b>Working Directory:</b> <code>{escape_html(active_path)}</code>\n"
         f"• <b>Model:</b> <code>{escape_html(model_str)}</code>\n"
         f"• <b>Effort:</b> <code>{escape_html(effort_str)}</code>\n"
-        f"• <b>Permissions:</b> <code>{escape_html(perm_str)}</code>\n\n"
+        f"• <b>Permissions:</b> <code>{escape_html(perm_str)}</code>\n"
+        f"• <b>Busy Policy:</b> <code>{escape_html(busy_mode_str)}</code>"
+        + (f" ({queued_cnt} queued)" if queued_cnt else "")
+        + "\n"
+        + f"• <b>Scheduled Tasks:</b> <code>{sched_cnt}</code>\n\n"
         "📈 <b>Active Session Cumulative Stats:</b>\n"
         f"• <b>Conversation ID:</b> {conv_id}\n"
         f"• <b>Session Age:</b> <code>{sess_age_str}</code>\n"
@@ -742,7 +755,10 @@ async def handle_cmd_steer(bot: Any, chat_id: int, arg: str, reply_to_id: Option
 
 
 async def handle_cmd_stop(bot: Any, chat_id: int) -> None:
-    """Interrupt active agy prompt execution immediately."""
+    """Interrupt active agy prompt execution immediately and clear queued prompts."""
+    dropped = 0
+    if hasattr(bot, "_prompt_queues"):
+        dropped = len(bot._prompt_queues.pop(chat_id, []))
     bridge = bot.active_bridges.get(chat_id)
     if bridge:
         await bridge.stop()
@@ -753,9 +769,181 @@ async def handle_cmd_stop(bot: Any, chat_id: int) -> None:
             bot.active_reply_to_ids.pop(chat_id, None)
         bot.session_manager.set_busy(chat_id, False)
         asyncio.create_task(bot.update_pinned_banner(chat_id, is_busy=False))
-        await bot._safe_send_message(chat_id=chat_id, text="🛑 <b>Task interrupted by user.</b>")
+        extra = f" ({dropped} queued prompt(s) cleared.)" if dropped else ""
+        await bot._safe_send_message(chat_id=chat_id, text=f"🛑 <b>Task interrupted by user.</b>{extra}")
+    elif dropped:
+        await bot._safe_send_message(chat_id=chat_id, text=f"🧹 Cleared {dropped} queued prompt(s).")
     else:
         await bot._safe_send_message(chat_id=chat_id, text="ℹ️ No active task is currently running.")
+
+
+async def handle_cmd_busy(
+    bot: Any,
+    chat_id: int,
+    arg: str = "",
+    edit_message_id: Optional[int] = None,
+) -> None:
+    """Configure or view busy-input policy (/busy steer | queue | clear)."""
+    session = bot.session_manager.get_session(chat_id)
+    raw = (arg or "").strip().lower()
+    if raw and raw != "show":
+        if raw in ("clear", "flush"):
+            dropped = len(getattr(bot, "_prompt_queues", {}).pop(chat_id, []))
+            if not edit_message_id:
+                await bot._safe_send_message(
+                    chat_id=chat_id,
+                    text=f"🧹 Cleared {dropped} queued prompt(s)." if dropped else "ℹ️ Prompt queue is already empty.",
+                )
+                return
+        elif raw in ("steer", "interrupt", "queue", "queued", "wait"):
+            bot.session_manager.set_busy_mode(chat_id, raw)
+        else:
+            await bot._safe_send_message(
+                chat_id=chat_id,
+                text="⚠️ Usage: <code>/busy steer</code> | <code>/busy queue</code> | <code>/busy clear</code>",
+            )
+            return
+
+    cur_mode = bot.session_manager.normalize_busy_mode(
+        getattr(session, "busy_mode", None) or getattr(bot.config, "busy_mode", "steer")
+    )
+    queued_count = len(getattr(bot, "_prompt_queues", {}).get(chat_id, []))
+    text, reply_markup = build_busy_mode_keyboard(cur_mode, queued_count=queued_count)
+
+    if edit_message_id:
+        await bot._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=reply_markup)
+    else:
+        await bot._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+
+
+def _parse_pipe_task_args(raw_spec_and_prompt: str, session: Any) -> Tuple[str, str, str]:
+    """Parse '<schedule> | <prompt>' or '<schedule> | <project> | <prompt>'."""
+    parts = [p.strip() for p in raw_spec_and_prompt.split("|")]
+    if len(parts) == 2:
+        sched, prompt = parts
+        proj = session.active_project or "default"
+        return sched, proj, prompt
+    if len(parts) >= 3:
+        sched = parts[0]
+        proj = parts[1] or (session.active_project or "default")
+        prompt = " | ".join(parts[2:]).strip()
+        return sched, proj, prompt
+    raise ValueError(
+        "Use <code>&lt;schedule&gt; | &lt;prompt&gt;</code> or <code>&lt;schedule&gt; | &lt;project&gt; | &lt;prompt&gt;</code>."
+    )
+
+
+async def handle_cmd_schedule(
+    bot: Any,
+    chat_id: int,
+    arg: str = "",
+    edit_message_id: Optional[int] = None,
+    default_kind: str = "cron",
+) -> None:
+    """Create, list, pause, resume, run, or delete scheduled cron & heartbeat tasks."""
+    if not hasattr(bot, "scheduler"):
+        await bot._safe_send_message(chat_id=chat_id, text="⚠️ Task scheduler is not enabled.")
+        return
+
+    session = bot.session_manager.get_session(chat_id)
+    cleaned = (arg or "").strip()
+
+    if not cleaned or cleaned.lower() in ("list", "show", "ls"):
+        tasks = bot.scheduler.list_tasks(chat_id=chat_id)
+        text, markup = build_schedules_keyboard(tasks)
+        if edit_message_id:
+            await bot._safe_edit_message_text(chat_id=chat_id, message_id=edit_message_id, text=text, reply_markup=markup)
+        else:
+            await bot._safe_send_message(chat_id=chat_id, text=text, reply_markup=markup)
+        return
+
+    parts = cleaned.split(maxsplit=1)
+    subcmd = parts[0].lower()
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if default_kind == "heartbeat" and subcmd not in ("add", "heartbeat", "pause", "resume", "del", "delete", "rm", "remove", "run", "list", "show") and "|" in cleaned:
+        subcmd = "heartbeat"
+        rest = cleaned
+
+    if subcmd in ("add", "heartbeat"):
+        kind = "heartbeat" if (subcmd == "heartbeat" or default_kind == "heartbeat") else "cron"
+        try:
+            sched_spec, target_proj, task_prompt = _parse_pipe_task_args(rest, session)
+            if session.projects and target_proj not in session.projects:
+                avail = ", ".join(session.projects.keys())
+                raise ValueError(f"Project '<code>{escape_html(target_proj)}</code>' not found. Available: {escape_html(avail)}")
+            task = bot.scheduler.add_task(
+                chat_id=chat_id,
+                project=target_proj,
+                schedule=sched_spec,
+                prompt=task_prompt,
+                kind=kind,
+            )
+            next_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(task.next_run_at))
+            icon = "💓" if task.kind == "heartbeat" else "⏰"
+            await bot._safe_send_message(
+                chat_id=chat_id,
+                text=(
+                    f"{icon} <b>Scheduled {escape_html(task.kind.title())} Created</b>\n\n"
+                    f"• <b>ID:</b> <code>{escape_html(task.task_id)}</code>\n"
+                    f"• <b>Project:</b> <code>{escape_html(task.project)}</code>\n"
+                    f"• <b>Schedule:</b> <code>{escape_html(task.schedule)}</code>\n"
+                    f"• <b>Next Run:</b> <code>{next_str}</code>\n"
+                    f"• <b>Prompt:</b> <i>{escape_html(task.prompt[:160])}</i>"
+                ),
+            )
+        except Exception as e:
+            await bot._safe_send_message(
+                chat_id=chat_id,
+                text=(
+                    f"⚠️ Could not create scheduled task: {e}\n\n"
+                    "Example: <code>/schedule add 30m | Check tests</code> or "
+                    "<code>/heartbeat 15m | Check disk space</code>"
+                ),
+            )
+        return
+
+    if subcmd in ("pause", "resume") and rest:
+        updated = bot.scheduler.set_enabled(rest, enabled=(subcmd == "resume"), chat_id=chat_id)
+        if updated:
+            state_lbl = "▶️ Resumed" if updated.enabled else "⏸️ Paused"
+            await bot._safe_send_message(
+                chat_id=chat_id,
+                text=f"{state_lbl} task <code>{escape_html(updated.task_id)}</code>.",
+            )
+        else:
+            await bot._safe_send_message(chat_id=chat_id, text=f"❌ Scheduled task <code>{escape_html(rest)}</code> not found.")
+        return
+
+    if subcmd in ("del", "delete", "rm", "remove") and rest:
+        if bot.scheduler.remove_task(rest, chat_id=chat_id):
+            await bot._safe_send_message(chat_id=chat_id, text=f"🗑️ Deleted scheduled task <code>{escape_html(rest)}</code>.")
+        else:
+            await bot._safe_send_message(chat_id=chat_id, text=f"❌ Scheduled task <code>{escape_html(rest)}</code> not found.")
+        return
+
+    if subcmd == "run" and rest:
+        task = bot.scheduler.get_task(rest, chat_id=chat_id)
+        if task and hasattr(bot, "_execute_scheduled_task"):
+            asyncio.create_task(bot._execute_scheduled_task(task))
+            await bot._safe_send_message(
+                chat_id=chat_id,
+                text=f"🚀 Running task <code>{escape_html(task.task_id)}</code> on project <code>{escape_html(task.project)}</code> in background.",
+            )
+        else:
+            await bot._safe_send_message(chat_id=chat_id, text=f"❌ Scheduled task <code>{escape_html(rest)}</code> not found.")
+        return
+
+    await bot._safe_send_message(
+        chat_id=chat_id,
+        text=(
+            "⚠️ Usage:\n"
+            "• <code>/schedule</code> — List tasks\n"
+            "• <code>/schedule add &lt;30m | cron&gt; | &lt;prompt&gt;</code>\n"
+            "• <code>/heartbeat &lt;15m | cron&gt; | &lt;prompt&gt;</code>\n"
+            "• <code>/schedule pause|resume|run|del &lt;id&gt;</code>"
+        ),
+    )
 
 
 async def _run_agy_readonly_cmd(agy_bin: str, slash_cmd: str) -> Optional[Dict[str, Any]]:
@@ -1238,6 +1426,49 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
     elif data == "export:show":
         await bot._safe_answer_callback_query(cq_id)
         await handle_cmd_export(bot, chat_id)
+
+    elif data in ("busy:show", "busy:steer", "busy:queue", "busy:clear"):
+        arg_val = data.split(":", 1)[1]
+        await handle_cmd_busy(bot, chat_id, arg=arg_val, edit_message_id=message_id)
+        msg_map = {
+            "show": None,
+            "steer": "Busy policy set to steer",
+            "queue": "Busy policy set to queue",
+            "clear": "Prompt queue cleared",
+        }
+        await bot._safe_answer_callback_query(cq_id, text=msg_map.get(arg_val))
+
+    elif data == "sched:refresh":
+        await bot._safe_answer_callback_query(cq_id, text="Schedules refreshed")
+        await handle_cmd_schedule(bot, chat_id, edit_message_id=message_id)
+
+    elif data.startswith("sched:toggle:") and hasattr(bot, "scheduler"):
+        tid = data[len("sched:toggle:"):].strip()
+        task = bot.scheduler.get_task(tid, chat_id=chat_id)
+        if task:
+            updated = bot.scheduler.set_enabled(tid, enabled=not task.enabled, chat_id=chat_id)
+            state_txt = "Resumed" if (updated and updated.enabled) else "Paused"
+            await bot._safe_answer_callback_query(cq_id, text=f"{state_txt} {tid}")
+            await handle_cmd_schedule(bot, chat_id, edit_message_id=message_id)
+        else:
+            await bot._safe_answer_callback_query(cq_id, text="Task not found", show_alert=True)
+
+    elif data.startswith("sched:run:") and hasattr(bot, "scheduler"):
+        tid = data[len("sched:run:"):].strip()
+        task = bot.scheduler.get_task(tid, chat_id=chat_id)
+        if task and hasattr(bot, "_execute_scheduled_task"):
+            asyncio.create_task(bot._execute_scheduled_task(task))
+            await bot._safe_answer_callback_query(cq_id, text=f"Triggered {tid}")
+        else:
+            await bot._safe_answer_callback_query(cq_id, text="Task not found", show_alert=True)
+
+    elif data.startswith("sched:del:") and hasattr(bot, "scheduler"):
+        tid = data[len("sched:del:"):].strip()
+        if bot.scheduler.remove_task(tid, chat_id=chat_id):
+            await bot._safe_answer_callback_query(cq_id, text=f"Deleted {tid}")
+            await handle_cmd_schedule(bot, chat_id, edit_message_id=message_id)
+        else:
+            await bot._safe_answer_callback_query(cq_id, text="Task not found", show_alert=True)
 
     elif data.startswith("dec:"):
         idx_str = data[4:].strip()

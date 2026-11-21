@@ -22,6 +22,7 @@ from gateway.agy_bridge import AgyBridge, AgyEvent
 from gateway.commands import (
     handle_callback_query as cmd_handle_callback_query,
     handle_cmd_artifacts as cmd_handle_artifacts,
+    handle_cmd_busy as cmd_handle_busy,
     handle_cmd_delete as cmd_handle_delete,
     handle_cmd_dir as cmd_handle_dir,
     handle_cmd_effort as cmd_handle_effort,
@@ -35,6 +36,7 @@ from gateway.commands import (
     handle_cmd_permissions as cmd_handle_permissions,
     handle_cmd_projects as cmd_handle_projects,
     handle_cmd_reset as cmd_handle_reset,
+    handle_cmd_schedule as cmd_handle_schedule,
     handle_cmd_skills as cmd_handle_skills,
     handle_cmd_status as cmd_handle_status,
     handle_cmd_steer as cmd_handle_steer,
@@ -44,6 +46,7 @@ from gateway.commands import (
 )
 from gateway.config import COMPACT_TURN_REMINDER, Config
 from gateway.pairing import PairingManager
+from gateway.scheduler import ScheduledTask, TaskScheduler, is_quiet_heartbeat_reply
 from gateway.ipc_router import (
     DEFAULT_MAX_HOPS,
     IPCCall,
@@ -99,6 +102,7 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_BOT_COMMANDS = build_adaptive_bot_commands(None)
+MAX_QUEUED_PROMPTS = 10
 
 
 class AgyTelegramBot:
@@ -109,6 +113,7 @@ class AgyTelegramBot:
         self.client = TelegramClient(bot_token=config.bot_token)
         self.session_manager = SessionManager(persistence_file=config.sessions_file)
         self.pairing_manager = PairingManager(pairing_file=getattr(config, "pairing_file", "runtime/pairing.json"))
+        self.scheduler = TaskScheduler(schedules_file=getattr(config, "schedules_file", "runtime/schedules.json"))
         self.active_bridges: Dict[int, AgyBridge] = {}
         self.active_progress_messages: Dict[int, int] = {}
         self.active_reply_to_ids: Dict[int, Optional[int]] = {}
@@ -120,6 +125,7 @@ class AgyTelegramBot:
         self.bot_info: Dict[str, Any] = {}
         self.started_at = time.time()
         self._chat_locks: Dict[int, asyncio.Lock] = {}
+        self._prompt_queues: Dict[int, List[Dict[str, Any]]] = {}
 
     def _get_chat_lock(self, chat_id: int) -> asyncio.Lock:
         """Return per-chat asyncio lock serializing busy checks and prompt admission."""
@@ -424,49 +430,56 @@ class AgyTelegramBot:
 
         await self._notify_restart()
 
+        if getattr(self.config, "scheduler_enabled", True):
+            self.scheduler.start(self._execute_scheduled_task)
+
         offset: Optional[int] = None
         consecutive_errors = 0
 
-        while self.running:
-            try:
-                updates = await self.client.get_updates(offset=offset, timeout=30, raise_on_error=True)
-                consecutive_errors = 0
-                for update in updates:
-                    update_id = update.get("update_id")
-                    if update_id is not None:
-                        offset = update_id + 1
-                    task = asyncio.create_task(self.process_update(update))
+        try:
+            while self.running:
+                try:
+                    updates = await self.client.get_updates(offset=offset, timeout=30, raise_on_error=True)
+                    consecutive_errors = 0
+                    for update in updates:
+                        update_id = update.get("update_id")
+                        if update_id is not None:
+                            offset = update_id + 1
+                        task = asyncio.create_task(self.process_update(update))
 
-                    def _on_task_done(t: asyncio.Task) -> None:
-                        if not t.cancelled() and t.exception():
-                            logger.error("Unhandled exception in update task: %s", t.exception())
+                        def _on_task_done(t: asyncio.Task) -> None:
+                            if not t.cancelled() and t.exception():
+                                logger.error("Unhandled exception in update task: %s", t.exception())
 
-                    task.add_done_callback(_on_task_done)
-            except asyncio.CancelledError:
-                break
-            except TelegramAPIError as e:
-                consecutive_errors += 1
-                if e.error_code == 409:
-                    wait_time = min(5 * consecutive_errors, 60)
-                    logger.warning(
-                        "Telegram 409 Conflict (another polling instance active? attempt %d): %s. Backing off %ds...",
-                        consecutive_errors,
-                        e,
-                        wait_time,
-                    )
-                else:
+                        task.add_done_callback(_on_task_done)
+                except asyncio.CancelledError:
+                    break
+                except TelegramAPIError as e:
+                    consecutive_errors += 1
+                    if e.error_code == 409:
+                        wait_time = min(5 * consecutive_errors, 60)
+                        logger.warning(
+                            "Telegram 409 Conflict (another polling instance active? attempt %d): %s. Backing off %ds...",
+                            consecutive_errors,
+                            e,
+                            wait_time,
+                        )
+                    else:
+                        wait_time = min(2 ** consecutive_errors, 30)
+                        logger.warning("Telegram API error fetching updates (attempt %d): %s. Retrying in %ds...", consecutive_errors, e, wait_time)
+                    await asyncio.sleep(wait_time)
+                except Exception as e:
+                    consecutive_errors += 1
                     wait_time = min(2 ** consecutive_errors, 30)
-                    logger.warning("Telegram API error fetching updates (attempt %d): %s. Retrying in %ds...", consecutive_errors, e, wait_time)
-                await asyncio.sleep(wait_time)
-            except Exception as e:
-                consecutive_errors += 1
-                wait_time = min(2 ** consecutive_errors, 30)
-                logger.warning("Error fetching Telegram updates (attempt %d): %s. Retrying in %ds...", consecutive_errors, e, wait_time)
-                await asyncio.sleep(wait_time)
+                    logger.warning("Error fetching Telegram updates (attempt %d): %s. Retrying in %ds...", consecutive_errors, e, wait_time)
+                    await asyncio.sleep(wait_time)
+        finally:
+            await self.scheduler.stop()
 
     async def stop(self) -> None:
         """Gracefully stop the bot runner and interrupt active agy processes."""
         self.running = False
+        await self.scheduler.stop()
         for bridge in list(self.active_bridges.values()):
             try:
                 await bridge.stop()
@@ -671,6 +684,11 @@ class AgyTelegramBot:
             await self.handle_cmd_voice(chat_id, arg, message_id=message_id)
         elif canonical_cmd == "html":
             await self.handle_cmd_html(chat_id, arg, message_id=message_id)
+        elif canonical_cmd == "busy":
+            await self.handle_cmd_busy(chat_id, arg, message_id=message_id)
+        elif canonical_cmd == "schedule":
+            default_kind = "heartbeat" if clean_cmd == "heartbeat" else "cron"
+            await self.handle_cmd_schedule(chat_id, arg, default_kind=default_kind)
         elif canonical_cmd == "stop":
             await self.handle_cmd_stop(chat_id)
         else:
@@ -685,6 +703,18 @@ class AgyTelegramBot:
 
     async def handle_cmd_html(self, chat_id: int, arg: str = "", message_id: Optional[int] = None, edit_message_id: Optional[int] = None) -> None:
         await cmd_handle_html(self, chat_id, arg, edit_message_id=edit_message_id)
+
+    async def handle_cmd_busy(self, chat_id: int, arg: str = "", message_id: Optional[int] = None, edit_message_id: Optional[int] = None) -> None:
+        await cmd_handle_busy(self, chat_id, arg, edit_message_id=edit_message_id)
+
+    async def handle_cmd_schedule(
+        self,
+        chat_id: int,
+        arg: str = "",
+        edit_message_id: Optional[int] = None,
+        default_kind: str = "cron",
+    ) -> None:
+        await cmd_handle_schedule(self, chat_id, arg, edit_message_id=edit_message_id, default_kind=default_kind)
 
     async def handle_cmd_help(self, chat_id: int) -> None:
         await cmd_handle_help(self, chat_id)
@@ -1208,6 +1238,35 @@ class AgyTelegramBot:
             session = self.session_manager.get_session(chat_id)
 
             if session.is_busy:
+                effective_busy_mode = self.session_manager.normalize_busy_mode(
+                    getattr(session, "busy_mode", None) or getattr(self.config, "busy_mode", "steer")
+                )
+                if effective_busy_mode == "queue":
+                    q = self._prompt_queues.setdefault(chat_id, [])
+                    if len(q) >= MAX_QUEUED_PROMPTS:
+                        await self._safe_send_message(
+                            chat_id=chat_id,
+                            text=f"⚠️ Prompt queue is full (max {MAX_QUEUED_PROMPTS}). Use <code>/busy clear</code> or <code>/stop</code>.",
+                            reply_to_message_id=reply_to_id,
+                        )
+                        return
+                    q.append({
+                        "prompt": prompt,
+                        "reply_to_id": reply_to_id,
+                        "is_voice_input": is_voice_input,
+                    })
+                    if reply_to_id:
+                        await self._safe_set_message_reaction(chat_id, reply_to_id, "👀")
+                    await self._safe_send_message(
+                        chat_id=chat_id,
+                        text=(
+                            f"📥 <b>Queued (#{len(q)})</b> — will run automatically once the current turn finishes.\n"
+                            "<i>Use <code>/steer &lt;text&gt;</code> to inject mid-flight, or <code>/busy clear</code> to cancel queued items.</i>"
+                        ),
+                        reply_to_message_id=reply_to_id,
+                    )
+                    return
+
                 bridge = self.active_bridges.get(chat_id)
                 if bridge and bridge.is_running():
                     steered = await self.perform_steering(chat_id, prompt, reply_to_id, is_voice=is_voice_input)
@@ -1758,6 +1817,7 @@ class AgyTelegramBot:
             banner_task = asyncio.create_task(self.update_pinned_banner(chat_id, is_busy=False))
             turn_post_tasks.append(banner_task)
 
+            restart_triggered = False
             self._active_prompt_count = max(0, self._active_prompt_count - 1)
             if self._active_prompt_count == 0:
                 try:
@@ -1778,6 +1838,149 @@ class AgyTelegramBot:
                         except Exception:
                             pass
                     self._spawn_detached_restart()
+                    restart_triggered = True
+
+            if not restart_triggered and turn_status != "CANCELLED":
+                next_item: Optional[Dict[str, Any]] = None
+                async with self._get_chat_lock(chat_id):
+                    q = self._prompt_queues.get(chat_id)
+                    if q:
+                        next_item = q.pop(0)
+                if next_item is not None:
+                    q_task = asyncio.create_task(
+                        self.handle_prompt(
+                            chat_id=chat_id,
+                            prompt=next_item["prompt"],
+                            reply_to_id=next_item.get("reply_to_id"),
+                            is_voice_input=bool(next_item.get("is_voice_input", False)),
+                        )
+                    )
+
+                    def _on_queued_done(t: asyncio.Task) -> None:
+                        if not t.cancelled() and t.exception():
+                            logger.error("Unhandled exception running queued prompt for chat %s: %s", chat_id, t.exception())
+
+                    q_task.add_done_callback(_on_queued_done)
+
+    async def _execute_scheduled_task(self, task: ScheduledTask) -> None:
+        """Execute a scheduled cron or heartbeat task in an isolated ephemeral worker."""
+        if not self.is_chat_authorized(task.chat_id):
+            logger.warning("Skipping scheduled task %s for unauthorized chat %s", task.task_id, task.chat_id)
+            return
+
+        session = self.session_manager.get_session(task.chat_id)
+        proj_name = task.project or session.active_project or "default"
+        proj_info = session.projects.get(proj_name, {})
+        target_path = proj_info.get("path") or self.config.agy_working_dir or os.getcwd()
+        target_perm = session.get_permission_preset(
+            project_name=proj_name,
+            default=getattr(self.config, "default_permission_preset", "auto"),
+        )
+        effective_model = session.model or self.config.default_model or None
+        effective_effort = session.effort or self.config.default_effort or None
+
+        if task.kind == "heartbeat":
+            worker_prompt = (
+                f'[AGY_HEARTBEAT task_id="{task.task_id}" project="{proj_name}" schedule="{task.schedule}"]\n'
+                f"{task.prompt}\n"
+                "[END_AGY_HEARTBEAT]\n\n"
+                "(System Directive: This is a periodic background heartbeat check. Inspect the workspace/state cleanly. "
+                "If everything is healthy and requires no user notification, reply strictly with HEARTBEAT_OK. "
+                "Otherwise provide a concise alert report.)"
+            )
+        else:
+            worker_prompt = (
+                f'[AGY_SCHEDULED task_id="{task.task_id}" project="{proj_name}" schedule="{task.schedule}"]\n'
+                f"{task.prompt}\n"
+                "[END_AGY_SCHEDULED]"
+            )
+
+        bridge = AgyBridge(
+            agy_bin=self.config.get_resolved_agy_bin(),
+            default_working_dir=target_path,
+            timeout_seconds=self.config.agy_timeout_seconds,
+            system_prompt=None,
+            keep_alive=False,
+        )
+
+        trace_id = generate_trace_id()
+        span_id = generate_span_id()
+        start_ts = time.time()
+        accumulated = ""
+        is_error = False
+        err_msg = ""
+
+        try:
+            async for event in bridge.run_ephemeral_worker(
+                prompt=worker_prompt,
+                working_dir=target_path,
+                conversation_id=None,
+                model=effective_model,
+                effort=effective_effort,
+                timeout_seconds=self.config.agy_timeout_seconds,
+                permission_preset=target_perm,
+            ):
+                if event.type in ("text", "text_delta"):
+                    accumulated += (event.text_delta or getattr(event, "content", "") or "")
+                elif event.type in ("result", "done"):
+                    if event.response:
+                        accumulated = event.response
+                    if event.status and str(event.status).upper() in ("ERROR", "FAILED", "FAILURE", "TIMEOUT"):
+                        is_error = True
+                        err_msg = event.response or str(event.status)
+                    break
+                elif event.type == "error":
+                    is_error = True
+                    err_msg = event.response or "Scheduled worker error"
+                    break
+        except Exception as e:
+            is_error = True
+            err_msg = str(e)
+            logger.error("Scheduled task %s execution error: %s", task.task_id, e, exc_info=True)
+
+        clean_text, _ = extract_agy_voice_block(accumulated)
+        clean_text, _ = extract_agy_action_blocks(clean_text)
+        clean_text = clean_text.strip()
+        is_quiet = task.kind == "heartbeat" and not is_error and is_quiet_heartbeat_reply(clean_text)
+        dur_ms = round((time.time() - start_ts) * 1000, 1)
+        status_str = "ERROR" if is_error else "SUCCESS"
+
+        log_trace_span(
+            trace_id=trace_id,
+            span_id=span_id,
+            operation="scheduled_task",
+            status=status_str,
+            duration_ms=dur_ms,
+            source_project=proj_name,
+            model=effective_model or "",
+            permission_preset=target_perm,
+            error=err_msg[:500] if is_error else "",
+            metadata={
+                "task_id": task.task_id,
+                "schedule": task.schedule,
+                "kind": task.kind,
+                "quiet_heartbeat": is_quiet,
+            },
+            trace_file=Path(getattr(self.config, "traces_file", "runtime/traces.jsonl")),
+        )
+        self.scheduler.mark_executed(task.task_id, status=status_str)
+
+        if is_quiet:
+            return
+
+        if is_error:
+            header = f"⚠️ <b>[{escape_html(task.kind.title())} Error · {escape_html(proj_name)}]</b> <code>{escape_html(task.task_id)}</code>\n\n"
+            body_txt = f"<code>{escape_html(err_msg or 'Execution failed')}</code>"
+        elif task.kind == "heartbeat":
+            header = f"💓 <b>[Heartbeat Alert · {escape_html(proj_name)}]</b> <code>{escape_html(task.task_id)}</code>\n\n"
+            body_txt = format_final_result(clean_text or "Check completed.", duration_seconds=dur_ms / 1000.0, project_name=proj_name)
+        else:
+            header = f"⏰ <b>[Scheduled · {escape_html(proj_name)}]</b> <code>{escape_html(task.task_id)}</code>\n\n"
+            body_txt = format_final_result(clean_text or "Completed.", duration_seconds=dur_ms / 1000.0, project_name=proj_name)
+
+        full_msg = header + body_txt
+        for chunk in split_text_chunks(full_msg, chunk_size=4000):
+            await self._safe_send_message(chat_id=task.chat_id, text=chunk)
 
 
 if __name__ == "__main__":

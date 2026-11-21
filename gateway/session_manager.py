@@ -36,6 +36,7 @@ class ChatSession:
     pinned_ipc_message_ids: Dict[str, int] = field(default_factory=dict)
     tts_mode: str = "autogen"  # "disable" | "autogen" | "autoplay"
     html_mode: str = "auto"  # "auto" | "explicit" | "off"
+    busy_mode: str = "steer"  # "steer" | "queue"
     pending_voice_data: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     @property
@@ -90,6 +91,7 @@ class ChatSession:
             "pinned_ipc_message_ids": self.pinned_ipc_message_ids,
             "tts_mode": self.tts_mode,
             "html_mode": self.html_mode,
+            "busy_mode": self.busy_mode,
             "pending_voice_data": dict(list(self.pending_voice_data.items())[-100:]),
         }
 
@@ -138,6 +140,7 @@ class ChatSession:
             pinned_ipc_message_ids=pinned_ipc_ids,
             tts_mode=data.get("tts_mode", "autogen"),
             html_mode=data.get("html_mode", "auto"),
+            busy_mode=SessionManager.normalize_busy_mode(data.get("busy_mode")),
             pending_voice_data=data.get("pending_voice_data", {}),
         )
 
@@ -433,6 +436,21 @@ class SessionManager:
         """Set HTML attachment mode ('auto', 'explicit', 'off')."""
         session = self.get_session(chat_id)
         session.html_mode = self.normalize_html_mode(mode)
+        session.last_active_at = time.time()
+        self.save()
+
+    @staticmethod
+    def normalize_busy_mode(mode: Optional[str]) -> str:
+        """Normalize busy-input policy into 'steer' or 'queue'."""
+        val = (mode or "").strip().lower()
+        if val in ("queue", "queued", "wait"):
+            return "queue"
+        return "steer"
+
+    def set_busy_mode(self, chat_id: int, mode: str) -> None:
+        """Set busy-input handling mode ('steer' | 'queue')."""
+        session = self.get_session(chat_id)
+        session.busy_mode = self.normalize_busy_mode(mode)
         session.last_active_at = time.time()
         self.save()
 

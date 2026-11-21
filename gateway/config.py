@@ -121,8 +121,11 @@ class Config:
     default_model: str = "gemini-3.8-flash"
     default_effort: str = "high"
     default_permission_preset: str = "auto"
+    busy_mode: str = "steer"  # "steer" | "queue"
     ipc_max_hops: int = 3
     traces_file: str = "runtime/traces.jsonl"
+    schedules_file: str = "runtime/schedules.json"
+    scheduler_enabled: bool = True
     stream_throttle_seconds: float = 1.0
     agy_timeout_seconds: int = 300
     log_level: str = "INFO"
@@ -181,11 +184,15 @@ class Config:
         default_permission_preset = normalize_permission_preset(
             os.getenv("AGY_PERMISSION_PRESET", "auto")
         )
+        raw_busy_mode = os.getenv("BUSY_MODE", "steer").strip().lower()
+        busy_mode = "queue" if raw_busy_mode in ("queue", "queued", "wait") else "steer"
         try:
             ipc_max_hops = max(1, int(os.getenv("IPC_MAX_HOPS", "3")))
         except ValueError:
             ipc_max_hops = 3
         traces_file = os.getenv("TRACES_FILE", "runtime/traces.jsonl").strip() or "runtime/traces.jsonl"
+        schedules_file = os.getenv("SCHEDULES_FILE", "runtime/schedules.json").strip() or "runtime/schedules.json"
+        scheduler_enabled = os.getenv("SCHEDULER_ENABLED", "true").strip().lower() in ("true", "1", "yes")
 
         try:
             stream_throttle = float(os.getenv("STREAM_THROTTLE_SECONDS", "1.0"))
@@ -251,8 +258,11 @@ class Config:
             default_model=default_model,
             default_effort=default_effort,
             default_permission_preset=default_permission_preset,
+            busy_mode=busy_mode,
             ipc_max_hops=ipc_max_hops,
             traces_file=traces_file,
+            schedules_file=schedules_file,
+            scheduler_enabled=scheduler_enabled,
             stream_throttle_seconds=stream_throttle,
             agy_timeout_seconds=agy_timeout,
             log_level=log_level,

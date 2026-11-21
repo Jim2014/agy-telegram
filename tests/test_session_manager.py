@@ -299,3 +299,17 @@ def test_per_project_permission_isolation_and_file_mode(tmp_path):
     assert sess2.get_permission_preset(project_name="learner", default="auto") == "auto"
     assert (persist_file.stat().st_mode & 0o777) == 0o600
 
+
+def test_busy_mode_normalization_and_persistence(tmp_path):
+    persist_file = tmp_path / "busy_sessions.json"
+    mgr = SessionManager(persistence_file=persist_file)
+    assert mgr.get_session(800).busy_mode == "steer"
+
+    mgr.set_busy_mode(800, "queue")
+    assert mgr.get_session(800).busy_mode == "queue"
+
+    mgr2 = SessionManager(persistence_file=persist_file)
+    assert mgr2.get_session(800).busy_mode == "queue"
+    assert SessionManager.normalize_busy_mode("wait") == "queue"
+    assert SessionManager.normalize_busy_mode("unknown") == "steer"
+

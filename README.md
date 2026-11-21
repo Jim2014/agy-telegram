@@ -58,14 +58,15 @@ Generic multi-agent bot wrappers and remote terminal hacks often fall short when
 ## Main Features
 
 - **Direct Real-Time Streaming via Telegram**: Built on Telegram Long-Polling (no public IP or webhook required) to stream `agy` thinking progress, live tool calls, and partial outputs directly to mobile.
-- **Mid-Flight Steering & Warm Process Pool**: Send a follow-up text, voice note, file, or `/steer` while `agy` is working to guide the active turn seamlessly; rotates the Telegram progress reply cleanly and delivers one consolidated final report.
+- **Mid-Flight Steering, Queue Mode & Warm Process Pool**: Send follow-up text, voice notes, files, or `/steer` while `agy` is working to steer the active turn seamlessly — or switch `/busy queue` to buffer up to 10 follow-up messages for sequential execution.
 - **Multi-Project & Per-Project Permission Isolation**: Manage separate workspaces (`/new`, `/open`, `/projects`, `/delete`, `/reset`), each with its own directory path, `conversation_id`, isolated `permission_preset`, token/duration stats, and pinned status banner (`/pin`).
+- **Proactive Cron & Heartbeat Scheduler (`/schedule`, `/heartbeat`)**: Schedule recurring interval (`30m`, `6h`) or 5-field cron tasks and quiet workspace heartbeats (`HEARTBEAT_OK` suppression) backed by persistent `0600` job stores (`runtime/schedules.json`).
 - **Dynamic Model & Effort Controls**: Auto-discovers available models from `agy models` via `/model` (with refresh) and adjusts reasoning depth via `/effort` (`low` / `medium` / `high`).
 - **Rich Mobile-First Output**: Converts Markdown to Telegram HTML and renders code/diffs/CSVs/directory trees as standalone mobile-friendly HTML documents sent directly in Telegram (`/file -h`, `/dir`, `/export`, `/html`, `[AGY_FILE]`) — zero open local HTTP ports needed.
 - **Voice Interaction (Offline STT + Bilingual TTS)**: Transcribes Telegram voice messages offline via `faster-whisper` and generates spoken audio summaries (`[AGY_VOICE]`) with on-demand playback buttons or auto-send (`/voice`).
-- **One-Tap Setup & Hardened Access Control**: Interactive `./setup.sh` wizard with live token verification and automatic Chat ID detection, **deny-by-default** authorization with **DM pairing** (`gateway.pairing`), crash watchdog (`watchdog.sh`), and macOS LaunchAgent autostart.
+- **One-Tap Setup & Hardened Access Control**: Interactive `./setup.sh` wizard with live token verification and automatic Chat ID detection, **deny-by-default** authorization with **DM pairing** (`gateway.pairing`), bot-token log redaction, crash watchdog (`watchdog.sh`), and macOS LaunchAgent autostart.
 - **Cross-Project Multi-Agent Mesh (`AGY_IPC`)**: Dispatches tasks across registered project directories with cycle detection, `max_hops` limits (`IPC_MAX_HOPS`), UUID `trace_id` propagation, pinned expandable progress cards, and structured audit/span logs (`runtime/ipc.log`, `runtime/traces.jsonl`).
-- **Automated Test Suite**: **186 tests** covering unit logic, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, CLI script safety, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
+- **Automated Test Suite**: **195 tests** covering unit logic, scheduler cron/heartbeats, Telegram API resilience, protocol extraction, onboarding setup, DM pairing, deferred restarts, CLI script safety, and live `agy` CLI smoke testing (see [ROADMAP.md](ROADMAP.md)).
 
 ---
 
@@ -156,8 +157,9 @@ agy-telegram/
 ├── runtime/              # Runtime dynamic data directory (gitignored)
 │   ├── gateway.log       # Main gateway logs
 │   ├── gateway.pid       # Gateway process PID file
-│   ├── ipc.log           # Cross-project IPC audit log
-│   ├── traces.jsonl      # Structured OpenTelemetry-style turn & IPC spans
+│   ├── ipc.log           # Cross-project IPC audit log (auto-rotated)
+│   ├── schedules.json    # Persistent cron & heartbeat tasks (0600)
+│   ├── traces.jsonl      # Structured OpenTelemetry-style turn, IPC & scheduled spans
 │   ├── watchdog.log      # Watchdog logs
 │   ├── watchdog.pid      # Watchdog PID file
 │   └── sessions.json     # Persistent chat, project & stats store
@@ -224,6 +226,11 @@ AGY_PERMISSION_PRESET=auto
 # Cross-project IPC max hops & structured JSONL trace spans
 IPC_MAX_HOPS=3
 TRACES_FILE=runtime/traces.jsonl
+
+# Busy-input policy (steer | queue) and proactive scheduler settings
+BUSY_MODE=steer
+SCHEDULER_ENABLED=true
+SCHEDULES_FILE=runtime/schedules.json
 
 # Streaming edit throttle interval in seconds (default: 1.0)
 STREAM_THROTTLE_SECONDS=1.0
@@ -319,7 +326,7 @@ tail -f -n 50 runtime/watchdog.log
 
 ### Adaptive Slash Menu & Interactive Controls
 
-- **Adaptive Pure-LRU Command Menu**: All 20 commands are registered in the Telegram `/` menu. `/help` stays pinned at position 0, while the most recently used commands automatically float to the top per chat.
+- **Adaptive Pure-LRU Command Menu**: All 23 commands are registered in the Telegram `/` menu. `/help` stays pinned at position 0, while the most recently used commands automatically float to the top per chat.
 - **Pinned Workspace Status Banner (`/pin`)**: Keeps a live pinned status banner at the top of the chat displaying active project, workspace path, model, token totals, uptime, and quick-action buttons (`[ 📊 Status ]`, `[ 📁 Projects ]`, `[ 🪙 Quota ]`, `[ 📖 Help ]`).
 - **Interactive Decision & Action Buttons (`[AGY_ACTIONS]`)**: Renders one-tap inline buttons under responses when `ask_question` or `[AGY_ACTIONS]` blocks are returned.
 - **Expandable Tool Progress (`<blockquote expandable>`)**: Keeps long tool logs compact on mobile while letting you expand details in place.
@@ -357,7 +364,10 @@ tail -f -n 50 runtime/watchdog.log
 | `/file [-h] <path>` | Send a workspace file; use `-h` to render code, Markdown, diffs, or CSVs as standalone HTML | `/file -h bot.py` |
 | `/export` | Export current session state or latest output as a standalone HTML report | `/export` |
 | `/steer <instruction>` | Explicitly inject steering guidance into the running `agy` turn | `/steer Use async/await` |
-| `/stop` | Interrupt and terminate the active `agy` subprocess | `/stop` |
+| `/busy [mode\|clear]` | Configure busy-input policy (`steer` vs `queue`) or clear queued prompts | `/busy queue` |
+| `/schedule` or `/cron` | Create, list, pause, resume, run, or delete recurring background tasks | `/schedule add 30m \| Check tests` |
+| `/heartbeat <spec> \| <prompt>` | Create a quiet workspace health check (`HEARTBEAT_OK` suppresses alert notifications) | `/heartbeat 15m \| Check disk` |
+| `/stop` | Interrupt the active `agy` subprocess and clear any queued prompts | `/stop` |
 | `/reset` | Clear `conversation_id` and reset turn/token counters for the active project | `/reset` |
 | `/delete <name>` | Remove a project from session configuration | `/delete myapp` |
 
@@ -404,6 +414,7 @@ Each Python module is single-purpose and supports standalone CLI verification:
 - `gateway/message_formatter.py` (`python -m gateway.message_formatter`): Markdown-to-Telegram-HTML conversion, protocol block extractors (`[AGY_FILE]`, `[AGY_ACTIONS]`, `[AGY_VOICE]`), spoken summary distillation, and standalone HTML report generation.
 - `gateway/agy_bridge.py` (`python -m gateway.agy_bridge "<prompt>"`): Asynchronous `agy` subprocess manager, `stream-json` bidirectional streaming, keep-alive process pooling, follow-up prompt deduplication, and steering injection.
 - `gateway/ipc_router.py` (`python -m gateway.ipc_router`): Cross-project `[AGY_IPC]` message parsing, cycle/max-hop guardrails, multi-hop forwarding, and auto-rotated `runtime/ipc.log` + `runtime/traces.jsonl` span logging.
+- `gateway/scheduler.py` (`python -m gateway.scheduler --self-test`): Proactive interval/5-field cron & `HEARTBEAT_OK` task scheduler with overlap guards and `0600` persistence (`runtime/schedules.json`).
 - `gateway/voice_tts.py` (`python -m gateway.voice_tts`): Dynamic bilingual TTS synthesis (`edge-tts` + offline fallback) and OGG Opus conversion.
 - `gateway/telegram_client.py` (`python -m gateway.telegram_client`): Async Telegram Bot API client with retries, HTML fallback, multipart uploads, and polling error propagation for backoff.
 - `gateway/bot.py`: Core orchestrator with per-chat locking, 409 conflict backoff, streaming progress updates, steering rotation, and exports.
@@ -426,8 +437,8 @@ conda run -n agy-telegram pytest -v
 ./venv/bin/pytest -v
 ```
 
-Test coverage (**186 tests** across 16 test modules):
-- `tests/test_config.py`: Configuration loading, token validation, deny-by-default chat whitelist, default runtime paths, and system prompt overrides.
+Test coverage (**195 tests** across 17 test modules):
+- `tests/test_config.py`: Configuration loading, token validation, deny-by-default chat whitelist, default runtime paths, busy/scheduler config, and system prompt overrides.
 - `tests/test_pairing.py`: DM pairing code lifecycle, expiration, atomic `0600` persistence, revocation, and CLI commands.
 - `tests/test_setup_helper.py`: Telegram `getMe` verification, `getUpdates` Chat ID auto-detection, `.env` rendering/permissions (`0600`), and interactive onboarding flow.
 - `tests/test_session_manager.py`: Session CRUD, persistence, legacy migration, token/duration stats, and LRU command tracking.
@@ -439,6 +450,7 @@ Test coverage (**186 tests** across 16 test modules):
 - `tests/test_telegram_client.py`: API calls, HTML fallback, multipart uploads, voice downloads, and emoji reactions.
 - `tests/test_bot.py`: Slash command routing, unauthorized chat blocking, streaming pipeline, mid-flight steering rotation, voice/document handlers, TTS auto-send, and network error resilience.
 - `tests/test_ipc_router.py`: `[AGY_IPC]` parsing, cycle & `max_hops` guardrails, envelope generation, pinned card formatting, and JSONL trace logging.
+- `tests/test_scheduler.py`: Interval and 5-field cron parsing, `HEARTBEAT_OK` quiet suppression, `0600` persistence, overlap protection, and async dispatch.
 - `tests/test_transcriber.py`: `faster-whisper` singleton caching and async audio transcription.
 - `tests/test_voice_tts.py`: Bilingual TTS synthesis and OGG Opus output.
 - `tests/test_restart_script.py`: `restart.sh` `--help`, `--status` alias, and unknown-flag rejection checks.

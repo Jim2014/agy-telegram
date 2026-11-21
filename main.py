@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import signal
 import sys
 from pathlib import Path
@@ -15,14 +16,54 @@ from gateway.agy_bridge import AgyBridge
 from gateway.bot import AgyTelegramBot
 from gateway.config import Config
 
+_BOT_TOKEN_URL_RE = re.compile(r"(/bot)\d+:[A-Za-z0-9_\-]+")
+
+
+class _TokenRedactingFilter(logging.Filter):
+    """Redact Telegram bot tokens embedded in httpx/API log messages."""
+
+    @staticmethod
+    def redact(text: str) -> str:
+        return _BOT_TOKEN_URL_RE.sub(r"\1<REDACTED>", text)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str) and "/bot" in record.msg:
+            record.msg = self.redact(record.msg)
+        if isinstance(record.args, tuple) and record.args:
+            redacted_args = []
+            changed = False
+            for arg in record.args:
+                arg_str = str(arg) if arg is not None else ""
+                if "/bot" in arg_str and _BOT_TOKEN_URL_RE.search(arg_str):
+                    redacted_args.append(self.redact(arg_str))
+                    changed = True
+                else:
+                    redacted_args.append(arg)
+            if changed:
+                record.args = tuple(redacted_args)
+        elif isinstance(record.args, dict) and record.args:
+            new_args = {}
+            changed = False
+            for k, v in record.args.items():
+                v_str = str(v) if v is not None else ""
+                if "/bot" in v_str and _BOT_TOKEN_URL_RE.search(v_str):
+                    new_args[k] = self.redact(v_str)
+                    changed = True
+                else:
+                    new_args[k] = v
+            if changed:
+                record.args = new_args
+        return True
+
 
 def setup_logging(config: Config) -> None:
-    """Configure console and file logging."""
+    """Configure console and file logging with bot-token redaction."""
     log_level = getattr(logging, config.log_level.upper(), logging.INFO)
     formatter = logging.Formatter(
         "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    redact_filter = _TokenRedactingFilter()
 
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
@@ -34,13 +75,19 @@ def setup_logging(config: Config) -> None:
         file_handler = logging.FileHandler(config.log_file, encoding="utf-8")
         file_handler.setLevel(log_level)
         file_handler.setFormatter(formatter)
+        file_handler.addFilter(redact_filter)
         root_logger.addHandler(file_handler)
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(redact_filter)
     root_logger.addHandler(console_handler)
+
+    # Suppress verbose httpx/httpcore INFO URL logs containing Telegram Bot API URLs
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 async def run_smoke_test(config: Config) -> int:

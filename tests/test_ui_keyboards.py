@@ -316,6 +316,46 @@ def test_build_permissions_keyboard_and_command_alias():
     assert any(b["callback_data"] == "perm:plan" for b in flat_buttons)
 
 
+def test_build_busy_mode_and_schedules_keyboards():
+    from gateway.scheduler import ScheduledTask
+    from gateway.ui_keyboards import (
+        ALL_BOT_COMMAND_SPECS,
+        COMMAND_ALIASES,
+        build_busy_mode_keyboard,
+        build_schedules_keyboard,
+    )
+
+    assert any(c["command"] == "busy" for c in ALL_BOT_COMMAND_SPECS)
+    assert any(c["command"] == "schedule" for c in ALL_BOT_COMMAND_SPECS)
+    assert COMMAND_ALIASES["queue"] == "busy"
+    assert COMMAND_ALIASES["heartbeat"] == "schedule"
+
+    b_text, b_kb = build_busy_mode_keyboard("queue", queued_count=2)
+    assert "queue" in b_text
+    assert "Queued Messages:</b> <code>2</code>" in b_text
+    flat_b = [b for row in b_kb["inline_keyboard"] for b in row]
+    assert any(b["callback_data"] == "busy:clear" for b in flat_b)
+
+    tasks = [
+        ScheduledTask(
+            task_id="abcd1234",
+            chat_id=100,
+            project="admin",
+            schedule="30m",
+            prompt="Check tests",
+            kind="heartbeat",
+            enabled=True,
+            next_run_at=1_700_000_000.0,
+        )
+    ]
+    s_text, s_kb = build_schedules_keyboard(tasks)
+    assert "abcd1234" in s_text and "💓" in s_text
+    flat_s = [b for row in s_kb["inline_keyboard"] for b in row]
+    assert any(b["callback_data"] == "sched:toggle:abcd1234" for b in flat_s)
+    assert any(b["callback_data"] == "sched:run:abcd1234" for b in flat_s)
+    assert any(b["callback_data"] == "sched:del:abcd1234" for b in flat_s)
+
+
 
 
 
