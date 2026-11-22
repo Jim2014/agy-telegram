@@ -356,6 +356,32 @@ def test_build_busy_mode_and_schedules_keyboards():
     assert any(b["callback_data"] == "sched:del:abcd1234" for b in flat_s)
 
 
+def test_build_logs_keyboard_and_aliases():
+    from gateway.ui_keyboards import (
+        ALL_BOT_COMMAND_SPECS,
+        COMMAND_ALIASES,
+        build_help_keyboard,
+        build_logs_keyboard,
+    )
+
+    assert any(c["command"] == "logs" for c in ALL_BOT_COMMAND_SPECS)
+    assert COMMAND_ALIASES["errors"] == "logs"
+    assert COMMAND_ALIASES["traces"] == "logs"
+
+    err_kb = build_logs_keyboard("errors")
+    flat_err = [b for row in err_kb["inline_keyboard"] for b in row]
+    assert any(b["text"] == "✓ 🚨 Errors" and b["callback_data"] == "logs:errors" for b in flat_err)
+    assert any(b["callback_data"] == "logs:refresh:errors" for b in flat_err)
+
+    tr_kb = build_logs_keyboard("traces")
+    flat_tr = [b for row in tr_kb["inline_keyboard"] for b in row]
+    assert any(b["text"] == "✓ 🔎 Traces" and b["callback_data"] == "logs:traces" for b in flat_tr)
+    assert any(b["callback_data"] == "logs:refresh:traces" for b in flat_tr)
+
+    hk = build_help_keyboard()
+    assert any(any(b["callback_data"] == "logs:errors" for b in row) for row in hk["inline_keyboard"])
+
+
 
 
 

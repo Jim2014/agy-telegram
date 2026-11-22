@@ -30,6 +30,7 @@ from gateway.commands import (
     handle_cmd_file as cmd_handle_file,
     handle_cmd_help as cmd_handle_help,
     handle_cmd_html as cmd_handle_html,
+    handle_cmd_logs as cmd_handle_logs,
     handle_cmd_model as cmd_handle_model,
     handle_cmd_new as cmd_handle_new,
     handle_cmd_open as cmd_handle_open,
@@ -84,7 +85,7 @@ from gateway.message_formatter import (
     split_text_chunks,
 )
 from gateway.session_manager import ChatSession, SessionManager
-from gateway.telegram_client import TelegramAPIError, TelegramClient
+from gateway.telegram_client import TelegramAPIError, TelegramClient, format_exception_brief
 from gateway.ui_keyboards import (
     COMMAND_ALIASES,
     build_actions_keyboard,
@@ -178,7 +179,7 @@ class AgyTelegramBot:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning("Telegram send_message failed for chat %s: %s", chat_id, e)
+            logger.warning("Telegram send_message failed for chat %s: %s", chat_id, format_exception_brief(e))
             return None
 
     async def _safe_edit_message_text(
@@ -201,7 +202,12 @@ class AgyTelegramBot:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning("Telegram edit_message_text failed for chat %s, msg %s: %s", chat_id, message_id, e)
+            logger.warning(
+                "Telegram edit_message_text failed for chat %s, msg %s: %s",
+                chat_id,
+                message_id,
+                format_exception_brief(e),
+            )
             return None
 
     async def update_pinned_banner(
@@ -268,7 +274,7 @@ class AgyTelegramBot:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning("Telegram send_document failed for chat %s: %s", chat_id, e)
+            logger.warning("Telegram send_document failed for chat %s: %s", chat_id, format_exception_brief(e))
             return None
 
     async def _safe_send_voice(
@@ -287,7 +293,7 @@ class AgyTelegramBot:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning("Telegram send_voice failed for chat %s: %s", chat_id, e)
+            logger.warning("Telegram send_voice failed for chat %s: %s", chat_id, format_exception_brief(e))
             return None
 
     async def _generate_and_send_voice(
@@ -319,7 +325,7 @@ class AgyTelegramBot:
                 )
                 return bool(res)
         except Exception as e:
-            logger.warning("Failed to generate and send voice note for chat %s: %s", chat_id, e)
+            logger.warning("Failed to generate and send voice note for chat %s: %s", chat_id, format_exception_brief(e))
         return False
 
     async def _safe_send_chat_action(
@@ -334,7 +340,7 @@ class AgyTelegramBot:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning("Telegram send_chat_action failed for chat %s: %s", chat_id, e)
+            logger.warning("Telegram send_chat_action failed for chat %s: %s", chat_id, format_exception_brief(e))
             return False
 
     async def _safe_set_message_reaction(
@@ -355,7 +361,12 @@ class AgyTelegramBot:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.debug("Telegram set_message_reaction failed for chat %s, msg %s: %s", chat_id, message_id, e)
+            logger.debug(
+                "Telegram set_message_reaction failed for chat %s, msg %s: %s",
+                chat_id,
+                message_id,
+                format_exception_brief(e),
+            )
             return False
 
     async def _safe_answer_callback_query(
@@ -374,7 +385,11 @@ class AgyTelegramBot:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning("Telegram answer_callback_query failed for query %s: %s", callback_query_id, e)
+            logger.warning(
+                "Telegram answer_callback_query failed for query %s: %s",
+                callback_query_id,
+                format_exception_brief(e),
+            )
             return False
 
     async def _notify_restart(self) -> None:
@@ -403,7 +418,7 @@ class AgyTelegramBot:
                 await self.update_pinned_banner(chat_id)
                 await self.update_chat_command_menu(chat_id)
             except Exception as e:
-                logger.warning("Restart notification failed for chat %s: %s", chat_id, e)
+                logger.warning("Restart notification failed for chat %s: %s", chat_id, format_exception_brief(e))
 
     async def start(self) -> None:
         """Initialize and run the Telegram long-polling loop."""
@@ -689,6 +704,9 @@ class AgyTelegramBot:
         elif canonical_cmd == "schedule":
             default_kind = "heartbeat" if clean_cmd == "heartbeat" else "cron"
             await self.handle_cmd_schedule(chat_id, arg, default_kind=default_kind)
+        elif canonical_cmd == "logs":
+            default_view = "traces" if clean_cmd in ("traces", "trace") else "errors"
+            await self.handle_cmd_logs(chat_id, arg, default_view=default_view)
         elif canonical_cmd == "stop":
             await self.handle_cmd_stop(chat_id)
         else:
@@ -715,6 +733,15 @@ class AgyTelegramBot:
         default_kind: str = "cron",
     ) -> None:
         await cmd_handle_schedule(self, chat_id, arg, edit_message_id=edit_message_id, default_kind=default_kind)
+
+    async def handle_cmd_logs(
+        self,
+        chat_id: int,
+        arg: str = "",
+        edit_message_id: Optional[int] = None,
+        default_view: str = "errors",
+    ) -> None:
+        await cmd_handle_logs(self, chat_id, arg, edit_message_id=edit_message_id, default_view=default_view)
 
     async def handle_cmd_help(self, chat_id: int) -> None:
         await cmd_handle_help(self, chat_id)

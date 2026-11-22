@@ -394,6 +394,72 @@ async def test_telegram_client_get_updates_raise_on_error(monkeypatch):
     await client.close()
 
 
+@pytest.mark.asyncio
+async def test_telegram_client_blank_httpx_error_logging_and_idempotent_retry(monkeypatch, caplog):
+    import logging
+    from unittest.mock import AsyncMock
+    import gateway.telegram_client as tc_mod
+
+    monkeypatch.setattr(tc_mod.asyncio, "sleep", AsyncMock())
+    client = TelegramClient("12345:TESTTOKEN")
+    mock_client = httpx.AsyncClient()
+    client._client = mock_client
+
+    # 1. Idempotent editMessageText retries once on blank-message ReadTimeout and succeeds
+    edit_calls = 0
+
+    async def mock_post_edit(url, **kwargs):
+        nonlocal edit_calls
+        edit_calls += 1
+        req = httpx.Request("POST", url)
+        if edit_calls == 1:
+            raise httpx.ReadTimeout("", request=req)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 10}}, request=req)
+
+    monkeypatch.setattr(mock_client, "post", mock_post_edit)
+    with caplog.at_level(logging.WARNING, logger="gateway.telegram_client"):
+        res = await client.edit_message_text(chat_id=100, message_id=10, text="Updated")
+    assert res["message_id"] == 10
+    assert edit_calls == 2
+    assert any("Transient HTTP error calling editMessageText (ReadTimeout)" in r.message for r in caplog.records)
+
+    # 2. Idempotent setMessageReaction retries once then logs non-blank RemoteProtocolError
+    caplog.clear()
+    react_calls = 0
+
+    async def mock_post_react(url, **kwargs):
+        nonlocal react_calls
+        react_calls += 1
+        req = httpx.Request("POST", url)
+        raise httpx.RemoteProtocolError("", request=req)
+
+    monkeypatch.setattr(mock_client, "post", mock_post_react)
+    with caplog.at_level(logging.WARNING, logger="gateway.telegram_client"):
+        ok = await client.set_message_reaction(chat_id=100, message_id=10, reaction="👀")
+    assert ok is False
+    assert react_calls == 2
+    assert any("HTTP request error calling setMessageReaction: RemoteProtocolError" in r.message for r in caplog.records)
+
+    # 3. Non-idempotent sendMessage does NOT retry and logs non-blank ReadTimeout
+    caplog.clear()
+    send_calls = 0
+
+    async def mock_post_send(url, **kwargs):
+        nonlocal send_calls
+        send_calls += 1
+        req = httpx.Request("POST", url)
+        raise httpx.ReadTimeout("", request=req)
+
+    monkeypatch.setattr(mock_client, "post", mock_post_send)
+    with caplog.at_level(logging.ERROR, logger="gateway.telegram_client"):
+        with pytest.raises(httpx.ReadTimeout):
+            await client.send_message(chat_id=100, text="Hello")
+    assert send_calls == 1
+    assert any("HTTP request error calling sendMessage: ReadTimeout" in r.message for r in caplog.records)
+
+    await client.close()
+
+
 
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -11,6 +12,24 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Only retry transient transport errors on idempotent Telegram API calls
+_RETRYABLE_IDEMPOTENT_METHODS = frozenset({
+    "editMessageText",
+    "editMessageReplyMarkup",
+    "setMessageReaction",
+    "sendChatAction",
+    "answerCallbackQuery",
+    "getMe",
+    "getFile",
+})
+_TRANSIENT_RETRY_DELAY_SECONDS = 0.3
+
+
+def format_exception_brief(exc: BaseException) -> str:
+    """Format an exception with its class name so empty-message httpx errors never log blank."""
+    msg = str(exc).strip()
+    return f"{type(exc).__name__}: {msg}" if msg else type(exc).__name__
 
 
 class TelegramAPIError(Exception):
@@ -44,22 +63,37 @@ class TelegramClient:
             self._client = None
 
     async def _post(self, method: str, payload: Dict[str, Any], timeout: Optional[float] = None) -> Dict[str, Any]:
-        """Execute a POST request to Telegram Bot API with error handling."""
+        """Execute a POST request to Telegram Bot API with error handling and idempotent retry."""
         client = await self.get_client()
         url = f"{self.base_url}/{method}"
         kwargs: Dict[str, Any] = {"json": payload}
         if timeout is not None:
             kwargs["timeout"] = timeout
 
-        try:
-            resp = await client.post(url, **kwargs)
-            data = resp.json()
-        except httpx.RequestError as e:
-            logger.error("HTTP request error calling %s: %s", method, e)
-            raise
+        max_attempts = 2 if method in _RETRYABLE_IDEMPOTENT_METHODS else 1
+        resp: Optional[httpx.Response] = None
+        data: Dict[str, Any] = {}
+        for attempt in range(max_attempts):
+            try:
+                resp = await client.post(url, **kwargs)
+                data = resp.json()
+                break
+            except httpx.RequestError as e:
+                err_desc = format_exception_brief(e)
+                if attempt + 1 < max_attempts:
+                    logger.warning(
+                        "Transient HTTP error calling %s (%s); retrying once in %.1fs",
+                        method,
+                        err_desc,
+                        _TRANSIENT_RETRY_DELAY_SECONDS,
+                    )
+                    await asyncio.sleep(_TRANSIENT_RETRY_DELAY_SECONDS)
+                    continue
+                logger.error("HTTP request error calling %s: %s", method, err_desc)
+                raise
 
         if not data.get("ok"):
-            err_code = data.get("error_code", resp.status_code)
+            err_code = data.get("error_code", resp.status_code if resp is not None else 500)
             desc = data.get("description", "Unknown error")
 
             # Handle rate limits
@@ -104,7 +138,7 @@ class TelegramClient:
             dest_path.write_bytes(resp.content)
             return dest_path
         except httpx.RequestError as e:
-            logger.error("HTTP error downloading file %s: %s", file_path, e)
+            logger.error("HTTP error downloading file %s: %s", file_path, format_exception_brief(e))
             raise
 
     async def download_file_by_id(
@@ -150,7 +184,7 @@ class TelegramClient:
                 return result
             return []
         except Exception as e:
-            logger.warning("getUpdates failed: %s", e)
+            logger.warning("getUpdates failed: %s", format_exception_brief(e))
             if raise_on_error:
                 raise
             return []
@@ -259,7 +293,7 @@ class TelegramClient:
             res = await self._post("answerCallbackQuery", payload)
             return bool(res)
         except Exception as e:
-            logger.warning("Failed to answer callback query %s: %s", callback_query_id, e)
+            logger.warning("Failed to answer callback query %s: %s", callback_query_id, format_exception_brief(e))
             return False
 
     async def send_document(
@@ -311,7 +345,7 @@ class TelegramClient:
             resp = await client.post(url, data=data, files=files, timeout=60.0)
             res_json = resp.json()
         except httpx.RequestError as e:
-            logger.error("HTTP request error calling sendDocument: %s", e)
+            logger.error("HTTP request error calling sendDocument: %s", format_exception_brief(e))
             raise
 
         if not res_json.get("ok"):
@@ -375,7 +409,7 @@ class TelegramClient:
             resp = await client.post(url, data=data, files=files, timeout=60.0)
             res_json = resp.json()
         except Exception as e:
-            logger.error("HTTP error calling sendVoice: %s", e)
+            logger.error("HTTP error calling sendVoice: %s", format_exception_brief(e))
             raise
 
         if not res_json.get("ok"):
@@ -410,7 +444,7 @@ class TelegramClient:
             res = await self._post("setMyCommands", payload)
             return bool(res)
         except Exception as e:
-            logger.warning("Failed to set bot commands: %s", e)
+            logger.warning("Failed to set bot commands: %s", format_exception_brief(e))
             return False
 
     async def get_my_commands(
@@ -428,7 +462,7 @@ class TelegramClient:
             res = await self._post("getMyCommands", payload)
             return res if isinstance(res, list) else []
         except Exception as e:
-            logger.warning("Failed to get bot commands: %s", e)
+            logger.warning("Failed to get bot commands: %s", format_exception_brief(e))
             return []
 
     async def delete_my_commands(
@@ -446,7 +480,7 @@ class TelegramClient:
             res = await self._post("deleteMyCommands", payload)
             return bool(res)
         except Exception as e:
-            logger.warning("Failed to delete bot commands: %s", e)
+            logger.warning("Failed to delete bot commands: %s", format_exception_brief(e))
             return False
 
     async def set_chat_menu_button(
@@ -466,7 +500,7 @@ class TelegramClient:
             res = await self._post("setChatMenuButton", payload)
             return bool(res)
         except Exception as e:
-            logger.warning("Failed to set chat menu button: %s", e)
+            logger.warning("Failed to set chat menu button: %s", format_exception_brief(e))
             return False
 
     async def set_message_reaction(
@@ -491,7 +525,12 @@ class TelegramClient:
             res = await self._post("setMessageReaction", payload)
             return bool(res)
         except Exception as e:
-            logger.debug("Failed to set message reaction '%s' for msg %s: %s", reaction, message_id, e)
+            logger.debug(
+                "Failed to set message reaction '%s' for msg %s: %s",
+                reaction,
+                message_id,
+                format_exception_brief(e),
+            )
             return False
 
     async def pin_chat_message(
@@ -510,7 +549,7 @@ class TelegramClient:
             res = await self._post("pinChatMessage", payload)
             return bool(res)
         except Exception as e:
-            logger.warning("Failed to pin message %s in chat %s: %s", message_id, chat_id, e)
+            logger.warning("Failed to pin message %s in chat %s: %s", message_id, chat_id, format_exception_brief(e))
             return False
 
     async def unpin_chat_message(
@@ -526,7 +565,7 @@ class TelegramClient:
             res = await self._post("unpinChatMessage", payload)
             return bool(res)
         except Exception as e:
-            logger.warning("Failed to unpin message in chat %s: %s", chat_id, e)
+            logger.warning("Failed to unpin message in chat %s: %s", chat_id, format_exception_brief(e))
             return False
 
 

@@ -22,6 +22,17 @@ MACOS_VOICE_ZH = "Tingting"
 MACOS_VOICE_EN = "Samantha"
 
 
+def _resolve_ffmpeg_bin() -> Optional[str]:
+    """Locate an installed ffmpeg binary across PATH and standard install paths."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    for candidate in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"):
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
 async def synthesize_voice_ogg(
     text: str,
     lang: str = "zh",
@@ -71,8 +82,8 @@ async def synthesize_voice_ogg(
 
         if temp_mp3.is_file() and temp_mp3.stat().st_size > 0:
             # Convert MP3 to Telegram native Opus OGG using ffmpeg
-            ffmpeg_bin = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg" or "/usr/local/bin/ffmpeg"
-            if shutil.which("ffmpeg") or Path(ffmpeg_bin).is_file():
+            ffmpeg_bin = _resolve_ffmpeg_bin()
+            if ffmpeg_bin:
                 proc = await asyncio.create_subprocess_exec(
                     ffmpeg_bin,
                     "-y",
@@ -104,10 +115,10 @@ async def synthesize_voice_ogg(
         logger.warning("Edge-TTS synthesis failed (%s), attempting macOS offline fallback...", e)
 
     # 2. Offline Fallback: macOS native 'say' + ffmpeg
-    say_bin = shutil.which("say") or "/usr/bin/say"
-    ffmpeg_bin = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg" or "/usr/local/bin/ffmpeg"
+    say_bin = shutil.which("say") or ("/usr/bin/say" if Path("/usr/bin/say").is_file() else None)
+    ffmpeg_bin = _resolve_ffmpeg_bin()
 
-    if (shutil.which("say") or Path(say_bin).is_file()) and (shutil.which("ffmpeg") or Path(ffmpeg_bin).is_file()):
+    if say_bin and ffmpeg_bin:
         try:
             with tempfile.NamedTemporaryFile(suffix=".aiff", delete=False) as tf:
                 temp_aiff = Path(tf.name)

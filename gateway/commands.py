@@ -27,6 +27,7 @@ from gateway.ui_keyboards import (
     build_effort_keyboard,
     build_help_keyboard,
     build_html_keyboard,
+    build_logs_keyboard,
     build_model_keyboard,
     build_permissions_keyboard,
     build_projects_keyboard,
@@ -65,6 +66,7 @@ async def handle_cmd_help(bot: Any, chat_id: int, edit_message_id: Optional[int]
         "• <code>/html</code> — Configure automatic HTML attachment mode\n"
         "• <code>/busy</code> — Set busy input policy (<code>steer</code> | <code>queue</code> | <code>clear</code>)\n"
         "• <code>/schedule</code> / <code>/heartbeat</code> — Manage recurring cron &amp; heartbeat tasks\n"
+        "• <code>/logs</code> / <code>/traces</code> — Inspect recent error logs &amp; structured execution traces\n"
         "• <code>/steer &lt;text&gt;</code> — Steer/guide currently running agy prompt\n"
         "• <code>/stop</code> — Interrupt currently executing agy prompt\n"
         "• <code>/reset</code> — Clear conversation history for active project\n\n"
@@ -1229,6 +1231,148 @@ async def handle_cmd_artifacts(
         await bot._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, reply_to_message_id=reply_to_id)
 
 
+def _tail_file_lines(path: Path, max_lines: int = 20, max_bytes: int = 65536) -> List[str]:
+    """Read up to the last `max_lines` non-empty lines from `path` in bounded memory."""
+    if not path.is_file() or max_lines <= 0:
+        return []
+    try:
+        file_size = path.stat().st_size
+        with open(path, "rb") as f:
+            seek_pos = max(0, file_size - max_bytes)
+            if seek_pos > 0:
+                f.seek(seek_pos)
+            raw_bytes = f.read()
+        lines = raw_bytes.decode("utf-8", errors="replace").splitlines()
+        if seek_pos > 0 and len(lines) > 1:
+            # Drop potentially truncated leading line after mid-file seek
+            lines = lines[1:]
+        non_empty = [ln.rstrip() for ln in lines if ln.strip()]
+        return non_empty[-max_lines:]
+    except OSError as e:
+        return [f"(Error reading {path}: {e})"]
+
+
+def _format_trace_span_line(raw_line: str) -> str:
+    """Format a JSONL trace span entry into a concise single-line summary."""
+    try:
+        rec = json.loads(raw_line)
+    except Exception:
+        return raw_line[:180]
+
+    status = str(rec.get("status", "UNKNOWN")).upper()
+    if status == "SUCCESS":
+        icon = "✅"
+    elif status in ("CANCELLED", "TIMEOUT"):
+        icon = "⚠️"
+    elif status in ("BLOCKED", "CYCLE", "MAX_HOPS", "SELF_DELEGATION", "UNREGISTERED_PROJECT"):
+        icon = "🚫"
+    else:
+        icon = "❌"
+
+    ts = str(rec.get("timestamp", ""))
+    ts_short = ts[11:19] if len(ts) >= 19 else ts
+    op = str(rec.get("operation", "span"))
+    src = str(rec.get("source_project", "") or "-")
+    tgt = str(rec.get("target_project", "") or "")
+    proj_route = f"{src}->{tgt}" if tgt else src
+
+    dur_ms = float(rec.get("duration_ms", 0.0) or 0.0)
+    dur_str = f"{dur_ms / 1000.0:.1f}s" if dur_ms >= 1000.0 else f"{dur_ms:.0f}ms"
+    tokens = int(rec.get("tokens", 0) or 0)
+    perm = str(rec.get("permission_preset", "") or "")
+    tid = str(rec.get("trace_id", "") or "")[:8]
+
+    parts = [f"{icon} {ts_short} {op} [{proj_route}] {status} {dur_str}"]
+    if tokens:
+        parts.append(f"{tokens}tok")
+    if perm:
+        parts.append(f"perm={perm}")
+    if tid:
+        parts.append(f"trace={tid}")
+    err = str(rec.get("error", "") or "").strip().replace("\n", " ")
+    if err:
+        parts.append(f"err={err[:80]}")
+    return " | ".join(parts)
+
+
+async def handle_cmd_logs(
+    bot: Any,
+    chat_id: int,
+    arg: str = "",
+    edit_message_id: Optional[int] = None,
+    default_view: str = "errors",
+) -> None:
+    """Inspect recent rotating error logs (/logs, /errors) or execution traces (/traces)."""
+    view = "traces" if (default_view or "").strip().lower() == "traces" else "errors"
+    explicit_limit: Optional[int] = None
+    for tok in (arg or "").strip().split():
+        low = tok.lower()
+        if low in ("trace", "traces"):
+            view = "traces"
+        elif low in ("err", "error", "errors", "log", "logs"):
+            view = "errors"
+        elif low.isdigit():
+            explicit_limit = max(1, min(40, int(low)))
+
+    limit = explicit_limit if explicit_limit is not None else (12 if view == "traces" else 15)
+
+    if view == "traces":
+        trace_path = Path(getattr(bot.config, "traces_file", "runtime/traces.jsonl"))
+        raw_lines = _tail_file_lines(trace_path, max_lines=limit)
+        formatted_lines = [_format_trace_span_line(ln) for ln in raw_lines]
+        source_label = str(trace_path)
+        title = "🔎 <b>Recent Execution Traces</b>"
+        empty_note = "<i>No trace spans recorded yet.</i>"
+    else:
+        err_path = Path(getattr(bot.config, "error_log_file", "runtime/errors.log"))
+        formatted_lines = _tail_file_lines(err_path, max_lines=limit)
+        source_label = str(err_path)
+        if not formatted_lines:
+            gw_path = Path(getattr(bot.config, "log_file", "runtime/gateway.log"))
+            if gw_path.is_file():
+                recent_gw = _tail_file_lines(gw_path, max_lines=200)
+                matched = [
+                    ln for ln in recent_gw
+                    if any(tag in ln for tag in ("[WARNING]", "[ERROR]", "[CRITICAL]", "Traceback"))
+                ]
+                if matched:
+                    formatted_lines = matched[-limit:]
+                    source_label = f"{gw_path} (filtered)"
+        title = "🚨 <b>Recent Gateway Warnings &amp; Errors</b>"
+        empty_note = "<i>No warnings or errors recorded yet.</i>"
+
+    if not formatted_lines:
+        text = (
+            f"{title}\n"
+            f"• <b>Source:</b> <code>{escape_html(source_label)}</code>\n\n"
+            f"{empty_note}"
+        )
+    else:
+        kept = list(formatted_lines)
+        while len(kept) > 1 and len("\n".join(kept)) > 3200:
+            kept.pop(0)
+        snippet = "\n".join(kept)
+        if len(snippet) > 3200:
+            snippet = snippet[-3197:]
+            snippet = "..." + snippet
+        text = (
+            f"{title} <i>(last {len(kept)})</i>\n"
+            f"• <b>Source:</b> <code>{escape_html(source_label)}</code>\n\n"
+            f"<pre>{escape_html(snippet)}</pre>"
+        )
+
+    reply_markup = build_logs_keyboard(view)
+    if edit_message_id:
+        await bot._safe_edit_message_text(
+            chat_id=chat_id,
+            message_id=edit_message_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+    else:
+        await bot._safe_send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+
+
 async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> None:
     """Handle Telegram inline keyboard button presses."""
     cq_id = callback_query.get("id")
@@ -1437,6 +1581,12 @@ async def handle_callback_query(bot: Any, callback_query: Dict[str, Any]) -> Non
             "clear": "Prompt queue cleared",
         }
         await bot._safe_answer_callback_query(cq_id, text=msg_map.get(arg_val))
+
+    elif data in ("logs:errors", "logs:traces", "logs:refresh:errors", "logs:refresh:traces"):
+        mode = "traces" if data.endswith(":traces") else "errors"
+        hint = "Refreshed" if ":refresh:" in data else None
+        await bot._safe_answer_callback_query(cq_id, text=hint)
+        await handle_cmd_logs(bot, chat_id, default_view=mode, edit_message_id=message_id)
 
     elif data == "sched:refresh":
         await bot._safe_answer_callback_query(cq_id, text="Schedules refreshed")

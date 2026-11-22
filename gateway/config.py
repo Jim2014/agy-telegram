@@ -130,6 +130,7 @@ class Config:
     agy_timeout_seconds: int = 300
     log_level: str = "INFO"
     log_file: str = "runtime/gateway.log"
+    error_log_file: str = "runtime/errors.log"
     sessions_file: str = "runtime/sessions.json"
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     tts_enabled: bool = True
@@ -206,6 +207,7 @@ class Config:
 
         log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
         log_file = os.getenv("LOG_FILE", "runtime/gateway.log").strip()
+        error_log_file = os.getenv("ERROR_LOG_FILE", "runtime/errors.log").strip()
         sessions_file = os.getenv("SESSIONS_FILE", "runtime/sessions.json").strip()
 
         # System prompt loading (Priority: AGY_SYSTEM_PROMPT_FILE > AGY_SYSTEM_PROMPT > DEFAULT_SYSTEM_PROMPT)
@@ -267,6 +269,7 @@ class Config:
             agy_timeout_seconds=agy_timeout,
             log_level=log_level,
             log_file=log_file,
+            error_log_file=error_log_file,
             sessions_file=sessions_file,
             system_prompt=system_prompt,
             tts_enabled=tts_enabled,
@@ -321,5 +324,6 @@ if __name__ == "__main__":
     print(f"Timeout (s):           {cfg.agy_timeout_seconds}")
     print(f"Log Level:             {cfg.log_level}")
     print(f"Log File:              {cfg.log_file}")
+    print(f"Error Log File:        {cfg.error_log_file}")
     print(f"System Prompt:         {len(cfg.system_prompt)} chars configured")
 

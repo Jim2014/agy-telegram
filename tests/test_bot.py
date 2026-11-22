@@ -20,6 +20,8 @@ def mock_bot(tmp_path):
         pairing_file=str(tmp_path / "bot_pairing.json"),
         traces_file=str(tmp_path / "traces.jsonl"),
         schedules_file=str(tmp_path / "bot_schedules.json"),
+        log_file=str(tmp_path / "gateway.log"),
+        error_log_file=str(tmp_path / "errors.log"),
     )
     bot = AgyTelegramBot(cfg)
     bot.client.send_message = AsyncMock(return_value={"message_id": 999})
@@ -2158,6 +2160,185 @@ def test_main_token_redacting_filter():
     formatted = rec.getMessage()
     assert "ABCdefSecretTokenXYZ" not in formatted
     assert "/bot<REDACTED>/getUpdates" in formatted
+
+
+def test_setup_logging_rotating_error_log_and_non_tty_console(tmp_path, monkeypatch):
+    import io
+    import logging
+    from logging.handlers import RotatingFileHandler
+    import sys
+    from main import setup_logging
+
+    root = logging.getLogger()
+    orig_handlers = list(root.handlers)
+    orig_level = root.level
+
+    class _FakeStream(io.StringIO):
+        def __init__(self, tty: bool) -> None:
+            super().__init__()
+            self._tty = tty
+
+        def isatty(self) -> bool:
+            return self._tty
+
+    try:
+        gw_log = tmp_path / "gateway.log"
+        err_log = tmp_path / "errors.log"
+        cfg = Config(log_level="INFO", log_file=str(gw_log), error_log_file=str(err_log))
+
+        # 1. Non-TTY console restricts stdout to ERROR+ so launchd does not duplicate INFO logs
+        non_tty = _FakeStream(tty=False)
+        monkeypatch.setattr(sys, "stdout", non_tty)
+        setup_logging(cfg)
+
+        rot_handlers = [h for h in root.handlers if isinstance(h, RotatingFileHandler)]
+        stream_handlers = [
+            h for h in root.handlers
+            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+        ]
+        assert len(rot_handlers) == 2
+        assert len(stream_handlers) == 1
+        assert stream_handlers[0].level == logging.ERROR
+
+        gw_handler = next(h for h in rot_handlers if Path(h.baseFilename) == gw_log.resolve())
+        err_handler = next(h for h in rot_handlers if Path(h.baseFilename) == err_log.resolve())
+        assert gw_handler.maxBytes == 10 * 1024 * 1024 and gw_handler.backupCount == 3
+        assert err_handler.maxBytes == 5 * 1024 * 1024 and err_handler.backupCount == 3
+        assert err_handler.level == logging.WARNING
+
+        test_logger = logging.getLogger("tests.logging_check")
+        test_logger.info("info line https://api.telegram.org/bot12345:SecretToken1/getMe")
+        test_logger.warning("warn line https://api.telegram.org/bot12345:SecretToken2/editMessageText")
+        test_logger.error("error line boom")
+        for h in root.handlers:
+            h.flush()
+
+        assert (gw_log.stat().st_mode & 0o777) == 0o600
+        assert (err_log.stat().st_mode & 0o777) == 0o600
+
+        gw_text = gw_log.read_text(encoding="utf-8")
+        err_text = err_log.read_text(encoding="utf-8")
+        stdout_text = non_tty.getvalue()
+
+        assert "info line" in gw_text and "warn line" in gw_text and "error line boom" in gw_text
+        assert "SecretToken1" not in gw_text and "SecretToken2" not in gw_text
+        assert "/bot<REDACTED>/getMe" in gw_text
+
+        assert "info line" not in err_text
+        assert "warn line" in err_text and "error line boom" in err_text
+        assert "SecretToken2" not in err_text and "/bot<REDACTED>/editMessageText" in err_text
+
+        assert "info line" not in stdout_text
+        assert "warn line" not in stdout_text
+        assert "error line boom" in stdout_text
+
+        # 2. Interactive TTY attaches console handler at configured log level
+        tty_stream = _FakeStream(tty=True)
+        monkeypatch.setattr(sys, "stdout", tty_stream)
+        setup_logging(cfg)
+        tty_stream_handlers = [
+            h for h in root.handlers
+            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+        ]
+        assert len(tty_stream_handlers) == 1
+        assert tty_stream_handlers[0].level == logging.INFO
+    finally:
+        for h in list(root.handlers):
+            if isinstance(h, logging.FileHandler):
+                try:
+                    h.close()
+                except Exception:
+                    pass
+        root.handlers = orig_handlers
+        root.setLevel(orig_level)
+
+
+@pytest.mark.asyncio
+async def test_bot_logs_and_traces_commands_and_callbacks(mock_bot):
+    import json
+
+    # 1. Empty state for /logs and /traces
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/logs", "message_id": 920}})
+    empty_logs = mock_bot.client.send_message.call_args[1]["text"]
+    assert "No warnings or errors recorded yet" in empty_logs
+
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/traces", "message_id": 921}})
+    empty_traces = mock_bot.client.send_message.call_args[1]["text"]
+    assert "No trace spans recorded yet" in empty_traces
+
+    # 2. Fallback to filtered gateway.log when errors.log does not exist yet
+    gw_path = Path(mock_bot.config.log_file)
+    gw_path.write_text(
+        "[2026-11-21 12:00:00] [INFO] [gateway.bot] normal info\n"
+        "[2026-11-21 12:00:01] [ERROR] [gateway.telegram_client] fallback error entry\n",
+        encoding="utf-8",
+    )
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/logs", "message_id": 922}})
+    fb_text = mock_bot.client.send_message.call_args[1]["text"]
+    assert "(filtered)" in fb_text
+    assert "fallback error entry" in fb_text
+    assert "normal info" not in fb_text
+
+    # 3. Direct rotating errors.log + /errors 1 limit
+    err_path = Path(mock_bot.config.error_log_file)
+    err_path.write_text(
+        "[2026-11-21 12:01:00] [WARNING] [gateway.bot] older warning\n"
+        "[2026-11-21 12:02:00] [ERROR] [gateway.telegram_client] latest ReadTimeout\n",
+        encoding="utf-8",
+    )
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/errors 1", "message_id": 923}})
+    err_call = mock_bot.client.send_message.call_args[1]
+    assert "latest ReadTimeout" in err_call["text"]
+    assert "older warning" not in err_call["text"]
+    assert err_call["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "logs:errors"
+
+    # 4. /traces command reads JSONL spans
+    trace_path = Path(mock_bot.config.traces_file)
+    trace_path.write_text(
+        json.dumps({
+            "timestamp": "2026-11-21T12:05:00",
+            "trace_id": "abc12345deadbeef",
+            "operation": "agent_turn",
+            "source_project": "agy-telegram",
+            "status": "SUCCESS",
+            "duration_ms": 1460.0,
+            "tokens": 320,
+            "permission_preset": "auto",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    mock_bot.client.send_message.reset_mock()
+    await mock_bot.process_update({"message": {"chat": {"id": 100}, "text": "/traces", "message_id": 924}})
+    tr_call = mock_bot.client.send_message.call_args[1]
+    assert "Recent Execution Traces" in tr_call["text"]
+    assert "agy-telegram" in tr_call["text"]
+    assert "1.5s" in tr_call["text"]
+    assert "perm=auto" in tr_call["text"]
+    assert "trace=abc12345" in tr_call["text"]
+
+    # 5. Inline callbacks switch between Traces and Errors view + Refresh
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_logs_tr",
+            "from": {"id": 100},
+            "message": {"chat": {"id": 100}, "message_id": 925},
+            "data": "logs:traces",
+        }
+    })
+    assert "Recent Execution Traces" in mock_bot.client.edit_message_text.call_args[1]["text"]
+
+    await mock_bot.process_update({
+        "callback_query": {
+            "id": "cq_logs_ref",
+            "from": {"id": 100},
+            "message": {"chat": {"id": 100}, "message_id": 925},
+            "data": "logs:refresh:errors",
+        }
+    })
+    assert "latest ReadTimeout" in mock_bot.client.edit_message_text.call_args[1]["text"]
+    assert mock_bot.client.answer_callback_query.call_args[1]["text"] == "Refreshed"
 
 
 

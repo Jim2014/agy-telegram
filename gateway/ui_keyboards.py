@@ -40,6 +40,7 @@ ALL_BOT_COMMAND_SPECS: List[Dict[str, Any]] = [
     {"command": "pin", "description": "📌 Pin workspace status banner", "default_priority": 26},
     {"command": "stop", "description": "🛑 Interrupt running agy prompt", "default_priority": 25},
     {"command": "schedule", "description": "⏰ Cron & heartbeat background tasks", "default_priority": 24},
+    {"command": "logs", "description": "🚨 View recent error logs & trace spans", "default_priority": 23},
     {"command": "reset", "description": "🔄 Clear active conversation", "default_priority": 20},
     {"command": "delete", "description": "🗑️ Delete a project (/delete <name>)", "default_priority": 10},
 ]
@@ -73,6 +74,12 @@ COMMAND_ALIASES: Dict[str, str] = {
     "schedule": "schedule",
     "cron": "schedule",
     "heartbeat": "schedule",
+    "logs": "logs",
+    "log": "logs",
+    "errors": "logs",
+    "error": "logs",
+    "traces": "logs",
+    "trace": "logs",
     "voice": "voice",
     "tts": "voice",
     "audio": "voice",
@@ -494,6 +501,7 @@ def build_help_keyboard() -> Dict[str, Any]:
             ],
             [
                 {"text": "🛡️ Permissions", "callback_data": "perm:show"},
+                {"text": "🚨 Logs & Traces", "callback_data": "logs:errors"},
             ],
         ]
     }
@@ -817,6 +825,29 @@ def build_schedules_keyboard(tasks: List[Any]) -> Tuple[str, Dict[str, Any]]:
         {"text": "📊 Status", "callback_data": "status"},
     ])
     return "\n".join(lines), {"inline_keyboard": buttons}
+
+
+def build_logs_keyboard(view_mode: str = "errors") -> Dict[str, Any]:
+    """Build inline navigation keyboard for /logs and /traces viewer."""
+    mode = "traces" if (view_mode or "").strip().lower() == "traces" else "errors"
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "✓ 🚨 Errors" if mode == "errors" else "🚨 Errors",
+                    "callback_data": "logs:errors",
+                },
+                {
+                    "text": "✓ 🔎 Traces" if mode == "traces" else "🔎 Traces",
+                    "callback_data": "logs:traces",
+                },
+            ],
+            [
+                {"text": "🔄 Refresh", "callback_data": f"logs:refresh:{mode}"},
+                {"text": "📊 Status", "callback_data": "status"},
+            ],
+        ]
+    }
 
 
 if __name__ == "__main__":

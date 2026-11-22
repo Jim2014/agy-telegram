@@ -19,6 +19,7 @@ def test_default_config():
     assert cfg.stream_throttle_seconds == 1.0
     assert cfg.agy_timeout_seconds == 300
     assert cfg.log_file == "runtime/gateway.log"
+    assert cfg.error_log_file == "runtime/errors.log"
     assert cfg.sessions_file == "runtime/sessions.json"
     assert cfg.allow_all_chats is False
     assert cfg.dm_pairing_enabled is True
@@ -137,6 +138,7 @@ def test_permission_preset_config(tmp_path):
         "SCHEDULES_FILE=runtime/custom_sched.json\n"
         "IPC_MAX_HOPS=5\n"
         "TRACES_FILE=runtime/custom_traces.jsonl\n"
+        "ERROR_LOG_FILE=runtime/custom_errors.log\n"
     )
     cfg_bad = Config.load(env_path=env_bad)
     assert cfg_bad.default_permission_preset == "auto"
@@ -145,4 +147,5 @@ def test_permission_preset_config(tmp_path):
     assert cfg_bad.schedules_file == "runtime/custom_sched.json"
     assert cfg_bad.ipc_max_hops == 5
     assert cfg_bad.traces_file == "runtime/custom_traces.jsonl"
+    assert cfg_bad.error_log_file == "runtime/custom_errors.log"
 

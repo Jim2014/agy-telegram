@@ -42,11 +42,12 @@ async def test_synthesize_voice_edge_tts(tmp_path):
             mock_proc.communicate = mock_communicate
             mock_exec.return_value = mock_proc
 
-            result = await synthesize_voice_ogg(
-                text="你好，这是测试语音摘要。",
-                lang="zh",
-                output_path=out_file,
-            )
+            with patch("gateway.voice_tts._resolve_ffmpeg_bin", return_value="/usr/bin/ffmpeg"):
+                result = await synthesize_voice_ogg(
+                    text="你好，这是测试语音摘要。",
+                    lang="zh",
+                    output_path=out_file,
+                )
             assert result == out_file
             assert out_file.is_file()
             assert out_file.read_bytes() == b"MOCK_OGG_OPUS_DATA"
@@ -54,6 +55,31 @@ async def test_synthesize_voice_edge_tts(tmp_path):
             script_file = out_file.with_suffix(".txt")
             assert script_file.is_file()
             assert script_file.read_text(encoding="utf-8") == "你好，这是测试语音摘要。"
+
+
+@pytest.mark.asyncio
+async def test_synthesize_voice_edge_tts_without_ffmpeg(tmp_path):
+    out_file = tmp_path / "test_reply_no_ffmpeg.ogg"
+
+    with patch("edge_tts.Communicate") as mock_comm:
+        async def mock_save(dest):
+            Path(dest).write_bytes(b"MOCK_MP3_DATA")
+
+        mock_instance = mock_comm.return_value
+        mock_instance.save = mock_save
+
+        with patch("gateway.voice_tts._resolve_ffmpeg_bin", return_value=None):
+            result = await synthesize_voice_ogg(
+                text="Testing Edge-TTS without ffmpeg installed.",
+                lang="en",
+                output_path=out_file,
+            )
+            assert result == out_file
+            assert out_file.is_file()
+            assert out_file.read_bytes() == b"MOCK_MP3_DATA"
+            script_file = out_file.with_suffix(".txt")
+            assert script_file.is_file()
+            assert script_file.read_text(encoding="utf-8") == "Testing Edge-TTS without ffmpeg installed."
 
 
 @pytest.mark.asyncio

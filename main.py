@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import re
 import signal
@@ -56,8 +57,31 @@ class _TokenRedactingFilter(logging.Filter):
         return True
 
 
+def _chmod_private(path: Path) -> None:
+    """Restrict log file permissions to owner read/write (0600)."""
+    try:
+        if path.exists():
+            os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+class _PrivateRotatingFileHandler(RotatingFileHandler):
+    """RotatingFileHandler that enforces 0600 permissions on creation and rollover."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        _chmod_private(Path(self.baseFilename))
+
+    def doRollover(self) -> None:
+        super().doRollover()
+        base = Path(self.baseFilename)
+        _chmod_private(base)
+        _chmod_private(Path(f"{self.baseFilename}.1"))
+
+
 def setup_logging(config: Config) -> None:
-    """Configure console and file logging with bot-token redaction."""
+    """Configure rotating file logs, dedicated error log, console output, and token redaction."""
     log_level = getattr(logging, config.log_level.upper(), logging.INFO)
     formatter = logging.Formatter(
         "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
@@ -67,20 +91,49 @@ def setup_logging(config: Config) -> None:
 
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
+    for existing in list(root_logger.handlers):
+        if isinstance(existing, logging.FileHandler):
+            try:
+                existing.close()
+            except Exception:
+                pass
     root_logger.handlers.clear()
 
-    # File handler
+    # Main rotating log (all configured levels, 10 MB x 3)
     if config.log_file:
         Path(config.log_file).parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(config.log_file, encoding="utf-8")
+        file_handler = _PrivateRotatingFileHandler(
+            config.log_file,
+            maxBytes=10 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
         file_handler.setLevel(log_level)
         file_handler.setFormatter(formatter)
         file_handler.addFilter(redact_filter)
         root_logger.addHandler(file_handler)
 
-    # Console handler
+    # Dedicated rotating error log (WARNING+ only, 5 MB x 3)
+    error_log_file = getattr(config, "error_log_file", "")
+    if error_log_file:
+        Path(error_log_file).parent.mkdir(parents=True, exist_ok=True)
+        err_handler = _PrivateRotatingFileHandler(
+            error_log_file,
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        err_handler.setLevel(logging.WARNING)
+        err_handler.setFormatter(formatter)
+        err_handler.addFilter(redact_filter)
+        root_logger.addHandler(err_handler)
+
+    # Console handler: full log level for interactive TTY or when no file log exists;
+    # restrict non-TTY daemons (launchd) to ERROR+ to avoid duplicating gateway.log.
+    is_tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
+    console_level = log_level if (is_tty or not config.log_file) else logging.ERROR
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(log_level)
+    console_handler.setLevel(console_level)
     console_handler.setFormatter(formatter)
     console_handler.addFilter(redact_filter)
     root_logger.addHandler(console_handler)
@@ -170,6 +223,7 @@ def main() -> None:
         print(f"• Default Permissions:   {config.default_permission_preset}")
         print(f"• Stream Throttle:       {config.stream_throttle_seconds}s")
         print(f"• Log File:              {config.log_file}")
+        print(f"• Error Log File:        {config.error_log_file}")
         print("========================================\n")
         if not config.is_token_valid():
             print("⚠️ Note: BOT_TOKEN is not configured yet. To use with Telegram:")
